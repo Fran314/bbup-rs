@@ -1,18 +1,22 @@
 use std::{
-    io::{Read, Write},
+    io::{BufRead, BufReader, Write},
     net::TcpStream,
 };
 
 fn main() -> std::io::Result<()> {
-    let mut stream = TcpStream::connect("127.0.0.1:4000")?;
+    let mut stream = TcpStream::connect("127.0.0.1:3000")?;
 
-    stream.write_all(b"Ehi ciao")?;
+    let mut input = String::new();
+    let mut reader = BufReader::new(stream.try_clone()?);
+    reader.read_line(&mut input)?;
+    println!("Recieved from server: {}", input);
+
+    stream.write(b"{ \"id\": \"31415\", \"content\": \"AAAAAAAAA\"}\n")?;
     stream.flush()?;
 
-    let mut buffer = String::new();
-    stream.read_to_string(&mut buffer)?;
-
-    println!("Recieved: {}", buffer);
+    input.clear();
+    reader.read_line(&mut input)?;
+    println!("Recieved from server: {}", input);
 
     Ok(())
 }
