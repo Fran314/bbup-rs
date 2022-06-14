@@ -1,11 +1,11 @@
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::BufReader,
     net::{TcpListener, TcpStream},
 };
 
+use bbup_rust::comunications::asyncrw::{read, write};
 use bbup_rust::comunications::Basic;
 
 struct ServerState {
@@ -21,31 +21,12 @@ async fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:3000").await?;
 
     loop {
-        let (socket, addr) = listener.accept().await?;
+        let (socket, _) = listener.accept().await?;
         let state = state.clone();
         tokio::spawn(async move {
             process(socket, state).await.unwrap();
         });
     }
-}
-
-async fn write<T: Serialize>(socket: &mut BufReader<TcpStream>, content: T) -> std::io::Result<()> {
-    socket
-        .write((serde_json::to_string(&content)? + "\n").as_bytes())
-        .await?;
-    socket.flush().await?;
-
-    Ok(())
-}
-
-async fn read<'a, T: Deserialize<'a>>(
-    socket: &mut BufReader<TcpStream>,
-    buffer: &'a mut String,
-) -> std::io::Result<T> {
-    buffer.clear();
-    socket.read_line(buffer).await?;
-    let output: T = serde_json::from_str(buffer.as_str())?;
-    Ok(output)
 }
 
 async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> std::io::Result<()> {
