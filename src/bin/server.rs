@@ -1,70 +1,73 @@
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
 };
 
-#[derive(Serialize, Deserialize)]
-struct Message {
-    id: String,
-    content: String,
-}
+use bbup_rust::comunications::Basic;
 
-fn custom_error(error: String) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, error)
+struct ServerState {
+    _commit_list: Vec<String>,
 }
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let busy = Arc::new(Mutex::new(false));
+    let state = Arc::new(Mutex::new(ServerState {
+        _commit_list: Vec::<String>::new(),
+    }));
 
     let listener = TcpListener::bind("127.0.0.1:3000").await?;
 
     loop {
         let (socket, _) = listener.accept().await?;
-        let busy = busy.clone();
+        let state = state.clone();
         tokio::spawn(async move {
-            process(socket, busy).await.unwrap();
+            process(socket, state).await.unwrap();
         });
     }
 }
 
-async fn process(socket: TcpStream, busy: Arc<Mutex<bool>>) -> std::io::Result<()> {
-    let mut socket = BufReader::new(socket);
-    let mut input = String::new();
-
-    socket.write(b"bbup-server\n").await?;
-    socket.flush().await?;
-
-    socket.read_line(&mut input).await?;
-    println!("Recieved from client: {}", input);
-    let deserialized: Message = serde_json::from_str(&input)?;
-
-    let procede: bool;
-    {
-        let mut busy = match busy.lock() {
-            Ok(val) => val,
-            Err(error) => return Err(custom_error(error.to_string())),
-        };
-
-        if *busy {
-            procede = false;
-        } else {
-            procede = true;
-            *busy = true;
-        }
-    }
-
-    if !procede {
-        socket.write(b"bbup-server occupied").await?;
-        return Ok(());
-    }
-
+async fn write<T: Serialize>(socket: &mut BufReader<TcpStream>, content: T) -> std::io::Result<()> {
     socket
-        .write(format!("Hello there {}\n", deserialized.id).as_bytes())
+        .write((serde_json::to_string(&content)? + "\n").as_bytes())
         .await?;
     socket.flush().await?;
+
+    Ok(())
+}
+
+async fn read<'a, T: Deserialize<'a>>(
+    socket: &mut BufReader<TcpStream>,
+    buffer: &'a mut String,
+) -> std::io::Result<T> {
+    buffer.clear();
+    socket.read_line(buffer).await?;
+    let output: T = serde_json::from_str(buffer.as_str())?;
+    Ok(output)
+}
+
+async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> std::io::Result<()> {
+    let mut socket = BufReader::new(socket);
+    let mut buffer = String::new();
+
+    write(&mut socket, Basic::new("bbup-server")).await?;
+    let read_val: Basic = read(&mut socket, &mut buffer).await?;
+    println!("Recieved from client: {}", read_val.content);
+
+    let _state = match state.try_lock() {
+        Ok(val) => val,
+        Err(_) => {
+            write(&mut socket, Basic::new("bbup-server occupied")).await?;
+            return Ok(());
+        }
+    };
+
+    write(&mut socket, Basic::new("Hello there")).await?;
+
+    let read_val: Basic = read(&mut socket, &mut buffer).await?;
+    println!("Recieved from client: {}", read_val.content);
 
     Ok(())
 }
