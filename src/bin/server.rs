@@ -21,7 +21,7 @@ async fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:3000").await?;
 
     loop {
-        let (socket, _) = listener.accept().await?;
+        let (socket, addr) = listener.accept().await?;
         let state = state.clone();
         tokio::spawn(async move {
             process(socket, state).await.unwrap();
