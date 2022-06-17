@@ -9,6 +9,7 @@ edition = "2021"
 # hashtree
 sha2 = "0.10.2"
 base64ct = { version = "1.5.0", features = ["alloc"] }
+regex = "1.5"
 
 # hashtree & TCP server & TCP client
 serde = { version = "1.0", features = ["derive"] }
@@ -16,6 +17,7 @@ serde_json = "1.0"
 
 # TCP server & TCP client
 serde_yaml = "0.8"
+dirs = "4.0.0"
 
 # TCP server
 tokio = { version = "1", features = ["full"] }

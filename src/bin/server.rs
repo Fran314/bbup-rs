@@ -45,10 +45,7 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> std::io::
         }
     };
 
-    write(&mut socket, Basic::new("Hello there")).await?;
-
-    let read_val: Basic = read(&mut socket, &mut buffer).await?;
-    println!("Recieved from client: {}", read_val.content);
+    write(&mut socket, Basic::new("Hello client")).await?;
 
     Ok(())
 }

@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 
 use serde::{Deserialize, Serialize};
 
+use regex::Regex;
+
 #[derive(PartialEq)]
 pub enum Traverse {
     Pre,
@@ -20,6 +22,29 @@ pub enum Type {
     Dir,
     File,
     Symlink,
+}
+#[derive(Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
+pub enum Action {
+    Added,
+    Edited,
+    Removed,
+}
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct Change {
+    action: Action,
+    object: Type,
+    path: String,
+    hash: Option<String>,
+}
+impl Change {
+    pub fn new(action: Action, object: Type, path: String, hash: Option<String>) -> Change {
+        Change {
+            action,
+            object,
+            path,
+            hash,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,13 +58,6 @@ impl HashTreeNode {
     fn to_string(&self) -> String {
         self.file_name.clone() + self.hash.as_str()
     }
-}
-
-#[derive(Debug)]
-pub struct Diff {
-    pub added: Vec<(Type, String)>,
-    pub edited: Vec<(Type, String)>,
-    pub removed: Vec<(Type, String)>,
 }
 
 fn hash_string(s: &str) -> String {
@@ -71,7 +89,7 @@ fn hash_symlink(path: &str) -> io::Result<String> {
     Ok(hash_string(&outpath))
 }
 
-pub fn hash_tree(path: &str) -> io::Result<HashTreeNode> {
+pub fn hash_tree(path: &str, exclude_list: &Vec<Regex>) -> io::Result<HashTreeNode> {
     let p_path = Path::new(path);
     let file_name = p_path
         .file_name()
@@ -97,7 +115,10 @@ pub fn hash_tree(path: &str) -> io::Result<HashTreeNode> {
                 std::io::ErrorKind::Other,
                 "invalid Unicode",
             ))?;
-            children.push(hash_tree(&path_str)?);
+            let exclude = exclude_list.iter().any(|rule| rule.is_match(path_str));
+            if !exclude {
+                children.push(hash_tree(path_str, exclude_list)?);
+            }
         }
         children.sort_by(|a, b| a.file_name.cmp(&b.file_name));
         hash = hash_children(&children);
@@ -117,32 +138,10 @@ pub fn hash_tree(path: &str) -> io::Result<HashTreeNode> {
     })
 }
 
-fn join_paths(root: &String, subdir: &String) -> Option<String> {
+fn join_paths(prefix: &String, suffix: &String) -> Option<String> {
     Some(String::from(
-        Path::new(&root).join(Path::new(&subdir)).to_str()?,
+        Path::new(prefix).join(Path::new(suffix)).to_str()?,
     ))
-}
-fn add_prefix(root: &String, v: &Vec<(Type, String)>) -> Option<Vec<(Type, String)>> {
-    let mut output: Vec<(Type, String)> = Vec::new();
-    for node in v {
-        output.push((node.0, join_paths(&root, &node.1)?));
-    }
-    Some(output)
-}
-pub fn list_nodes(arg: &HashTreeNode, mode: &Traverse) -> Option<Vec<(Type, String)>> {
-    let mut output: Vec<(Type, String)> = Vec::new();
-    if mode == &Traverse::Pre {
-        output.push((arg.nodetype, arg.file_name.clone()));
-    }
-    for child in &arg.children {
-        for node in list_nodes(child, mode)? {
-            output.push((node.0, join_paths(&arg.file_name, &node.1)?));
-        }
-    }
-    if mode == &Traverse::Post {
-        output.push((arg.nodetype, arg.file_name.clone()));
-    }
-    Some(output)
 }
 fn find<'a>(s: &String, arg: &'a Vec<HashTreeNode>) -> Option<&'a HashTreeNode> {
     match arg.binary_search_by(|ht| ht.file_name.cmp(s)) {
@@ -189,52 +188,97 @@ fn join_sets(arg0: &Vec<String>, arg1: &Vec<String>) -> Vec<String> {
 
     output
 }
-pub fn diff(old_tree: &HashTreeNode, new_tree: &HashTreeNode) -> Option<Diff> {
-    let mut output = Diff {
-        added: Vec::new(),
-        edited: Vec::new(),
-        removed: Vec::new(),
-    };
+
+fn add_prefix(prefix: &String, vec: &Vec<Change>) -> Option<Vec<Change>> {
+    let mut output: Vec<Change> = Vec::new();
+    for change in vec {
+        output.push(Change::new(
+            change.action.clone(),
+            change.object.clone(),
+            join_paths(prefix, &change.path)?,
+            change.hash.clone(),
+        ));
+    }
+    Some(output)
+}
+fn action_on_subtree(arg: &HashTreeNode, action: Action, mode: &Traverse) -> Option<Vec<Change>> {
+    let mut output: Vec<Change> = Vec::new();
+    if mode == &Traverse::Pre {
+        let hash = match (action, arg.nodetype) {
+            (Action::Removed, _) | (_, Type::Dir) => None,
+            _ => Some(arg.hash.clone()),
+        };
+        output.push(Change::new(
+            action.clone(),
+            arg.nodetype.clone(),
+            arg.file_name.clone(),
+            hash,
+        ));
+    }
+    for child in &arg.children {
+        let child_subtree = action_on_subtree(child, action.clone(), mode)?;
+        output.append(&mut add_prefix(&arg.file_name, &child_subtree)?);
+    }
+    if mode == &Traverse::Post {
+        let hash = match (action, arg.nodetype) {
+            (Action::Removed, _) | (_, Type::Dir) => None,
+            _ => Some(arg.hash.clone()),
+        };
+        output.push(Change::new(
+            action.clone(),
+            arg.nodetype.clone(),
+            arg.file_name.clone(),
+            hash,
+        ));
+    }
+    Some(output)
+}
+pub fn delta(old_tree: &HashTreeNode, new_tree: &HashTreeNode) -> Option<Vec<Change>> {
+    let mut output: Vec<Change> = Vec::new();
     if old_tree.hash.ne(&new_tree.hash) {
         match (old_tree.nodetype, new_tree.nodetype) {
             (Type::Dir, Type::Dir) => {
+                let dir_name = &old_tree.file_name; // == &old_tree.file_name, proof by recursion
                 for child in join_sets(&get_children(&old_tree), &get_children(&new_tree)) {
                     let c0 = find(&child, &old_tree.children);
                     let c1 = find(&child, &new_tree.children);
 
                     match (c0, c1) {
                         (Some(child0), Some(child1)) => {
-							let child_output = diff(&child0, &child1)?;
-							output.added.append(&mut add_prefix(&old_tree
-								.file_name, &child_output.added)?);
-							output.edited.append(&mut add_prefix(&old_tree
-								.file_name, &child_output.edited)?);
-							output.removed.append(&mut add_prefix(&old_tree
-								.file_name, &child_output.removed)?);
+							let children_delta = delta(&child0, &child1)?;
+							output.append(&mut add_prefix(dir_name, &children_delta)?);
 						}
                         (Some(child0), None) => {
-							output.removed.append(&mut add_prefix(&old_tree
-								.file_name, &list_nodes(&child0, &Traverse::Post)?)?);
+							let child0_subtree = action_on_subtree(&child0, Action::Removed, &Traverse::Post)?;
+							output.append(&mut add_prefix(dir_name, &child0_subtree)?);
 						},
                         (None, Some(child1)) => {
-							output.added.append(&mut add_prefix(&new_tree.file_name, &list_nodes(&child1, &Traverse::Pre)?)?);
+							let child1_subtree = action_on_subtree(&child1, Action::Added, &Traverse::Pre)?;
+							output.append(&mut add_prefix(dir_name, &child1_subtree)?);
 						},
                         (None, None) => unreachable!("Unexpected error upon set union: an element in the set union does not belong in either of the two original sets"),
                     }
                 }
             }
             (type0, type1) if type0 == type1 && type0 != Type::Dir => {
-                output
-                    .edited
-                    .push((old_tree.nodetype, old_tree.file_name.clone()));
+                output.push(Change::new(
+                    Action::Edited,
+                    new_tree.nodetype.clone(),
+                    new_tree.file_name.clone(),
+                    Some(new_tree.hash.clone()),
+                ));
             }
             (type0, type1) if type0 != type1 => {
-                output
-                    .removed
-                    .append(&mut list_nodes(&old_tree, &Traverse::Post)?);
-                output
-                    .added
-                    .append(&mut list_nodes(&new_tree, &Traverse::Pre)?);
+                output.append(&mut action_on_subtree(
+                    &old_tree,
+                    Action::Removed,
+                    &Traverse::Post,
+                )?);
+                output.append(&mut action_on_subtree(
+                    &new_tree,
+                    Action::Added,
+                    &Traverse::Pre,
+                )?);
             }
             _ => unreachable!("The patterns before cover all the possible cases"),
         }
