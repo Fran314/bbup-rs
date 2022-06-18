@@ -43,16 +43,18 @@ fn main() -> std::io::Result<()> {
         let link_root = home_dir.join(link);
         // println!("{:?}", link_root);
         let hashtree_path = link_root.join(".bbup").join("hashtree.json");
-        // let old_tree = hashtree::load_tree(&hashtree_path)?;
+        let old_tree = hashtree::load_tree(&hashtree_path)?;
         let new_tree = hashtree::hash_tree(
-            &std::path::Path::new("/home/baldo/Documents/playground").to_path_buf(),
+            &std::path::Path::new("/home/baldo/Documents/playground/bbup").to_path_buf(),
             &std::path::Path::new("").to_path_buf(),
             &vec![Regex::new(".bbup/").map_err(utils::to_io_err)?],
             // &Vec::new(),
         )?;
         // println!("{:#?}", &new_tree);
-        hashtree::save_tree(&hashtree_path, &new_tree)?;
-        // println!("{:#?}", hashtree::delta(&old_tree, &new_tree));
+        // hashtree::save_tree(&hashtree_path, &new_tree)?;
+        println!("old_tree:\n{:#?}\n\n", old_tree);
+        println!("new_tree:\n{:#?}\n\n", new_tree);
+        println!("{:#?}", hashtree::delta(&old_tree, &new_tree));
         let mut stream = TcpStream::connect(format!("127.0.0.1:{}", config.settings.local_port))?;
         let mut input = String::new();
         let mut reader = BufReader::new(stream.try_clone()?);

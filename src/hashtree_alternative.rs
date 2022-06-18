@@ -2,10 +2,11 @@
 
 use crate::utils;
 
-use std::collections::HashMap;
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use base64ct::{Base64, Encoding};
 use sha2::{Digest, Sha256};
@@ -113,17 +114,17 @@ pub fn hash_tree(
         nodetype = Type::Dir;
         for entry in fs::read_dir(&full_path)? {
             let entry_name = {
-                let mut entry_path = entry?.path().to_path_buf();
+                let entry_path = entry?.path().to_path_buf();
+                let mut entry_name = entry_path
+                    .strip_prefix(<PathBuf as AsRef<Path>>::as_ref(&full_path))
+                    .map_err(utils::to_io_err)?
+                    .to_path_buf();
 
                 // Make sure that the directories end with the path separator
                 if entry_path.is_dir() {
-                    entry_path.push("");
+                    entry_name.push("");
                 }
-
-                entry_path
-                    .strip_prefix(<PathBuf as AsRef<Path>>::as_ref(&full_path))
-                    .map_err(utils::to_io_err)?
-                    .to_path_buf()
+                entry_name
             };
 
             let rel_subpath = rel_path.join(&entry_name);
@@ -184,29 +185,20 @@ fn add_prefix_to_changelist(prefix: &PathBuf, vec: &Vec<Change>) -> Vec<Change> 
 fn action_on_subtree(arg: &HashTreeNode, action: Action, mode: &Traverse) -> Vec<Change> {
     let mut output: Vec<Change> = Vec::new();
     for (key, child) in &arg.children {
-        let hash = match (action, arg.nodetype) {
+        let hash = match (action, child.nodetype) {
             (Action::Removed, _) | (_, Type::Dir) => None,
-            _ => Some(arg.hash.clone()),
+            _ => Some(child.hash.clone()),
         };
+        let child_change = Change::new(action.clone(), child.nodetype.clone(), key.clone(), hash);
         if mode == &Traverse::Pre {
-            output.push(Change::new(
-                action.clone(),
-                arg.nodetype.clone(),
-                key.clone(),
-                hash.clone(),
-            ));
+            output.push(child_change.clone());
         }
         output.append(&mut add_prefix_to_changelist(
             &key,
             &action_on_subtree(child, action, mode),
         ));
         if mode == &Traverse::Post {
-            output.push(Change::new(
-                action.clone(),
-                arg.nodetype.clone(),
-                key.clone(),
-                hash.clone(),
-            ));
+            output.push(child_change.clone());
         }
     }
     output
@@ -220,13 +212,19 @@ pub fn delta(old_tree: &HashTreeNode, new_tree: &HashTreeNode) -> Vec<Change> {
 			(Some(child0), None) => {
 				let child0_subtree = action_on_subtree(&child0, Action::Removed, &Traverse::Post);
 				output.append(&mut add_prefix_to_changelist(&key, &child0_subtree));
+				output.push(Change::new(Action::Removed, child0.nodetype.clone(), key.clone(), None));
 			},
 			(None, Some(child1)) => {
 				let child1_subtree = action_on_subtree(&child1, Action::Added, &Traverse::Pre);
+				let hash = match child1.nodetype {
+					Type::Dir => None,
+					_ => Some(child1.hash.clone()),
+				};
+				output.push(Change::new(Action::Added, child1.nodetype.clone(), key.clone(), hash));
 				output.append(&mut add_prefix_to_changelist(&key, &child1_subtree));
 			},
 			(Some(child0), Some(child1)) => {
-				if old_tree.hash.ne(&new_tree.hash) {
+				if child0.hash.ne(&child1.hash) {
 					match (child0.nodetype, child1.nodetype) {
 						(Type::Dir, Type::Dir) => {
 							let children_delta = delta(&child0, &child1);
@@ -235,7 +233,7 @@ pub fn delta(old_tree: &HashTreeNode, new_tree: &HashTreeNode) -> Vec<Change> {
 						(type0, type1) if type0 == type1 => {
 							output.push(Change::new(
 								Action::Edited,
-								type0,
+								type1,
 								key.clone(),
 								Some(child1.hash.clone())
 							));
