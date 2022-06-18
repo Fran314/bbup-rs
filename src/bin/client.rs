@@ -3,7 +3,7 @@ use std::{io::BufReader, net::TcpStream};
 
 use bbup_rust::comunications::syncrw::{read, write};
 use bbup_rust::comunications::Basic;
-use bbup_rust::hashtree_alternative as hashtree;
+use bbup_rust::hashtree;
 use bbup_rust::utils;
 
 use serde::{Deserialize, Serialize};
