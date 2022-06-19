@@ -1,3 +1,4 @@
+use crate::hashtree::HashTreeNode;
 use crate::utils;
 
 use std::fs;
@@ -36,11 +37,15 @@ impl Change {
     }
 }
 pub type Delta = Vec<Change>;
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Commit {
+    commit_id: String,
+    delta: Delta,
+}
 //--- ---//
 
 //--- SERVER STUFF ---//
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CommitList {}
+pub type CommitList = Vec<Commit>;
 //--- ---//
 
 //--- CLIENT STUFF ---//
@@ -67,6 +72,11 @@ pub enum LinkType {
 pub struct LocalConfig {
     pub link_type: LinkType,
     pub exclude_list: Vec<String>,
+}
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LastLocalUpdate {
+    pub last_known_commit: String,
+    pub old_hash_tree: HashTreeNode,
 }
 //--- ---//
 

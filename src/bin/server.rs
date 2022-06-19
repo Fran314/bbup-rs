@@ -5,17 +5,34 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
-use bbup_rust::comunications::asyncrw::{read, write};
-use bbup_rust::comunications::Basic;
+use clap::Parser;
+
+use std::path::PathBuf;
+
+use bbup_rust::comunications as com;
+use bbup_rust::fs;
 
 struct ServerState {
-    _commit_list: Vec<String>,
+    _commit_list: fs::CommitList,
+}
+
+#[derive(Parser, Debug)]
+struct Args {
+    /// Custom home directory for testing
+    #[clap(short, long, value_parser)]
+    dir: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    let args = Args::parse();
+    let _home_dir = match args.dir {
+        Some(val) => val,
+        None => dirs::home_dir().expect("could not get home directory"),
+    };
+
     let state = Arc::new(Mutex::new(ServerState {
-        _commit_list: Vec::<String>::new(),
+        _commit_list: Vec::new(),
     }));
 
     let listener = TcpListener::bind("127.0.0.1:3000").await?;
@@ -33,23 +50,25 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> std::io::
     let mut socket = BufReader::new(socket);
     let mut buffer = String::new();
 
-    write(
-        &mut socket,
-        Basic::new(0, "bbup-server, connection established"),
-    )
-    .await?;
-    let read_val: Basic = read(&mut socket, &mut buffer).await?;
-    println!("Recieved from client: {}", read_val.content);
-
     let _state = match state.try_lock() {
         Ok(val) => val,
         Err(_) => {
-            write(&mut socket, Basic::new(1, "server occupied")).await?;
+            com::asyncrw::write(
+                &mut socket,
+                com::Basic::new(1, "bbup-server, server occupied"),
+            )
+            .await?;
             return Ok(());
         }
     };
 
-    write(&mut socket, Basic::new(0, "Hello client")).await?;
+    com::asyncrw::write(
+        &mut socket,
+        com::Basic::new(0, "bbup-server, procede with last known commit"),
+    )
+    .await?;
+    let read_val: com::LastCommit = com::asyncrw::read(&mut socket, &mut buffer).await?;
+    println!("last known commit from client: {}", read_val.commit_id);
 
     Ok(())
 }
