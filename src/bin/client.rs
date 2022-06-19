@@ -1,70 +1,47 @@
-use std::fs;
 use std::{io::BufReader, net::TcpStream};
 
-use bbup_rust::comunications::syncrw::{read, write};
-use bbup_rust::comunications::Basic;
+use bbup_rust::comunications as com;
+use bbup_rust::fs;
 use bbup_rust::hashtree;
 use bbup_rust::utils;
-
-use serde::{Deserialize, Serialize};
 
 use std::path::PathBuf;
 
 use regex::Regex;
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Config {
-    settings: Settings,
-    links: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Settings {
-    local_port: u16,
-    server_port: u16,
-    host_name: String,
-    host_address: String,
-}
-
-fn read_config(path: &PathBuf) -> std::io::Result<Config> {
-    let serialized = fs::read_to_string(&path)?;
-    let ht: Config = serde_yaml::from_str(&serialized).map_err(utils::to_io_err)?;
-    Ok(ht)
-}
-
 fn main() -> std::io::Result<()> {
-    // let home_dir = dirs::home_dir().expect("Could not get home directory");
+    // FOR DEBUG AND TEST ONLY
     let home_dir = PathBuf::from("/home/baldo/Documents/playground/bbup");
-    let config_path = home_dir.join(".bbup-client").join("config.yaml");
+    // let home_dir = dirs::home_dir().expect("could not get home directory");
 
-    let config = read_config(&config_path)?;
+    let config: fs::Config = fs::load_yaml(&home_dir.join(".bbup-client").join("config.yaml"))?;
 
     for link in config.links {
         let link_root = home_dir.join(link);
-        // println!("{:?}", link_root);
+        let local_config_path = link_root.join(".bbup").join("config.yaml");
+        let link_config: fs::LocalConfig = fs::load_yaml(&local_config_path)?;
+
+        let mut exclude_list: Vec<Regex> = Vec::new();
+        exclude_list.push(Regex::new("\\.bbup/").map_err(utils::to_io_err)?);
+        for rule in link_config.exclude_list {
+            exclude_list.push(Regex::new(&rule).map_err(utils::to_io_err)?);
+        }
+
         let hashtree_path = link_root.join(".bbup").join("hashtree.json");
-        let old_tree = hashtree::load_tree(&hashtree_path)?;
-        let new_tree = hashtree::hash_tree(
-            &std::path::Path::new("/home/baldo/Documents/playground/bbup").to_path_buf(),
-            &std::path::Path::new("").to_path_buf(),
-            &vec![Regex::new(".bbup/").map_err(utils::to_io_err)?],
-            // &Vec::new(),
-        )?;
-        // println!("{:#?}", &new_tree);
-        // hashtree::save_tree(&hashtree_path, &new_tree)?;
-        println!("old_tree:\n{:#?}\n\n", old_tree);
-        println!("new_tree:\n{:#?}\n\n", new_tree);
-        println!("{:#?}", hashtree::delta(&old_tree, &new_tree));
+        let old_tree: hashtree::HashTreeNode = fs::load_json(&hashtree_path)?;
+        let new_tree = hashtree::get_hash_tree(&link_root, &exclude_list)?;
+        let local_commit = hashtree::delta(&old_tree, &new_tree);
+
         let mut stream = TcpStream::connect(format!("127.0.0.1:{}", config.settings.local_port))?;
         let mut input = String::new();
         let mut reader = BufReader::new(stream.try_clone()?);
 
-        let read_value: Basic = read(&mut reader, &mut input)?;
+        let read_value: com::Basic = com::syncrw::read(&mut reader, &mut input)?;
         println!("Recieved from server: {}", read_value.content);
 
-        write(&mut stream, Basic::new("Hello server"))?;
+        com::syncrw::write(&mut stream, com::Basic::new(0, "Hello server"))?;
 
-        let read_value: Basic = read(&mut reader, &mut input)?;
+        let read_value: com::Basic = com::syncrw::read(&mut reader, &mut input)?;
         println!("Recieved from server: {}", read_value.content);
     }
 

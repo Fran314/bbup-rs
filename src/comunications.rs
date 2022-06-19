@@ -2,11 +2,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Basic {
+    pub status: u8,
     pub content: String,
 }
 impl Basic {
-    pub fn new(content: &str) -> Basic {
+    pub fn new(status: u8, content: &str) -> Basic {
         Basic {
+            status,
             content: content.to_string(),
         }
     }
