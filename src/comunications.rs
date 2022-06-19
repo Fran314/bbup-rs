@@ -26,15 +26,15 @@ impl LastCommit {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Commit {
-    pub delta: Vec<(u8, u8, String)>,
-}
-impl Commit {
-    pub fn new(delta: Vec<(u8, u8, String)>) -> Commit {
-        Commit { delta }
-    }
-}
+// #[derive(Serialize, Deserialize, Debug)]
+// pub struct Commit {
+//     pub delta: Vec<(u8, u8, String)>,
+// }
+// impl Commit {
+//     pub fn new(delta: Vec<(u8, u8, String)>) -> Commit {
+//         Commit { delta }
+//     }
+// }
 
 pub mod syncrw {
     use serde::{Deserialize, Serialize};

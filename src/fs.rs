@@ -1,4 +1,3 @@
-use crate::hashtree::HashTreeNode;
 use crate::utils;
 
 use std::fs;
@@ -22,15 +21,20 @@ pub enum Action {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Change {
     pub action: Action,
-    pub object: ObjectType,
+    pub object_type: ObjectType,
     pub path: PathBuf,
     pub hash: Option<String>,
 }
 impl Change {
-    pub fn new(action: Action, object: ObjectType, path: PathBuf, hash: Option<String>) -> Change {
+    pub fn new(
+        action: Action,
+        object_type: ObjectType,
+        path: PathBuf,
+        hash: Option<String>,
+    ) -> Change {
         Change {
             action,
-            object,
+            object_type,
             path,
             hash,
         }
@@ -39,8 +43,8 @@ impl Change {
 pub type Delta = Vec<Change>;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Commit {
-    commit_id: String,
-    delta: Delta,
+    pub commit_id: String,
+    pub delta: Delta,
 }
 //--- ---//
 
@@ -50,15 +54,15 @@ pub type CommitList = Vec<Commit>;
 
 //--- CLIENT STUFF ---//
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Settings {
+pub struct ClientSettings {
     pub local_port: u16,
     pub server_port: u16,
     pub host_name: String,
     pub host_address: String,
 }
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Config {
-    pub settings: Settings,
+pub struct ClientConfig {
+    pub settings: ClientSettings,
     pub links: Vec<String>,
 }
 
@@ -69,14 +73,9 @@ pub enum LinkType {
     BlockInjection,
 }
 #[derive(Serialize, Deserialize, Debug)]
-pub struct LocalConfig {
+pub struct LinkConfig {
     pub link_type: LinkType,
     pub exclude_list: Vec<String>,
-}
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LastLocalUpdate {
-    pub last_known_commit: String,
-    pub old_hash_tree: HashTreeNode,
 }
 //--- ---//
 

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::utils;
 
 use crate::fs::{Action, Change, Delta, ObjectType};
