@@ -1,104 +1,107 @@
-use crate::utils;
+use crate::structs;
 
+use std::ffi::OsStr;
 use std::fs;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::path::PathBuf;
 
-//--- COMMON STUFF ---//
-#[derive(Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
-pub enum ObjectType {
-    Dir,
-    File,
-    Symlink,
+use thiserror::Error;
+
+#[derive(Debug)]
+pub enum SerdeError {
+    JSON(serde_json::Error),
+    YAML(serde_yaml::Error),
 }
-#[derive(Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
-pub enum Action {
-    Added,
-    Edited,
-    Removed,
-}
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct Change {
-    pub action: Action,
-    pub object_type: ObjectType,
-    pub path: PathBuf,
-    pub hash: Option<String>,
-}
-impl Change {
-    pub fn new(
-        action: Action,
-        object_type: ObjectType,
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Trying to read data with unknown extension on path {path:?}")]
+    UnknownExtension { path: PathBuf },
+
+    #[error("Read error: could not read file\n\tpath: {path:?}\n\terror: {error:?}")]
+    ReadError {
         path: PathBuf,
-        hash: Option<String>,
-    ) -> Change {
-        Change {
-            action,
-            object_type,
-            path,
-            hash,
-        }
-    }
+        error: std::io::Error,
+    },
+
+    #[error("Write error: could not write file\n\tpath: {path:?}\n\terror: {error:?}")]
+    WriteError {
+        path: PathBuf,
+        error: std::io::Error,
+    },
+
+    #[error(
+        "Serialization error: could not serialize content\n\tpath: {path:?}\n\terror: {error:?}"
+    )]
+    SerializationError { path: PathBuf, error: SerdeError },
+
+    #[error("Deserialization error: could not deserialize content\n\tpath: {path:?}\n\terror: {error:?}")]
+    DeserializationError {
+        path: PathBuf,
+        error: std::io::Error,
+    },
 }
-pub type Delta = Vec<Change>;
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Commit {
-    pub commit_id: String,
-    pub delta: Delta,
-}
-//--- ---//
 
 //--- SERVER STUFF ---//
-pub type CommitList = Vec<Commit>;
+pub type CommitList = Vec<structs::Commit>;
 //--- ---//
 
 //--- CLIENT STUFF ---//
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ClientSettings {
-    pub local_port: u16,
-    pub server_port: u16,
-    pub host_name: String,
-    pub host_address: String,
-}
-#[derive(Serialize, Deserialize, Debug)]
 pub struct ClientConfig {
-    pub settings: ClientSettings,
+    pub settings: structs::ClientSettings,
     pub links: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum LinkType {
-    Bijection,
-    Injection,
-    BlockInjection,
 }
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LinkConfig {
-    pub link_type: LinkType,
+    pub link_type: structs::LinkType,
     pub exclude_list: Vec<String>,
 }
 //--- ---//
 
-pub fn load_json<T: DeserializeOwned>(path: &PathBuf) -> std::io::Result<T> {
-    let serialized = fs::read_to_string(path)?;
-    let content: T = serde_json::from_str(&serialized)?;
+pub fn load<T: DeserializeOwned>(path: &PathBuf) -> std::result::Result<T, Error> {
+    let serialized = fs::read_to_string(path).map_err(|error| Error::ReadError {
+        path: path.clone(),
+        error,
+    })?;
+    let content: T = match path.extension().and_then(OsStr::to_str) {
+        Some(ext) => match ext.to_ascii_lowercase().as_str() {
+            "json" => {
+                serde_json::from_str(&serialized).map_err(|error| Error::SerializationError {
+                    path: path.clone(),
+                    error: SerdeError::JSON(error),
+                })
+            }
+            "yaml" => {
+                serde_yaml::from_str(&serialized).map_err(|error| Error::SerializationError {
+                    path: path.clone(),
+                    error: SerdeError::YAML(error),
+                })
+            }
+            _ => Err(Error::UnknownExtension { path: path.clone() }),
+        },
+        None => Err(Error::UnknownExtension { path: path.clone() }),
+    }?;
     Ok(content)
 }
-
-pub fn save_json<T: Serialize>(path: &PathBuf, content: &T) -> std::io::Result<()> {
-    let serialized = serde_json::to_string(content)?;
-    fs::write(path, serialized)?;
-    Ok(())
-}
-
-pub fn load_yaml<T: DeserializeOwned>(path: &PathBuf) -> std::io::Result<T> {
-    let serialized = fs::read_to_string(&path)?;
-    let content: T = serde_yaml::from_str(&serialized).map_err(utils::to_io_err)?;
-    Ok(content)
-}
-
-pub fn save_yaml<T: Serialize>(path: &PathBuf, content: &T) -> std::io::Result<()> {
-    let serialized = serde_yaml::to_string(content).map_err(utils::to_io_err)?;
-    fs::write(path, serialized)?;
+pub fn save<T: Serialize>(path: &PathBuf, content: &T) -> std::result::Result<(), Error> {
+    let serialized = match path.extension().and_then(OsStr::to_str) {
+        Some(ext) => match ext.to_ascii_lowercase().as_str() {
+            "json" => serde_json::to_string(content).map_err(|error| Error::SerializationError {
+                path: path.clone(),
+                error: SerdeError::JSON(error),
+            }),
+            "yaml" => serde_yaml::to_string(content).map_err(|error| Error::SerializationError {
+                path: path.clone(),
+                error: SerdeError::YAML(error),
+            }),
+            _ => Err(Error::UnknownExtension { path: path.clone() }),
+        },
+        None => Err(Error::UnknownExtension { path: path.clone() }),
+    }?;
+    fs::write(path, serialized).map_err(|error| Error::WriteError {
+        path: path.clone(),
+        error,
+    })?;
     Ok(())
 }

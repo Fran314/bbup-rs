@@ -16,3 +16,5 @@ clap = { version = "3.2.5", features = ["derive"] } # server & client (cli)
 dirs = "4.0.0" # server & client (home directory)
 tokio = { version = "1", features = ["full"] } # server (multithread)
 rand = { version = "0.8.5", features = ["small_rng"] } # random
+anyhow = "1.0"
+thiserror = "1.0"

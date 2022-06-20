@@ -1,91 +1,93 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Basic {
-    pub status: u8,
-    pub content: String,
-}
-impl Basic {
-    pub fn new(status: u8, content: &str) -> Basic {
-        Basic {
-            status,
-            content: content.to_string(),
-        }
-    }
-}
+pub struct Empty;
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct LastCommit {
-    pub commit_id: String,
+struct Message<T> {
+    status: i32,
+    content: T,
+    comment: String,
 }
-impl LastCommit {
-    pub fn new(commit_id: &str) -> LastCommit {
-        LastCommit {
-            commit_id: commit_id.to_string(),
-        }
-    }
-}
-
-// #[derive(Serialize, Deserialize, Debug)]
-// pub struct Commit {
-//     pub delta: Vec<(u8, u8, String)>,
-// }
-// impl Commit {
-//     pub fn new(delta: Vec<(u8, u8, String)>) -> Commit {
-//         Commit { delta }
-//     }
-// }
 
 pub mod syncrw {
-    use serde::{Deserialize, Serialize};
+    use serde::{de::DeserializeOwned, Serialize};
     use std::{
         io::{BufRead, BufReader, Write},
         net::TcpStream,
     };
 
-    pub fn write<T: Serialize>(socket: &mut TcpStream, content: T) -> std::io::Result<()> {
-        socket.write((serde_json::to_string(&content)? + "\n").as_bytes())?;
+    use crate::{comunications::Message, utils};
+
+    pub fn write<T: Serialize, S: std::fmt::Display>(
+        socket: &mut TcpStream,
+        status: i32,
+        content: T,
+        comment: S,
+    ) -> std::io::Result<()> {
+        let to_send = Message {
+            status,
+            content,
+            comment: comment.to_string(),
+        };
+        socket.write((serde_json::to_string(&to_send)? + "\n").as_bytes())?;
         socket.flush()?;
 
         Ok(())
     }
 
-    pub fn read<'a, T: Deserialize<'a>>(
+    pub fn read<'a, T: DeserializeOwned>(
         socket: &mut BufReader<TcpStream>,
         buffer: &'a mut String,
     ) -> std::io::Result<T> {
         buffer.clear();
         socket.read_line(buffer)?;
-        let output: T = serde_json::from_str(buffer.as_str())?;
-        Ok(output)
+        let output: Message<T> = serde_json::from_str(buffer.as_str())?;
+        match output.status {
+            0 => Ok(output.content),
+            _ => Err(utils::std_err(output.comment.as_str())),
+        }
     }
 }
 
 pub mod asyncrw {
-    use serde::{Deserialize, Serialize};
+    use crate::{comunications::Message, utils};
+
+    use serde::{de::DeserializeOwned, Serialize};
     use tokio::{
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
         net::TcpStream,
     };
-    pub async fn write<T: Serialize>(
+
+    pub async fn write<T: Serialize, S: std::fmt::Display>(
         socket: &mut BufReader<TcpStream>,
+        status: i32,
         content: T,
+        comment: S,
     ) -> std::io::Result<()> {
+        let to_send = Message {
+            status,
+            content,
+            comment: comment.to_string(),
+        };
         socket
-            .write((serde_json::to_string(&content)? + "\n").as_bytes())
+            .write((serde_json::to_string(&to_send)? + "\n").as_bytes())
             .await?;
         socket.flush().await?;
 
         Ok(())
     }
 
-    pub async fn read<'a, T: Deserialize<'a>>(
+    pub async fn read<'a, T: DeserializeOwned>(
         socket: &mut BufReader<TcpStream>,
         buffer: &'a mut String,
     ) -> std::io::Result<T> {
         buffer.clear();
         socket.read_line(buffer).await?;
-        let output: T = serde_json::from_str(buffer.as_str())?;
-        Ok(output)
+        let output: Message<T> = serde_json::from_str(buffer.as_str())?;
+        match output.status {
+            0 => Ok(output.content),
+            _ => Err(utils::std_err(output.comment.as_str())),
+        }
     }
 }

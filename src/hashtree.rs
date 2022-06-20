@@ -1,6 +1,6 @@
 use crate::utils;
 
-use crate::fs::{Action, Change, Delta, ObjectType};
+use crate::structs::{Action, Change, Delta, ObjectType};
 
 use std::{
     collections::HashMap,
