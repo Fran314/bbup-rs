@@ -56,17 +56,6 @@ fn hash_symlink(path: &PathBuf) -> std::io::Result<String> {
 
     Ok(hash_string(&outpath))
 }
-fn to_exclude(path: &PathBuf, exclude_list: &Vec<Regex>) -> std::io::Result<bool> {
-    let path_str = match path.to_str() {
-        None => {
-            return Err(utils::std_err(
-                "cannot convert path to str for exclusion check",
-            ))
-        }
-        Some(val) => val,
-    };
-    Ok(exclude_list.iter().any(|rule| rule.is_match(path_str)))
-}
 pub fn get_hash_tree(root: &PathBuf, exclude_list: &Vec<Regex>) -> std::io::Result<HashTreeNode> {
     get_hash_tree_rec(root, &std::path::Path::new("").to_path_buf(), exclude_list)
 }
@@ -99,7 +88,7 @@ fn get_hash_tree_rec(
             };
 
             let rel_subpath = rel_path.join(&entry_name);
-            if !to_exclude(&rel_subpath, exclude_list)? {
+            if !utils::to_exclude(&rel_subpath, exclude_list)? {
                 // If for some reasons the whole relative subpath is needed as key
                 //	instead of the entry name only, change
                 //		entry_name.clone()

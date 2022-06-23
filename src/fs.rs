@@ -10,8 +10,8 @@ use thiserror::Error;
 
 #[derive(Debug)]
 pub enum SerdeError {
-    JSON(serde_json::Error),
-    YAML(serde_yaml::Error),
+    SerdeJsonError(serde_json::Error),
+    SerdeYamlError(serde_yaml::Error),
 }
 #[derive(Error, Debug)]
 pub enum Error {
@@ -44,17 +44,22 @@ pub enum Error {
 
 //--- SERVER STUFF ---//
 pub type CommitList = Vec<structs::Commit>;
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ServerConfing {
+    pub archive_root: PathBuf,
+}
 //--- ---//
 
 //--- CLIENT STUFF ---//
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ClientConfig {
     pub settings: structs::ClientSettings,
     pub links: Vec<String>,
 }
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LinkConfig {
     pub link_type: structs::LinkType,
+    pub endpoint: PathBuf,
     pub exclude_list: Vec<String>,
 }
 //--- ---//
@@ -69,13 +74,13 @@ pub fn load<T: DeserializeOwned>(path: &PathBuf) -> std::result::Result<T, Error
             "json" => {
                 serde_json::from_str(&serialized).map_err(|error| Error::SerializationError {
                     path: path.clone(),
-                    error: SerdeError::JSON(error),
+                    error: SerdeError::SerdeJsonError(error),
                 })
             }
             "yaml" => {
                 serde_yaml::from_str(&serialized).map_err(|error| Error::SerializationError {
                     path: path.clone(),
-                    error: SerdeError::YAML(error),
+                    error: SerdeError::SerdeYamlError(error),
                 })
             }
             _ => Err(Error::UnknownExtension { path: path.clone() }),
@@ -89,11 +94,11 @@ pub fn save<T: Serialize>(path: &PathBuf, content: &T) -> std::result::Result<()
         Some(ext) => match ext.to_ascii_lowercase().as_str() {
             "json" => serde_json::to_string(content).map_err(|error| Error::SerializationError {
                 path: path.clone(),
-                error: SerdeError::JSON(error),
+                error: SerdeError::SerdeJsonError(error),
             }),
             "yaml" => serde_yaml::to_string(content).map_err(|error| Error::SerializationError {
                 path: path.clone(),
-                error: SerdeError::YAML(error),
+                error: SerdeError::SerdeYamlError(error),
             }),
             _ => Err(Error::UnknownExtension { path: path.clone() }),
         },

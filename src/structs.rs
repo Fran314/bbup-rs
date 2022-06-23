@@ -42,10 +42,22 @@ pub struct Commit {
     pub commit_id: String,
     pub delta: Delta,
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UpdateRequest {
+    pub endpoint: PathBuf,
+    pub lkc: String,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ClientUpdate {
+    pub root: PathBuf,
+    pub commit_id: String,
+    pub delta: Delta,
+}
 //--- ---//
 
 //--- CLIENT STUFF ---//
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ClientSettings {
     pub local_port: u16,
     pub server_port: u16,
@@ -53,7 +65,7 @@ pub struct ClientSettings {
     pub host_address: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum LinkType {
     Bijection,
     Injection,

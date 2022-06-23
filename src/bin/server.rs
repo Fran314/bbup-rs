@@ -1,19 +1,18 @@
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::{
-    io::BufReader,
-    net::{TcpListener, TcpStream},
-};
-
-use clap::Parser;
-
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use bbup_rust::{comunications as com, fs, structs};
 
 use anyhow::{Result, Context};
+use clap::Parser;
+use tokio::{
+	sync::Mutex,
+    io::BufReader,
+    net::{TcpListener, TcpStream},
+};
 
 struct ServerState {
+	home_dir: PathBuf,
+	config: fs::ServerConfing,
     commit_list: fs::CommitList,
 }
 
@@ -61,17 +60,19 @@ fn merge_delta(main: &mut structs::Delta, prec: &structs::Delta) {
     }
 }
 
-fn get_delta_from_last_known_commit(commit_list: &fs::CommitList, last_known_commit: &String) -> structs::Delta {
+fn get_update_delta(commit_list: &fs::CommitList, update_request: &structs::UpdateRequest) -> structs::Delta {
 	let mut output: structs::Delta = Vec::new();
 	for commit in commit_list.into_iter() {
-		if commit.commit_id.eq(last_known_commit)
+		if commit.commit_id.eq(&update_request.lkc)
 		{
 			break;
 		}
-
 		merge_delta(&mut output, &commit.delta);
 	}
-	output
+	output.iter().filter_map(|change| match change.path.strip_prefix(<PathBuf as AsRef<std::path::Path>>::as_ref(&update_request.endpoint)) {
+		Ok(val) => Some(structs::Change {path: val.to_path_buf(), ..change.clone() }),
+		Err(_) => None
+	}).collect()
 }
 
 #[tokio::main]
@@ -83,12 +84,17 @@ async fn main() -> Result<()> {
         None => dirs::home_dir(),
     }.context("could not resolve home_dir path")?;
 
+	fs::save(&home_dir.join(".config").join("bbup-server").join("config.yaml"), &fs::ServerConfing { archive_root: PathBuf::from("server-archive")})?;
+	let config: fs::ServerConfing = fs::load(&home_dir.join(".config").join("bbup-server").join("config.yaml"))?;
+
 	// Load server state, necessary for conversation and
 	//	"shared" between tasks (though only one can use it
 	//	at a time and those who can't have it terminate)
     let commit_list: fs::CommitList =
         fs::load(&home_dir.join(".config").join("bbup-server").join("commit-list.json"))?;
     let state = Arc::new(Mutex::new(ServerState {
+		home_dir,
+		config,
         commit_list
     }));
 
@@ -134,16 +140,16 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> std::io::
     .await?;
 
 	// [Client-PULL] recieve last known commit from client
-    let last_known_commit_by_client: String = com::asyncrw::read(&mut socket, &mut buffer).await?;
+    let update_request: structs::UpdateRequest = com::asyncrw::read(&mut socket, &mut buffer).await?;
 
 	// [Client-PULL] calculate update for client
-	let delta = get_delta_from_last_known_commit(&state.commit_list, &last_known_commit_by_client);
+	let delta = get_update_delta(&state.commit_list, &update_request);
 
 	// [Client-PULL] send update to client for pull
     com::asyncrw::write(
         &mut socket,
 		0,
-		structs::Commit { commit_id: state.commit_list[0].commit_id.clone(), delta },
+		structs::ClientUpdate { root: state.home_dir.join(&state.config.archive_root).join(&update_request.endpoint), commit_id: state.commit_list[0].commit_id.clone(), delta },
 		"update_delta since last known commit"
     )
     .await?;
