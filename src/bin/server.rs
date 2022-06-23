@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use bbup_rust::{comunications as com, fs, structs};
+use bbup_rust::comunications::BbupComunications;
 
 use anyhow::{Result, Context};
 use clap::Parser;
@@ -119,40 +120,27 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> std::io::
         Err(_) => {
 			// Could not get conversation privilege, deny conversation
 			//	and terminate stream
-            com::write(
-                &mut socket,
-				1,
-                com::Empty,
-				"bbup-server, server occupied"
-            )
+            socket.send(1, com::Empty, "bbup-server, server occupied")
             .await?;
             return Ok(());
         }
     };
 
 	// Reply with green light to conversation, send status 0 (OK)
-    com::write(
-        &mut socket,
-		0,
-        com::Empty,
-		"bbup-server, procede with last known commit"
-    )
-    .await?;
+    socket.send(0, com::Empty, "bbup-server, procede with last known commit").await?;
 
 	// [Client-PULL] recieve last known commit from client
-    let update_request: structs::UpdateRequest = com::read(&mut socket, &mut buffer).await?;
+    let update_request: structs::UpdateRequest = socket.get(&mut buffer).await?;
 
 	// [Client-PULL] calculate update for client
 	let delta = get_update_delta(&state.commit_list, &update_request);
 
 	// [Client-PULL] send update to client for pull
-    com::write(
-        &mut socket,
+    socket.send(
 		0,
 		structs::ClientUpdate { root: state.home_dir.join(&state.config.archive_root).join(&update_request.endpoint), commit_id: state.commit_list[0].commit_id.clone(), delta },
 		"update_delta since last known commit"
-    )
-    .await?;
+    ).await?;
 
 
 	// Rest of protocol

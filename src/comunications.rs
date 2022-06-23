@@ -1,7 +1,7 @@
 use crate::utils;
 
+use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
@@ -17,76 +17,46 @@ struct Message<T> {
     comment: String,
 }
 
-pub async fn write<T: Serialize, S: std::fmt::Display>(
-    socket: &mut BufReader<TcpStream>,
-    status: i32,
-    content: T,
-    comment: S,
-) -> std::io::Result<()> {
-    let to_send = Message {
-        status,
-        content,
-        comment: comment.to_string(),
-    };
-    socket
-        .write((serde_json::to_string(&to_send)? + "\n").as_bytes())
-        .await?;
-    socket.flush().await?;
+#[async_trait]
+pub trait BbupComunications {
+    async fn send<T, S>(&mut self, status: i32, content: T, comment: S) -> std::io::Result<()>
+    where
+        T: std::marker::Send + std::marker::Sync + Serialize,
+        S: std::marker::Send + std::marker::Sync + std::fmt::Display;
 
-    Ok(())
+    async fn get<'a, T>(&mut self, buffer: &'a mut String) -> std::io::Result<T>
+    where
+        T: std::marker::Send + std::marker::Sync + DeserializeOwned;
 }
 
-pub async fn read<'a, T: DeserializeOwned>(
-    socket: &mut BufReader<TcpStream>,
-    buffer: &'a mut String,
-) -> std::io::Result<T> {
-    buffer.clear();
-    socket.read_line(buffer).await?;
-    let output: Message<T> = serde_json::from_str(buffer.as_str())?;
-    match output.status {
-        0 => Ok(output.content),
-        _ => Err(utils::std_err(output.comment.as_str())),
+#[async_trait]
+impl BbupComunications for BufReader<TcpStream> {
+    async fn send<T, S>(&mut self, status: i32, content: T, comment: S) -> std::io::Result<()>
+    where
+        T: std::marker::Send + std::marker::Sync + Serialize,
+        S: std::marker::Send + std::marker::Sync + std::fmt::Display,
+    {
+        let to_send = Message {
+            status,
+            content,
+            comment: comment.to_string(),
+        };
+        self.write((serde_json::to_string(&to_send)? + "\n").as_bytes())
+            .await?;
+        self.flush().await?;
+
+        Ok(())
+    }
+    async fn get<'a, T>(&mut self, buffer: &'a mut String) -> std::io::Result<T>
+    where
+        T: std::marker::Send + std::marker::Sync + DeserializeOwned,
+    {
+        buffer.clear();
+        self.read_line(buffer).await?;
+        let output: Message<T> = serde_json::from_str(buffer.as_str())?;
+        match output.status {
+            0 => Ok(output.content),
+            _ => Err(utils::std_err(output.comment.as_str())),
+        }
     }
 }
-
-// pub mod syncrw {
-//     use serde::{de::DeserializeOwned, Serialize};
-//     use std::{
-//         io::{BufRead, BufReader, Write},
-//         net::TcpStream,
-//     };
-
-//     use crate::{comunications::Message, utils};
-
-//     pub fn write<T: Serialize, S: std::fmt::Display>(
-//         socket: &mut TcpStream,
-//         status: i32,
-//         content: T,
-//         comment: S,
-//     ) -> std::io::Result<()> {
-//         let to_send = Message {
-//             status,
-//             content,
-//             comment: comment.to_string(),
-//         };
-//         socket.write((serde_json::to_string(&to_send)? + "\n").as_bytes())?;
-//         socket.flush()?;
-
-//         Ok(())
-//     }
-
-//     pub fn read<'a, T: DeserializeOwned>(
-//         socket: &mut BufReader<TcpStream>,
-//         buffer: &'a mut String,
-//     ) -> std::io::Result<T> {
-//         buffer.clear();
-//         socket.read_line(buffer)?;
-//         let output: Message<T> = serde_json::from_str(buffer.as_str())?;
-//         match output.status {
-//             0 => Ok(output.content),
-//             _ => Err(utils::std_err(output.comment.as_str())),
-//         }
-//     }
-// }
-
-pub mod asyncrw {}

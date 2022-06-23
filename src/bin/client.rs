@@ -1,6 +1,7 @@
 use std::{io::Write, path::PathBuf};
 use tokio::{io::BufReader, net::TcpStream};
 
+use bbup_rust::comunications::BbupComunications;
 use bbup_rust::{comunications as com, fs, hashtree, structs, utils};
 
 use anyhow::{Context, Result};
@@ -67,11 +68,10 @@ fn get_local_delta(state: &mut CommitState) -> Result<()> {
     Ok(())
 }
 async fn pull_update_delta(state: &mut CommitState) -> Result<()> {
-    let mut input = String::new();
+    let mut buffer = String::new();
 
     // [PULL] Send last known commit to pull updates in case of any
-    com::write(
-        &mut state.socket,
+    state.socket.send(
         0,
 		structs::UpdateRequest {
 			endpoint: state.endpoint.clone(),
@@ -82,7 +82,9 @@ async fn pull_update_delta(state: &mut CommitState) -> Result<()> {
     .context("could not send last known commit")?;
 
     // [PULL] Get delta from last_known_commit to server's most recent commit
-    let mut update: structs::ClientUpdate = com::read(&mut state.socket, &mut input)
+    let mut update: structs::ClientUpdate = state
+        .socket
+        .get(&mut buffer)
         .await
         .context("could not get update-delta from server")?;
 
@@ -211,7 +213,11 @@ async fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathB
     // );
 
     // Await green light to procede
-    let _: com::Empty = com::read(&mut socket, &mut buffer)
+    // let _: com::Empty = com::read(&mut socket, &mut buffer)
+    //     .await
+    //     .context("could not get green light from server to procede with conversation")?;
+    let _: com::Empty = socket
+        .get(&mut buffer)
         .await
         .context("could not get green light from server to procede with conversation")?;
 
@@ -224,9 +230,7 @@ async fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathB
     );
 
     get_local_delta(&mut state)?;
-    // fs::save(&PathBuf::from("test.json"), &state.local_delta)?;
     pull_update_delta(&mut state).await?;
-    // println!("{:#?}", state.update);
     check_for_conflicts(&mut state).await?;
     download_update(&mut state).await?;
     apply_update(&mut state).await?;
