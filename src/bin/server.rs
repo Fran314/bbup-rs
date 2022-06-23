@@ -119,7 +119,7 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> std::io::
         Err(_) => {
 			// Could not get conversation privilege, deny conversation
 			//	and terminate stream
-            com::asyncrw::write(
+            com::write(
                 &mut socket,
 				1,
                 com::Empty,
@@ -131,7 +131,7 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> std::io::
     };
 
 	// Reply with green light to conversation, send status 0 (OK)
-    com::asyncrw::write(
+    com::write(
         &mut socket,
 		0,
         com::Empty,
@@ -140,13 +140,13 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> std::io::
     .await?;
 
 	// [Client-PULL] recieve last known commit from client
-    let update_request: structs::UpdateRequest = com::asyncrw::read(&mut socket, &mut buffer).await?;
+    let update_request: structs::UpdateRequest = com::read(&mut socket, &mut buffer).await?;
 
 	// [Client-PULL] calculate update for client
 	let delta = get_update_delta(&state.commit_list, &update_request);
 
 	// [Client-PULL] send update to client for pull
-    com::asyncrw::write(
+    com::write(
         &mut socket,
 		0,
 		structs::ClientUpdate { root: state.home_dir.join(&state.config.archive_root).join(&update_request.endpoint), commit_id: state.commit_list[0].commit_id.clone(), delta },

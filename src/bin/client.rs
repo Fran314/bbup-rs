@@ -1,8 +1,5 @@
-use std::{
-    io::{BufReader, Write},
-    net::TcpStream,
-    path::PathBuf,
-};
+use std::{io::Write, path::PathBuf};
+use tokio::{io::BufReader, net::TcpStream};
 
 use bbup_rust::{comunications as com, fs, hashtree, structs, utils};
 
@@ -11,10 +8,15 @@ use clap::Parser;
 use regex::Regex;
 
 #[derive(Parser, Debug)]
+#[clap(version)]
 struct Args {
     /// Custom home directory for testing
     #[clap(short, long, value_parser)]
     dir: Option<PathBuf>,
+
+    /// Custom home directory for testing
+    #[clap(short, long, value_parser)]
+    verbose: bool,
 }
 
 struct CommitState {
@@ -22,8 +24,7 @@ struct CommitState {
     config: fs::ClientConfig,
     endpoint: PathBuf,
     exclude_list: Vec<Regex>,
-    stream: TcpStream,
-    reader: BufReader<TcpStream>,
+    socket: BufReader<TcpStream>,
     last_known_commit: Option<String>,
     old_tree: Option<hashtree::HashTreeNode>,
     new_tree: Option<hashtree::HashTreeNode>,
@@ -36,16 +37,14 @@ impl CommitState {
         config: fs::ClientConfig,
         endpoint: PathBuf,
         exclude_list: Vec<Regex>,
-        stream: TcpStream,
-        reader: BufReader<TcpStream>,
+        socket: BufReader<TcpStream>,
     ) -> CommitState {
         CommitState {
             link_root,
             config,
             endpoint,
             exclude_list,
-            stream,
-            reader,
+            socket,
             last_known_commit: None,
             old_tree: None,
             new_tree: None,
@@ -67,23 +66,24 @@ fn get_local_delta(state: &mut CommitState) -> Result<()> {
     state.new_tree = Some(new_tree);
     Ok(())
 }
-fn pull_update_delta(state: &mut CommitState) -> Result<()> {
+async fn pull_update_delta(state: &mut CommitState) -> Result<()> {
     let mut input = String::new();
 
     // [PULL] Send last known commit to pull updates in case of any
-    com::syncrw::write(
-        &mut state.stream,
+    com::write(
+        &mut state.socket,
         0,
 		structs::UpdateRequest {
 			endpoint: state.endpoint.clone(),
 			lkc: state.last_known_commit.clone().context("last-known-commit is necessary for pull-update-delta call. Expected Some(_), found None")?
 		},
         "last known commit",
-    )
+    ).await
     .context("could not send last known commit")?;
 
     // [PULL] Get delta from last_known_commit to server's most recent commit
-    let mut update: structs::ClientUpdate = com::syncrw::read(&mut state.reader, &mut input)
+    let mut update: structs::ClientUpdate = com::read(&mut state.socket, &mut input)
+        .await
         .context("could not get update-delta from server")?;
 
     // [PULL] Filter out updates that match the exclude_list
@@ -97,7 +97,7 @@ fn pull_update_delta(state: &mut CommitState) -> Result<()> {
     state.update = Some(update);
     Ok(())
 }
-fn check_for_conflicts(state: &mut CommitState) -> Result<()> {
+async fn check_for_conflicts(state: &mut CommitState) -> Result<()> {
     let local_delta = &state.local_delta.clone().context(
         "local-delta is necessary for check-for-conflicts call. Expected Some(_), found None",
     )?;
@@ -124,7 +124,7 @@ fn check_for_conflicts(state: &mut CommitState) -> Result<()> {
     Ok(())
 }
 
-fn download_update(state: &mut CommitState) -> Result<()> {
+async fn download_update(state: &mut CommitState) -> Result<()> {
     let update = state
         .update
         .clone()
@@ -174,14 +174,14 @@ fn download_update(state: &mut CommitState) -> Result<()> {
     }
     Ok(())
 }
-fn apply_update(_state: &mut CommitState) -> Result<()> {
+async fn apply_update(_state: &mut CommitState) -> Result<()> {
     todo!();
 }
-fn upload_changes(_state: &mut CommitState) -> Result<()> {
+async fn upload_changes(_state: &mut CommitState) -> Result<()> {
     todo!();
 }
 
-fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathBuf) -> Result<()> {
+async fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathBuf) -> Result<()> {
     let link_root = home_dir.join(link);
 
     // Parse Link configs
@@ -198,17 +198,21 @@ fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathBuf) ->
     }
 
     // Start connection
-    let stream = TcpStream::connect(format!("127.0.0.1:{}", config.settings.local_port))
+    let socket = TcpStream::connect(format!("127.0.0.1:{}", config.settings.local_port))
+        .await
         .context("could not connect to server")?;
-    let mut input = String::new();
-    let mut reader = BufReader::new(
-        stream
-            .try_clone()
-            .context("error on converting stream to buffer reader")?,
-    );
+
+    let mut socket = BufReader::new(socket);
+    let mut buffer = String::new();
+    // let mut reader = BufReader::new(
+    //     stream
+    //         .try_clone()
+    //         .context("error on converting stream to buffer reader")?,
+    // );
 
     // Await green light to procede
-    let _: com::Empty = com::syncrw::read(&mut reader, &mut input)
+    let _: com::Empty = com::read(&mut socket, &mut buffer)
+        .await
         .context("could not get green light from server to procede with conversation")?;
 
     let mut state = CommitState::init(
@@ -216,23 +220,23 @@ fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathBuf) ->
         config.clone(),
         link_config.endpoint,
         exclude_list,
-        stream,
-        reader,
+        socket,
     );
 
     get_local_delta(&mut state)?;
     // fs::save(&PathBuf::from("test.json"), &state.local_delta)?;
-    pull_update_delta(&mut state)?;
+    pull_update_delta(&mut state).await?;
     // println!("{:#?}", state.update);
-    check_for_conflicts(&mut state)?;
-    download_update(&mut state)?;
-    apply_update(&mut state)?;
-    upload_changes(&mut state)?;
+    check_for_conflicts(&mut state).await?;
+    download_update(&mut state).await?;
+    apply_update(&mut state).await?;
+    upload_changes(&mut state).await?;
 
     Ok(())
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
     let home_dir = match args.dir {
@@ -249,7 +253,7 @@ fn main() -> Result<()> {
     )?;
 
     for link in &config.links {
-        match process_link(&link, &config, &home_dir) {
+        match process_link(&link, &config, &home_dir).await {
             Ok(_) => {
                 println!("{} correctly processed", link);
             }
