@@ -109,7 +109,7 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> std::io::Result<()> {
+async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> Result<()> {
     let (mut rx, mut tx) = socket.into_split();
 
 	// Try to lock state and get conversation privilege
