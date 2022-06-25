@@ -1,13 +1,12 @@
 use std::{path::PathBuf, sync::Arc};
 
 use bbup_rust::{comunications as com, fs, structs};
-use bbup_rust::comunications::BbupComunications;
+use bbup_rust::comunications::{BbupRead, BbupWrite};
 
 use anyhow::{Result, Context};
 use clap::Parser;
 use tokio::{
 	sync::Mutex,
-    io::BufReader,
     net::{TcpListener, TcpStream},
 };
 
@@ -111,8 +110,7 @@ async fn main() -> Result<()> {
 }
 
 async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> std::io::Result<()> {
-    let mut socket = BufReader::new(socket);
-    let mut buffer = String::new();
+    let (mut rx, mut tx) = socket.into_split();
 
 	// Try to lock state and get conversation privilege
     let state = match state.try_lock() {
@@ -120,25 +118,29 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> std::io::
         Err(_) => {
 			// Could not get conversation privilege, deny conversation
 			//	and terminate stream
-            socket.send(1, com::Empty, "bbup-server, server occupied")
+            tx.send_struct(1, com::Empty, "bbup-server, server occupied")
             .await?;
             return Ok(());
         }
     };
 
-	// Reply with green light to conversation, send status 0 (OK)
-    socket.send(0, com::Empty, "bbup-server, procede with last known commit").await?;
+	// // Reply with green light to conversation, send status 0 (OK)
+    tx.send_struct(0, com::Empty, "bbup-server, procede with last known commit").await?;
 
-	// [Client-PULL] recieve last known commit from client
-    let update_request: structs::UpdateRequest = socket.get(&mut buffer).await?;
+	// [Client-PULL] recieve last known commit from CLIENT
+    let update_request: structs::UpdateRequest = rx.get_struct().await?;
 
-	// [Client-PULL] calculate update for client
+	// // [Client-PULL] calculate update for client
 	let delta = get_update_delta(&state.commit_list, &update_request);
 
-	// [Client-PULL] send update to client for pull
-    socket.send(
+	// // [Client-PULL] send update to client for pull
+    tx.send_struct(
 		0,
-		structs::ClientUpdate { root: state.home_dir.join(&state.config.archive_root).join(&update_request.endpoint), commit_id: state.commit_list[0].commit_id.clone(), delta },
+		structs::ClientUpdate { 
+			root: state.home_dir.join(&state.config.archive_root).join(&update_request.endpoint), 
+			commit_id: state.commit_list[0].commit_id.clone(), 
+			delta 
+		},
 		"update_delta since last known commit"
     ).await?;
 

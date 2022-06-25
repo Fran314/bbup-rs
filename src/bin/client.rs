@@ -1,7 +1,10 @@
 use std::{io::Write, path::PathBuf};
-use tokio::{io::BufReader, net::TcpStream};
+use tokio::net::{
+    tcp::{OwnedReadHalf, OwnedWriteHalf},
+    TcpStream,
+};
 
-use bbup_rust::comunications::BbupComunications;
+use bbup_rust::comunications::{BbupRead, BbupWrite};
 use bbup_rust::{comunications as com, fs, hashtree, structs, utils};
 
 use anyhow::{Context, Result};
@@ -25,7 +28,6 @@ struct CommitState {
     config: fs::ClientConfig,
     endpoint: PathBuf,
     exclude_list: Vec<Regex>,
-    socket: BufReader<TcpStream>,
     last_known_commit: Option<String>,
     old_tree: Option<hashtree::HashTreeNode>,
     new_tree: Option<hashtree::HashTreeNode>,
@@ -38,14 +40,12 @@ impl CommitState {
         config: fs::ClientConfig,
         endpoint: PathBuf,
         exclude_list: Vec<Regex>,
-        socket: BufReader<TcpStream>,
     ) -> CommitState {
         CommitState {
             link_root,
             config,
             endpoint,
             exclude_list,
-            socket,
             last_known_commit: None,
             old_tree: None,
             new_tree: None,
@@ -67,11 +67,13 @@ fn get_local_delta(state: &mut CommitState) -> Result<()> {
     state.new_tree = Some(new_tree);
     Ok(())
 }
-async fn pull_update_delta(state: &mut CommitState) -> Result<()> {
-    let mut buffer = String::new();
-
+async fn pull_update_delta(
+    state: &mut CommitState,
+    rx: &mut OwnedReadHalf,
+    tx: &mut OwnedWriteHalf,
+) -> Result<()> {
     // [PULL] Send last known commit to pull updates in case of any
-    state.socket.send(
+    tx.send_struct(
         0,
 		structs::UpdateRequest {
 			endpoint: state.endpoint.clone(),
@@ -82,9 +84,8 @@ async fn pull_update_delta(state: &mut CommitState) -> Result<()> {
     .context("could not send last known commit")?;
 
     // [PULL] Get delta from last_known_commit to server's most recent commit
-    let mut update: structs::ClientUpdate = state
-        .socket
-        .get(&mut buffer)
+    let mut update: structs::ClientUpdate = rx
+        .get_struct()
         .await
         .context("could not get update-delta from server")?;
 
@@ -203,21 +204,11 @@ async fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathB
     let socket = TcpStream::connect(format!("127.0.0.1:{}", config.settings.local_port))
         .await
         .context("could not connect to server")?;
-
-    let mut socket = BufReader::new(socket);
-    let mut buffer = String::new();
-    // let mut reader = BufReader::new(
-    //     stream
-    //         .try_clone()
-    //         .context("error on converting stream to buffer reader")?,
-    // );
+    let (mut rx, mut tx) = socket.into_split();
 
     // Await green light to procede
-    // let _: com::Empty = com::read(&mut socket, &mut buffer)
-    //     .await
-    //     .context("could not get green light from server to procede with conversation")?;
-    let _: com::Empty = socket
-        .get(&mut buffer)
+    let _: com::Empty = rx
+        .get_struct()
         .await
         .context("could not get green light from server to procede with conversation")?;
 
@@ -226,11 +217,10 @@ async fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathB
         config.clone(),
         link_config.endpoint,
         exclude_list,
-        socket,
     );
 
     get_local_delta(&mut state)?;
-    pull_update_delta(&mut state).await?;
+    pull_update_delta(&mut state, &mut rx, &mut tx).await?;
     check_for_conflicts(&mut state).await?;
     download_update(&mut state).await?;
     apply_update(&mut state).await?;
