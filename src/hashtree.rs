@@ -28,6 +28,104 @@ pub struct HashTreeNode {
     pub children: HashMap<PathBuf, HashTreeNode>,
 }
 
+impl HashTreeNode {
+    pub fn apply_delta(&mut self, delta: &Delta) -> std::io::Result<()> {
+        for change in delta {
+            let mut path: Vec<PathBuf> = change
+                .path
+                .components()
+                .into_iter()
+                .map(|component| PathBuf::from(component.as_os_str()))
+                .collect();
+
+            for i in 0..(path.len() - 1) {
+                path[i] = path[i].join("");
+            }
+
+            self.apply_change(path, change.action, change.object_type, change.hash.clone())?;
+        }
+
+        Ok(())
+    }
+    pub fn apply_change(
+        &mut self,
+        path: Vec<PathBuf>,
+        action: Action,
+        object_type: ObjectType,
+        hash: Option<String>,
+    ) -> std::io::Result<()> {
+        if path.len() == 1 {
+            match action {
+                Action::Added => {
+                    let children: HashMap<PathBuf, HashTreeNode> = HashMap::new();
+                    let hash = match hash {
+                        Some(val) => val,
+                        None => hash_children(&children)?,
+                    };
+                    self.children.insert(
+                        path[0].clone(),
+                        HashTreeNode {
+                            nodetype: object_type,
+                            hash,
+                            children,
+                        },
+                    );
+                }
+                Action::Edited => {
+                    let child = self.children.get_mut(&path[0]);
+                    match child {
+                        Some(val) if val.nodetype == object_type => {
+                            val.hash = hash.ok_or(utils::std_err(
+                                "Edit action should always include an hash, broken change",
+                            ))?;
+                        }
+                        Some(_) => {
+                            return Err(utils::std_err(
+                                "Trying to edit a child with a type mismatch",
+                            ))
+                        }
+                        None => {
+                            return Err(utils::std_err(
+                                "Trying to edit a child that does not exist",
+                            ))
+                        }
+                    };
+                }
+                Action::Removed => {
+                    let child = self.children.get(&path[0]);
+                    match child {
+                        Some(val) if val.nodetype == object_type => {
+                            self.children.remove(&path[0]);
+                        }
+                        Some(_) => {
+                            return Err(utils::std_err(
+                                "Trying to remove a child with a type mismatch",
+                            ))
+                        }
+                        None => {
+                            return Err(utils::std_err(
+                                "Trying to remove a child that does not exist",
+                            ))
+                        }
+                    };
+                }
+            }
+        } else {
+            let child = self.children.get_mut(&path[0]);
+            match child {
+                Some(child) => child.apply_change(path[1..].to_vec(), action, object_type, hash)?,
+                None => {
+                    return Err(utils::std_err(
+                        "Cannot follow path to apply change: child doesn't exist",
+                    ))
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 fn hash_string(s: &str) -> String {
     let hash = Sha256::digest(s);
     Base64::encode_string(&hash)

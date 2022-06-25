@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use bbup_rust::{comunications as com, fs, structs};
+use bbup_rust::{fs, structs};
 use bbup_rust::comunications::{BbupRead, BbupWrite};
 
 use anyhow::{Result, Context};
@@ -11,8 +11,7 @@ use tokio::{
 };
 
 struct ServerState {
-	home_dir: PathBuf,
-	config: fs::ServerConfing,
+	archive_root: PathBuf,
     commit_list: fs::CommitList,
 }
 
@@ -41,19 +40,39 @@ fn merge_delta(main: &mut structs::Delta, prec: &structs::Delta) {
 
                     (structs::Action::Added, structs::Action::Edited)
 						// If object is added and later on edited, it's the same as adding it with the new content (succ hash)
-						=> main[pos] = structs::Change::new(structs::Action::Added, succ_change.object_type.clone(), succ_change.path.clone(), succ_change.hash.clone()),
+						=> main[pos] = structs::Change::new(
+							structs::Action::Added, 
+							succ_change.object_type.clone(), 
+							succ_change.path.clone(), 
+							succ_change.hash.clone()
+						),
                     (structs::Action::Added, structs::Action::Removed) 
 						// If object is added and later on removed, it's the same as not mentioning it at all
 						=> { main.remove(pos); },
                     (structs::Action::Edited, structs::Action::Edited)
 						// If object is edited twice, it's the same as editing it once with the new content (succ hash)
-						=> main[pos] = structs::Change::new(structs::Action::Edited, succ_change.object_type.clone(), succ_change.path.clone(), succ_change.hash.clone()),
+						=> main[pos] = structs::Change::new(
+							structs::Action::Edited,
+							succ_change.object_type.clone(),
+							succ_change.path.clone(),
+							succ_change.hash.clone()
+						),
                     (structs::Action::Edited, structs::Action::Removed)
 						// If object is edited and later on removed, it's the same as just removing it
-						=> main[pos] = structs::Change::new(structs::Action::Removed, succ_change.object_type.clone(), succ_change.path.clone(), None),
+						=> main[pos] = structs::Change::new(
+							structs::Action::Removed,
+							succ_change.object_type.clone(),
+							succ_change.path.clone(),
+							None
+						),
                     (structs::Action::Removed, structs::Action::Added)
 						// If object is removed and later on added, it's the same as editing it with the new content (succ hash)
-						=> main[pos] = structs::Change::new(structs::Action::Edited, succ_change.object_type.clone(), succ_change.path.clone(), succ_change.hash.clone()),
+						=> main[pos] = structs::Change::new(
+							structs::Action::Edited,
+							succ_change.object_type.clone(),
+							succ_change.path.clone(),
+							succ_change.hash.clone()
+						),
                 }
 			},
         }
@@ -84,8 +103,9 @@ async fn main() -> Result<()> {
         None => dirs::home_dir(),
     }.context("could not resolve home_dir path")?;
 
-	fs::save(&home_dir.join(".config").join("bbup-server").join("config.yaml"), &fs::ServerConfing { archive_root: PathBuf::from("server-archive")})?;
+	// fs::save(&home_dir.join(".config").join("bbup-server").join("config.yaml"), &fs::ServerConfing { archive_root: PathBuf::from("server-archive")})?;
 	let config: fs::ServerConfing = fs::load(&home_dir.join(".config").join("bbup-server").join("config.yaml"))?;
+	let archive_root = home_dir.join(&config.archive_root);
 
 	// Load server state, necessary for conversation and
 	//	"shared" between tasks (though only one can use it
@@ -93,8 +113,7 @@ async fn main() -> Result<()> {
     let commit_list: fs::CommitList =
         fs::load(&home_dir.join(".config").join("bbup-server").join("commit-list.json"))?;
     let state = Arc::new(Mutex::new(ServerState {
-		home_dir,
-		config,
+		archive_root,
         commit_list
     }));
 
@@ -118,31 +137,44 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> Result<()
         Err(_) => {
 			// Could not get conversation privilege, deny conversation
 			//	and terminate stream
-            tx.send_struct(1, com::Empty, "bbup-server, server occupied")
+			tx.send_error(1, "bbup-server, server occupied")
             .await?;
             return Ok(());
         }
     };
 
-	// // Reply with green light to conversation, send status 0 (OK)
-    tx.send_struct(0, com::Empty, "bbup-server, procede with last known commit").await?;
+	// Reply with green light to conversation, send OK
+	tx.send_ok().await?;
 
 	// [Client-PULL] recieve last known commit from CLIENT
     let update_request: structs::UpdateRequest = rx.get_struct().await?;
 
-	// // [Client-PULL] calculate update for client
+	// [Client-PULL] calculate update for client
 	let delta = get_update_delta(&state.commit_list, &update_request);
 
-	// // [Client-PULL] send update to client for pull
+	// [Client-PULL] send update to client for pull
     tx.send_struct(
-		0,
 		structs::ClientUpdate { 
-			root: state.home_dir.join(&state.config.archive_root).join(&update_request.endpoint), 
+			root: state.archive_root.join(&update_request.endpoint), 
 			commit_id: state.commit_list[0].commit_id.clone(), 
 			delta 
-		},
-		"update_delta since last known commit"
+		}
     ).await?;
+
+	loop {
+		let path: Option<PathBuf> = rx.get_struct().await?;
+		let path = match path {
+			Some(val) => val,
+			None => break
+		};
+		tx.send_file_from(&state.archive_root.join(&update_request.endpoint).join(path)).await?;
+	}
+
+
+	std::fs::remove_dir_all(state.archive_root.join("temp"))?;
+	std::fs::create_dir(state.archive_root.join("temp"))?;
+	// Reply with green light to conversation, send OK
+	tx.send_ok().await?;
 
 
 	// Rest of protocol
