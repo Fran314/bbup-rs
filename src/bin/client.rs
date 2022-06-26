@@ -205,19 +205,51 @@ async fn apply_update(state: &mut CommitState) -> Result<()> {
             let local_delta = hashtree::delta(&old_tree, &new_tree);
             state.local_delta = Some(local_delta);
         }
-        _ => {}
+        _ => todo!(),
     };
 
-    todo!();
+    Ok(())
 }
 async fn upload_changes(
-    _state: &mut CommitState,
+    state: &mut CommitState,
     rx: &mut OwnedReadHalf,
-    _tx: &mut OwnedWriteHalf,
+    tx: &mut OwnedWriteHalf,
 ) -> Result<()> {
     // Await green light to procede
     rx.check_ok().await?;
-    todo!();
+
+    let local_delta = state.local_delta.clone().context(
+        "local delta is necessary for upload-changes call. Expected Some(_), found None",
+    )?;
+
+    tx.send_struct(local_delta).await?;
+
+    loop {
+        let path: Option<PathBuf> = rx.get_struct().await?;
+        let path = match path {
+            Some(val) => val,
+            None => break,
+        };
+        tx.send_file_from(&state.link_root.join(path)).await?;
+    }
+
+    let new_commit_id: String = rx.get_struct().await?;
+
+    match &state.new_tree {
+        Some(new_tree) => {
+            fs::save(
+                &state.link_root.join(".bbup").join("old-hash-tree.json"),
+                &new_tree,
+            )?;
+            fs::save(
+                &state.link_root.join(".bbup").join("last-known-commit.json"),
+                &new_commit_id,
+            )?;
+        }
+        None => todo!(),
+    }
+
+    Ok(())
 }
 
 async fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathBuf) -> Result<()> {
@@ -246,6 +278,8 @@ async fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathB
     rx.check_ok()
         .await
         .context("could not get green light from server to procede with conversation")?;
+
+    tx.send_struct(&link_config.endpoint).await?;
 
     let mut state = CommitState::init(link_root, link_config.endpoint, exclude_list);
 
