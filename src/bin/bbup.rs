@@ -1,30 +1,42 @@
 use std::path::PathBuf;
-use tokio::net::{
-    tcp::{OwnedReadHalf, OwnedWriteHalf},
-    TcpStream,
-};
+use tokio::net::TcpStream;
 
-use bbup_rust::comunications::{BbupRead, BbupWrite};
+use bbup_rust::comunications::BbupCom;
 use bbup_rust::{fs, hashtree, structs, utils};
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use regex::Regex;
 
+#[derive(Subcommand, Debug)]
+enum SubCommand {
+    /// Pull updates from server and push local updates
+    Sync {
+        /// Increase verbosity
+        #[clap(short, long, value_parser)]
+        verbose: bool,
+
+        /// Show progress in file upload and download
+        #[clap(short, long, value_parser)]
+        progress: bool,
+
+        /// Show tcp transcript minimized
+        #[clap(short = 'A', long, value_parser)]
+        all: bool,
+    },
+    /// Initialize link
+    Init,
+}
+
 #[derive(Parser, Debug)]
-#[clap(version)]
+#[clap(name = "bbup", version)]
 struct Args {
     /// Custom home directory for testing
-    #[clap(short, long, value_parser)]
-    dir: Option<PathBuf>,
+    #[clap(long, value_parser)]
+    home_dir: Option<PathBuf>,
 
-    /// Increase verbosity
-    #[clap(short, long, value_parser)]
-    verbose: bool,
-
-    /// Show tcp transcript minimized
-    #[clap(short, long, value_parser)]
-    transcript: bool,
+    #[clap(subcommand)]
+    cmd: SubCommand,
 }
 
 struct CommitState {
@@ -65,13 +77,13 @@ fn get_local_delta(state: &mut CommitState) -> Result<()> {
     state.local_delta = Some(local_delta);
     Ok(())
 }
-async fn pull_update_delta(
-    state: &mut CommitState,
-    rx: &mut OwnedReadHalf,
-    tx: &mut OwnedWriteHalf,
-) -> Result<()> {
+async fn pull_update_delta<T, R>(state: &mut CommitState, com: &mut BbupCom<T, R>) -> Result<()>
+where
+    T: tokio::io::AsyncWrite + Unpin + Sync + Send,
+    R: tokio::io::AsyncRead + Unpin + Sync + Send,
+{
     // [PULL] Send last known commit to pull updates in case of any
-    tx.send_struct(
+    com.send_struct(
 		structs::UpdateRequest {
 			endpoint: state.endpoint.clone(),
 			lkc: state.last_known_commit.clone().context("last-known-commit is necessary for pull-update-delta call. Expected Some(_), found None")?
@@ -80,7 +92,7 @@ async fn pull_update_delta(
     .context("could not send last known commit")?;
 
     // [PULL] Get delta from last_known_commit to server's most recent commit
-    let mut update: structs::ClientUpdate = rx
+    let mut update: structs::ClientUpdate = com
         .get_struct()
         .await
         .context("could not get update-delta from server")?;
@@ -123,11 +135,11 @@ async fn check_for_conflicts(state: &mut CommitState) -> Result<()> {
     Ok(())
 }
 
-async fn download_update(
-    state: &mut CommitState,
-    rx: &mut OwnedReadHalf,
-    tx: &mut OwnedWriteHalf,
-) -> Result<()> {
+async fn download_update<T, R>(state: &mut CommitState, com: &mut BbupCom<T, R>) -> Result<()>
+where
+    T: tokio::io::AsyncWrite + Unpin + Sync + Send,
+    R: tokio::io::AsyncRead + Unpin + Sync + Send,
+{
     let update = state
         .update
         .clone()
@@ -137,8 +149,8 @@ async fn download_update(
         if change.action != structs::Action::Removed
             && change.object_type != structs::ObjectType::Dir
         {
-            tx.send_struct(Some(change.path.clone())).await?;
-            rx.get_file_to(
+            com.send_struct(Some(change.path.clone())).await?;
+            com.get_file_to(
                 &state
                     .link_root
                     .join(".bbup")
@@ -149,7 +161,7 @@ async fn download_update(
         }
     }
 
-    tx.send_struct(None::<PathBuf>).await?;
+    com.send_struct(None::<PathBuf>).await?;
     Ok(())
 }
 async fn apply_update(state: &mut CommitState) -> Result<()> {
@@ -210,30 +222,30 @@ async fn apply_update(state: &mut CommitState) -> Result<()> {
 
     Ok(())
 }
-async fn upload_changes(
-    state: &mut CommitState,
-    rx: &mut OwnedReadHalf,
-    tx: &mut OwnedWriteHalf,
-) -> Result<()> {
+async fn upload_changes<T, R>(state: &mut CommitState, com: &mut BbupCom<T, R>) -> Result<()>
+where
+    T: tokio::io::AsyncWrite + Unpin + Sync + Send,
+    R: tokio::io::AsyncRead + Unpin + Sync + Send,
+{
     // Await green light to procede
-    rx.check_ok().await?;
+    com.check_ok().await?;
 
     let local_delta = state.local_delta.clone().context(
         "local delta is necessary for upload-changes call. Expected Some(_), found None",
     )?;
 
-    tx.send_struct(local_delta).await?;
+    com.send_struct(local_delta).await?;
 
     loop {
-        let path: Option<PathBuf> = rx.get_struct().await?;
+        let path: Option<PathBuf> = com.get_struct().await?;
         let path = match path {
             Some(val) => val,
             None => break,
         };
-        tx.send_file_from(&state.link_root.join(path)).await?;
+        com.send_file_from(&state.link_root.join(path)).await?;
     }
 
-    let new_commit_id: String = rx.get_struct().await?;
+    let new_commit_id: String = com.get_struct().await?;
 
     match &state.new_tree {
         Some(new_tree) => {
@@ -272,23 +284,30 @@ async fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathB
     let socket = TcpStream::connect(format!("127.0.0.1:{}", config.settings.local_port))
         .await
         .context("could not connect to server")?;
-    let (mut rx, mut tx) = socket.into_split();
+    // let (mut rx, mut tx) = socket.into_split();
+
+    let mut com = BbupCom::from_split(socket.into_split(), true);
+
+    // com.send_file_from(&PathBuf::from("foo.txt")).await?;
+
+    // tx.send_file_from(&PathBuf::from("foo.txt")).await?;
+    // tx.send_struct(String::from("AAAAA")).await?;
 
     // Await green light to procede
-    rx.check_ok()
+    com.check_ok()
         .await
         .context("could not get green light from server to procede with conversation")?;
 
-    tx.send_struct(&link_config.endpoint).await?;
+    com.send_struct(&link_config.endpoint).await?;
 
     let mut state = CommitState::init(link_root, link_config.endpoint, exclude_list);
 
     get_local_delta(&mut state)?;
-    pull_update_delta(&mut state, &mut rx, &mut tx).await?;
+    pull_update_delta(&mut state, &mut com).await?;
     check_for_conflicts(&mut state).await?;
-    download_update(&mut state, &mut rx, &mut tx).await?;
+    download_update(&mut state, &mut com).await?;
     apply_update(&mut state).await?;
-    upload_changes(&mut state, &mut rx, &mut tx).await?;
+    upload_changes(&mut state, &mut com).await?;
 
     Ok(())
 }
@@ -297,28 +316,41 @@ async fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathB
 async fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
-    let home_dir = match args.dir {
+    let home_dir = match args.home_dir {
         Some(val) => Some(val),
         None => dirs::home_dir(),
     }
     .context("could not resolve home_dir path")?;
 
-    let config: fs::ClientConfig = fs::load(
-        &home_dir
-            .join(".config")
-            .join("bbup-client")
-            .join("config.yaml"),
-    )?;
+    match args.cmd {
+        SubCommand::Sync {
+            verbose: _verbose,
+            progress: _progress,
+            all: _all,
+        } => {
+            let config: fs::ClientConfig = fs::load(
+                &home_dir
+                    .join(".config")
+                    .join("bbup-client")
+                    .join("config.yaml"),
+            )?;
 
-    for link in &config.links {
-        match process_link(&link, &config, &home_dir).await {
-            Ok(_) => {
-                println!("{} correctly processed", link);
+            for link in &config.links {
+                match process_link(&link, &config, &home_dir).await {
+                    Ok(_) => {
+                        println!("{} correctly processed", link);
+                    }
+                    Err(err) => {
+                        println!("Failed to process link {}\n{:?}", link, err);
+                    }
+                };
             }
-            Err(err) => {
-                println!("Failed to process link {}\n{:?}", link, err);
-            }
-        };
+        }
+        SubCommand::Init => {
+            println!(
+                "eeeee \x1b[1m\x1b[33mError\x1b[34mError\x1b[36mError\x1b[0mProvaprova sa sa sa"
+            )
+        }
     }
 
     Ok(())

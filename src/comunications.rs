@@ -1,12 +1,12 @@
-use std::path::PathBuf;
-
-use async_trait::async_trait;
-use serde::{
-    de::DeserializeOwned,
-    // Deserialize,
-    Serialize,
+use std::{
+    path::PathBuf,
+    pin::Pin,
+    sync::{Arc, Mutex},
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use indicatif::{ProgressBar, ProgressStyle};
+use serde::{de::DeserializeOwned, Serialize};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use thiserror::Error;
 #[derive(Error, Debug)]
@@ -70,66 +70,158 @@ pub enum Error {
     GenericError(String),
 }
 
-// #[derive(Serialize, Deserialize, Debug)]
-// pub struct Empty;
+async fn update_progressbar(
+    len: u64,
+    bytes: Arc<Mutex<u64>>,
+    path: PathBuf,
+    done: Arc<Mutex<bool>>,
+) {
+    let pb = ProgressBar::new(len);
+    let str_path = match path.file_name().and_then(std::ffi::OsStr::to_str) {
+        Some(val) => String::from(val),
+        None => String::from(format!("{:?}", path.file_name())),
+    };
 
-// #[derive(Serialize, Deserialize, Debug)]
-// struct Message<T> {
-//     status: i32,
-//     content: T,
-//     comment: String,
-// }
+    // let style_path = String::from("\x1b[1m\x1b[36m↗\x1b[0m\t")
+    //     + str_path.clone().as_str()
+    //     + "\t\t{bytes}\t{percent}%\t{bytes_per_sec}\t{elapsed_precise}";
+    let style_path =
+        str_path.clone() + "\t\t{bytes}\t{percent}%\t{bytes_per_sec}\t{elapsed_precise}";
 
-#[async_trait]
-pub trait BbupWrite {
-    async fn send_ok(&mut self) -> Result<(), Error>;
-    async fn send_error<T>(&mut self, status: u8, error: T) -> Result<(), Error>
-    where
-        T: std::marker::Send + std::marker::Sync + std::string::ToString;
-
-    async fn send_block(&mut self, content: Vec<u8>) -> Result<(), Error>;
-
-    async fn send_struct<T>(&mut self, content: T) -> Result<(), Error>
-    where
-        T: std::marker::Send + std::marker::Sync + Serialize;
-
-    async fn send_file_from(&mut self, path: &PathBuf) -> Result<(), Error>;
-}
-#[async_trait]
-pub trait BbupRead {
-    async fn check_ok(&mut self) -> Result<(), Error>;
-
-    async fn get_block(&mut self) -> Result<Vec<u8>, Error>;
-
-    async fn get_struct<'a, T>(&mut self) -> Result<T, Error>
-    where
-        T: std::marker::Send + std::marker::Sync + DeserializeOwned;
-
-    async fn get_file_to(&mut self, path: &PathBuf) -> Result<(), Error>;
+    pb.set_style(ProgressStyle::default_bar().template(style_path.as_str()));
+    while !*done.lock().unwrap() {
+        pb.set_position(*bytes.lock().unwrap());
+        tokio::time::sleep(tokio::time::Duration::from_millis(16)).await;
+    }
+    pb.finish();
 }
 
-#[async_trait]
-impl BbupWrite for tokio::net::tcp::OwnedWriteHalf {
-    async fn send_ok(&mut self) -> Result<(), Error> {
-        // Send OK status
-        self.write_u8(0u8)
+pub struct ProgressWriter<'a, W: AsyncWrite + Unpin + Sync + Send> {
+    bytes_written: Arc<Mutex<u64>>,
+    pub writer: &'a mut W,
+}
+impl<'a, W: AsyncWrite + Unpin + Sync + Send> ProgressWriter<'a, W> {
+    pub fn new(writer: &'a mut W) -> ProgressWriter<'a, W> {
+        ProgressWriter {
+            bytes_written: Arc::new(Mutex::new(0u64)),
+            writer,
+        }
+    }
+}
+impl<'a, W: AsyncWrite + Unpin + Sync + Send> AsyncWrite for ProgressWriter<'a, W> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        match Pin::new(&mut self.writer).poll_write(cx, buf) {
+            std::task::Poll::Ready(writer) => match writer {
+                Ok(bytes) => {
+                    *self.bytes_written.lock().unwrap() += bytes as u64;
+                    std::task::Poll::Ready(Ok(bytes))
+                }
+                Err(err) => std::task::Poll::Ready(Err(err)),
+            },
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.writer).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.writer).poll_shutdown(cx)
+    }
+}
+
+pub struct ProgressReader<'a, W: AsyncRead + Unpin + Sync + Send> {
+    bytes_read: Arc<Mutex<u64>>,
+    pub reader: &'a mut W,
+}
+impl<'a, W: AsyncRead + Unpin + Sync + Send> ProgressReader<'a, W> {
+    pub fn new(reader: &'a mut W) -> ProgressReader<'a, W> {
+        ProgressReader {
+            bytes_read: Arc::new(Mutex::new(0u64)),
+            reader,
+        }
+    }
+}
+impl<'a, W: AsyncRead + Unpin + Sync + Send> AsyncRead for ProgressReader<'a, W> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match Pin::new(&mut self.reader).poll_read(cx, buf) {
+            std::task::Poll::Ready(reader) => match reader {
+                Ok(()) => {
+                    *self.bytes_read.lock().unwrap() += buf.filled().len() as u64;
+                    std::task::Poll::Ready(Ok(()))
+                }
+                Err(err) => std::task::Poll::Ready(Err(err)),
+            },
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+}
+
+pub struct BbupCom<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> {
+    tx: T,
+    rx: R,
+
+    progress: bool,
+}
+impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> BbupCom<T, R> {
+    pub fn from_split((rx, tx): (R, T), progress: bool) -> BbupCom<T, R> {
+        BbupCom { tx, rx, progress }
+    }
+    async fn send_status(&mut self, status: u8) -> Result<(), Error> {
+        self.tx
+            .write_u8(status)
             .await
             .map_err(|error| Error::WriteStatusError { error })?;
 
         Ok(())
     }
 
-    async fn send_error<T>(&mut self, status: u8, error: T) -> Result<(), Error>
+    async fn send_block(&mut self, content: Vec<u8>) -> Result<(), Error> {
+        self.tx
+            .write_u64(content.len() as u64)
+            .await
+            .map_err(|error| Error::WriteDataSizeError {
+                sendtype: "block".to_string(),
+                error,
+            })?;
+        self.tx
+            .write_all(&content)
+            .await
+            .map_err(|error| Error::WriteError { error })?;
+        self.tx
+            .flush()
+            .await
+            .map_err(|error| Error::FlushTxError { error })?;
+
+        Ok(())
+    }
+
+    pub async fn send_ok(&mut self) -> Result<(), Error> {
+        self.send_status(0u8).await?;
+        Ok(())
+    }
+
+    pub async fn send_error<S>(&mut self, status: u8, error: S) -> Result<(), Error>
     where
-        T: std::marker::Send + std::marker::Sync + std::string::ToString,
+        S: std::marker::Send + std::marker::Sync + std::string::ToString,
     {
-        // Send status
         if status == 0 {
             return Err(Error::ErrorZero);
         }
-        self.write_u8(status)
-            .await
-            .map_err(|error| Error::WriteStatusError { error })?;
+        self.send_status(status).await?;
 
         self.send_block(error.to_string().as_bytes().to_vec())
             .await?;
@@ -137,26 +229,9 @@ impl BbupWrite for tokio::net::tcp::OwnedWriteHalf {
         Ok(())
     }
 
-    async fn send_block(&mut self, content: Vec<u8>) -> Result<(), Error> {
-        self.write_u64(content.len() as u64)
-            .await
-            .map_err(|error| Error::WriteDataSizeError {
-                sendtype: "block".to_string(),
-                error,
-            })?;
-        self.write_all(&content)
-            .await
-            .map_err(|error| Error::WriteError { error })?;
-        self.flush()
-            .await
-            .map_err(|error| Error::FlushTxError { error })?;
-
-        Ok(())
-    }
-
-    async fn send_struct<T>(&mut self, content: T) -> Result<(), Error>
+    pub async fn send_struct<C>(&mut self, content: C) -> Result<(), Error>
     where
-        T: std::marker::Send + std::marker::Sync + Serialize,
+        C: std::marker::Send + std::marker::Sync + Serialize,
     {
         self.send_ok().await?;
         self.send_block(
@@ -167,7 +242,7 @@ impl BbupWrite for tokio::net::tcp::OwnedWriteHalf {
         Ok(())
     }
 
-    async fn send_file_from(&mut self, path: &PathBuf) -> Result<(), Error> {
+    pub async fn send_file_from(&mut self, path: &PathBuf) -> Result<(), Error> {
         let mut file = tokio::fs::File::open(path)
             .await
             .map_err(|error| Error::OpenFileError {
@@ -177,33 +252,67 @@ impl BbupWrite for tokio::net::tcp::OwnedWriteHalf {
 
         self.send_ok().await?;
 
-        self.write_u64(
-            file.metadata()
-                .await
-                .map_err(|error| Error::MetadataError {
-                    path: path.clone(),
-                    error,
-                })?
-                .len(),
-        )
-        .await
-        .map_err(|error| Error::WriteDataSizeError {
-            sendtype: "file".to_string(),
-            error,
-        })?;
-
-        tokio::io::copy(&mut file, &mut self)
+        let len = file
+            .metadata()
             .await
-            .map_err(|error| Error::BufferCopyError { error })?;
+            .map_err(|error| Error::MetadataError {
+                path: path.clone(),
+                error,
+            })?
+            .len();
+        self.tx
+            .write_u64(len)
+            .await
+            .map_err(|error| Error::WriteDataSizeError {
+                sendtype: "file".to_string(),
+                error,
+            })?;
+
+        if self.progress {
+            let mut pw = ProgressWriter::new(&mut self.tx);
+            let done = Arc::new(Mutex::new(false));
+            let handle = tokio::spawn(update_progressbar(
+                len,
+                pw.bytes_written.clone(),
+                path.clone(),
+                done.clone(),
+            ));
+            tokio::io::copy(&mut file, &mut pw)
+                .await
+                .map_err(|error| Error::BufferCopyError { error })?;
+
+            *done.lock().unwrap() = true;
+            handle.await.unwrap();
+        } else {
+            tokio::io::copy(&mut file, &mut self.tx)
+                .await
+                .map_err(|error| Error::BufferCopyError { error })?;
+        }
 
         Ok(())
     }
-}
 
-#[async_trait]
-impl BbupRead for tokio::net::tcp::OwnedReadHalf {
-    async fn check_ok(&mut self) -> Result<(), Error> {
+    async fn get_block(&mut self) -> Result<Vec<u8>, Error> {
+        let len = self
+            .rx
+            .read_u64()
+            .await
+            .map_err(|error| Error::ReadDataSizeError {
+                gettype: "struct".to_string(),
+                error,
+            })?;
+
+        let mut buffer = vec![0u8; len as usize];
+        self.rx
+            .read_exact(&mut buffer)
+            .await
+            .map_err(|error| Error::ReadError { error })?;
+        Ok(buffer)
+    }
+
+    pub async fn check_ok(&mut self) -> Result<(), Error> {
         let status = self
+            .rx
             .read_u8()
             .await
             .map_err(|error| Error::ReadStatusError { error })?;
@@ -217,33 +326,17 @@ impl BbupRead for tokio::net::tcp::OwnedReadHalf {
         }
     }
 
-    async fn get_block(&mut self) -> Result<Vec<u8>, Error> {
-        let len = self
-            .read_u64()
-            .await
-            .map_err(|error| Error::ReadDataSizeError {
-                gettype: "struct".to_string(),
-                error,
-            })?;
-
-        let mut buffer = vec![0u8; len as usize];
-        self.read_exact(&mut buffer)
-            .await
-            .map_err(|error| Error::ReadError { error })?;
-        Ok(buffer)
-    }
-
-    async fn get_struct<'a, T>(&mut self) -> Result<T, Error>
+    pub async fn get_struct<'a, S>(&mut self) -> Result<S, Error>
     where
-        T: std::marker::Send + std::marker::Sync + DeserializeOwned,
+        S: std::marker::Send + std::marker::Sync + DeserializeOwned,
     {
         self.check_ok().await?;
         let buffer = self.get_block().await?;
-        Ok(bincode::deserialize::<T>(&buffer[..])
+        Ok(bincode::deserialize::<S>(&buffer[..])
             .map_err(|error| Error::DeserializationError { error })?)
     }
 
-    async fn get_file_to(&mut self, path: &PathBuf) -> Result<(), Error> {
+    pub async fn get_file_to(&mut self, path: &PathBuf) -> Result<(), Error> {
         self.check_ok().await?;
         std::fs::create_dir_all(path.parent().ok_or(Error::GenericError(
             "unable to get parent of file".to_string(),
@@ -257,19 +350,46 @@ impl BbupRead for tokio::net::tcp::OwnedReadHalf {
                     error,
                 })?;
         let len = self
+            .rx
             .read_u64()
             .await
             .map_err(|error| Error::ReadDataSizeError {
                 gettype: "file".to_string(),
                 error,
             })?;
-        let mut handle = self.take(len);
-        tokio::io::copy(&mut handle, &mut file)
-            .await
-            .map_err(|error| Error::BufferCopyError { error })?;
-        file.flush()
-            .await
-            .map_err(|error| Error::FlushFileError { error })?;
+
+        if self.progress {
+            let pw = ProgressReader::new(&mut self.rx);
+            let done = Arc::new(Mutex::new(false));
+            let pb_handle = tokio::spawn(update_progressbar(
+                len,
+                pw.bytes_read.clone(),
+                path.clone(),
+                done.clone(),
+            ));
+
+            let mut handle = pw.take(len);
+            tokio::io::copy(&mut handle, &mut file)
+                .await
+                .map_err(|error| Error::BufferCopyError { error })?;
+
+            file.flush()
+                .await
+                .map_err(|error| Error::FlushFileError { error })?;
+
+            *done.lock().unwrap() = true;
+            pb_handle.await.unwrap();
+        } else {
+            let mut handle = (&mut self.rx).take(len);
+            tokio::io::copy(&mut handle, &mut file)
+                .await
+                .map_err(|error| Error::BufferCopyError { error })?;
+
+            file.flush()
+                .await
+                .map_err(|error| Error::FlushFileError { error })?;
+        }
+
         Ok(())
     }
 }

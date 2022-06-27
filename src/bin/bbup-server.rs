@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use bbup_rust::{fs, structs, random};
-use bbup_rust::comunications::{BbupRead, BbupWrite};
+// use bbup_rust::comunications::{BbupRead, BbupWrite};
 
 use anyhow::{Result, Context};
 use clap::Parser;
@@ -151,7 +151,9 @@ async fn main() -> Result<()> {
 }
 
 async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> Result<()> {
-    let (mut rx, mut tx) = socket.into_split();
+	let mut com = bbup_rust::comunications::BbupCom::from_split(socket.into_split(), false);
+    // let (mut rx, mut tx) = socket.into_split();
+	// com.get_file_to(&PathBuf::from("boo.txt")).await?;
 
 	// Try to lock state and get conversation privilege
     let mut state = match state.try_lock() {
@@ -159,25 +161,26 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> Result<()
         Err(_) => {
 			// Could not get conversation privilege, deny conversation
 			//	and terminate stream
-			tx.send_error(1, "bbup-server, server occupied")
+			com.send_error(1, "server occupied")
             .await?;
             return Ok(());
         }
     };
 
-	// Reply with green light to conversation, send OK
-	tx.send_ok().await?;
 
-	let endpoint: PathBuf = rx.get_struct().await?;
+	// Reply with green light to conversation, send OK
+	com.send_ok().await?;
+
+	let endpoint: PathBuf = com.get_struct().await?;
 
 	// [Client-PULL] recieve last known commit from CLIENT
-    let last_known_commit: String = rx.get_struct().await?;
+    let last_known_commit: String = com.get_struct().await?;
 
 	// [Client-PULL] calculate update for client
 	let delta = get_update_delta(&state.commit_list, &endpoint, last_known_commit);
 
 	// [Client-PULL] send update to client for pull
-    tx.send_struct(
+    com.send_struct(
 		structs::ClientUpdate { 
 			root: state.home_dir.join(&state.archive_root).join(&endpoint), 
 			commit_id: state.commit_list[0].commit_id.clone(), 
@@ -186,28 +189,28 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> Result<()
     ).await?;
 
 	loop {
-		let path: Option<PathBuf> = rx.get_struct().await?;
+		let path: Option<PathBuf> = com.get_struct().await?;
 		let path = match path {
 			Some(val) => val,
 			None => break
 		};
-		tx.send_file_from(&state.home_dir.join(&state.archive_root).join(&endpoint).join(path)).await?;
+		com.send_file_from(&state.home_dir.join(&state.archive_root).join(&endpoint).join(path)).await?;
 	}
 
 
 	std::fs::remove_dir_all(state.home_dir.join(&state.archive_root).join(".bbup").join("temp"))?;
 	std::fs::create_dir(state.home_dir.join(&state.archive_root).join(".bbup").join("temp"))?;
 	// Reply with green light to conversation, send OK
-	tx.send_ok().await?;
+	com.send_ok().await?;
 
-	let local_delta: structs::Delta = rx.get_struct().await?;
+	let local_delta: structs::Delta = com.get_struct().await?;
 
 	for change in &local_delta {
         if change.action != structs::Action::Removed
             && change.object_type != structs::ObjectType::Dir
         {
-            tx.send_struct(Some(change.path.clone())).await?;
-            rx.get_file_to(
+            com.send_struct(Some(change.path.clone())).await?;
+            com.get_file_to(
                 &state
 					.home_dir
 					.join(&state.archive_root)
@@ -218,7 +221,7 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> Result<()
             .await?;
         }
 	}
-    tx.send_struct(None::<PathBuf>).await?;
+    com.send_struct(None::<PathBuf>).await?;
 
 	for change in &local_delta {
         let path = state.home_dir.join(&state.archive_root).join(&endpoint).join(&change.path);
@@ -260,7 +263,7 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> Result<()
 	state.commit_list.push(structs::Commit { commit_id: commit_id.clone(), delta: local_delta });
 	state.save()?;
 
-	tx.send_struct(commit_id).await?;
+	com.send_struct(commit_id).await?;
 
 
 	// Rest of protocol
