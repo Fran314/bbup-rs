@@ -37,6 +37,37 @@ impl Change {
     }
 }
 pub type Delta = Vec<Change>;
+pub trait PrettyPrint {
+    fn pretty_print(&self, indent: u8) -> String;
+}
+impl PrettyPrint for Delta {
+    fn pretty_print(&self, indent: u8) -> String {
+        let ind = String::from("\t".repeat(indent as usize));
+        let mut output = String::new();
+        for i in 0..self.len() {
+            output += ind.as_str();
+            output += match self[i].action {
+                Action::Added => "+++  ",
+                Action::Edited => "~~~  ",
+                Action::Removed => "---  ",
+            };
+            output += match self[i].object_type {
+                ObjectType::Dir => "dir   ",
+                ObjectType::File => "file  ",
+                ObjectType::Symlink => "sylk  ",
+            };
+            match self[i].path.to_str() {
+                Some(val) => output += val,
+                None => output += format!("[non-utf8 path] {:?}", self[i].path).as_str(),
+            };
+            if i != self.len() - 1 {
+                output += "\n";
+            }
+        }
+        output
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Commit {
     pub commit_id: String,
@@ -47,12 +78,6 @@ pub struct Commit {
 pub struct UpdateRequest {
     pub endpoint: PathBuf,
     pub lkc: String,
-}
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ClientUpdate {
-    pub root: PathBuf,
-    pub commit_id: String,
-    pub delta: Delta,
 }
 //--- ---//
 

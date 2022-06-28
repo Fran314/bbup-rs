@@ -70,7 +70,12 @@ pub enum Error {
     GenericError(String),
 }
 
+enum Direction {
+    Upload,
+    Download,
+}
 async fn update_progressbar(
+    direction: Direction,
     len: u64,
     bytes: Arc<Mutex<u64>>,
     path: PathBuf,
@@ -85,8 +90,18 @@ async fn update_progressbar(
     // let style_path = String::from("\x1b[1m\x1b[36m↗\x1b[0m\t")
     //     + str_path.clone().as_str()
     //     + "\t\t{bytes}\t{percent}%\t{bytes_per_sec}\t{elapsed_precise}";
-    let style_path =
-        str_path.clone() + "\t\t{bytes}\t{percent}%\t{bytes_per_sec}\t{elapsed_precise}";
+    let style_path = match direction {
+        Direction::Upload => {
+            String::from("[upload]\t")
+                + str_path.clone().as_str()
+                + "\t\t{bytes}\t{percent}%\t{bytes_per_sec}\t{elapsed_precise}"
+        }
+        Direction::Download => {
+            String::from("[download]\t")
+                + str_path.clone().as_str()
+                + "\t\t{bytes}\t{percent}%\t{bytes_per_sec}\t{elapsed_precise}"
+        }
+    };
 
     pb.set_style(ProgressStyle::default_bar().template(style_path.as_str()));
     while !*done.lock().unwrap() {
@@ -272,6 +287,7 @@ impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> Bb
             let mut pw = ProgressWriter::new(&mut self.tx);
             let done = Arc::new(Mutex::new(false));
             let handle = tokio::spawn(update_progressbar(
+                Direction::Upload,
                 len,
                 pw.bytes_written.clone(),
                 path.clone(),
@@ -362,6 +378,7 @@ impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> Bb
             let pw = ProgressReader::new(&mut self.rx);
             let done = Arc::new(Mutex::new(false));
             let pb_handle = tokio::spawn(update_progressbar(
+                Direction::Download,
                 len,
                 pw.bytes_read.clone(),
                 path.clone(),

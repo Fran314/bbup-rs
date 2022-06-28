@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use tokio::net::TcpStream;
 
 use bbup_rust::comunications::BbupCom;
+use bbup_rust::structs::PrettyPrint;
 use bbup_rust::{fs, hashtree, structs, utils};
 
 use anyhow::{Context, Result};
@@ -16,13 +17,9 @@ enum SubCommand {
         #[clap(short, long, value_parser)]
         verbose: bool,
 
-        /// Show progress in file upload and download
+        /// Show progress during transfer
         #[clap(short, long, value_parser)]
         progress: bool,
-
-        /// Show tcp transcript minimized
-        #[clap(short = 'A', long, value_parser)]
-        all: bool,
     },
     /// Initialize link
     Init,
@@ -39,22 +36,45 @@ struct Args {
     cmd: SubCommand,
 }
 
-struct CommitState {
+struct Flags {
+    verbose: bool,
+    progress: bool,
+}
+struct Connection {
+    local_port: u16,
+    // server_port: u16,
+    // host_name: String,
+    // host_address: String,
+}
+struct ProcessConfig {
     link_root: PathBuf,
-    endpoint: PathBuf,
     exclude_list: Vec<Regex>,
+    endpoint: PathBuf,
+    connection: Connection,
+    flags: Flags,
+}
+impl ProcessConfig {
+    fn local_temp_path(&self) -> PathBuf {
+        self.link_root.join(".bbup").join("temp")
+    }
+    fn lkc_path(&self) -> PathBuf {
+        self.link_root.join(".bbup").join("last-known-commit.json")
+    }
+    fn old_tree_path(&self) -> PathBuf {
+        self.link_root.join(".bbup").join("old-hash-tree.json")
+    }
+}
+struct ProcessState {
     last_known_commit: Option<String>,
     old_tree: Option<hashtree::HashTreeNode>,
     new_tree: Option<hashtree::HashTreeNode>,
     local_delta: Option<structs::Delta>,
-    update: Option<structs::ClientUpdate>,
+    update: Option<structs::Commit>,
 }
-impl CommitState {
-    fn init(link_root: PathBuf, endpoint: PathBuf, exclude_list: Vec<Regex>) -> CommitState {
-        CommitState {
-            link_root,
-            endpoint,
-            exclude_list,
+
+impl ProcessState {
+    fn new() -> ProcessState {
+        ProcessState {
             last_known_commit: None,
             old_tree: None,
             new_tree: None,
@@ -64,250 +84,288 @@ impl CommitState {
     }
 }
 
-fn get_local_delta(state: &mut CommitState) -> Result<()> {
-    state.last_known_commit = Some(fs::load(
-        &state.link_root.join(".bbup").join("last-known-commit.json"),
-    )?);
-    let old_tree = fs::load(&state.link_root.join(".bbup").join("old-hash-tree.json"))?;
-    let new_tree = hashtree::get_hash_tree(&state.link_root, &state.exclude_list)?;
+fn get_local_delta(config: &ProcessConfig, state: &mut ProcessState) -> Result<()> {
+    if config.flags.verbose {
+        println!("calculating local delta...")
+    }
+
+    state.last_known_commit = Some(fs::load(&config.lkc_path())?);
+
+    let old_tree = fs::load(&config.old_tree_path())?;
+    let new_tree = hashtree::get_hash_tree(&config.link_root, &config.exclude_list)?;
     let local_delta = hashtree::delta(&old_tree, &new_tree);
+
+    if config.flags.verbose {
+        if local_delta.len() == 0 {
+            println!("local delta: no local changes to push")
+        } else {
+            println!("local delta:\n{}", local_delta.pretty_print(1))
+        }
+    }
+
     state.old_tree = Some(old_tree);
     state.new_tree = Some(new_tree);
-
     state.local_delta = Some(local_delta);
     Ok(())
 }
-async fn pull_update_delta<T, R>(state: &mut CommitState, com: &mut BbupCom<T, R>) -> Result<()>
+async fn pull_update_delta<T, R>(
+    config: &ProcessConfig,
+    state: &mut ProcessState,
+    com: &mut BbupCom<T, R>,
+) -> Result<()>
 where
     T: tokio::io::AsyncWrite + Unpin + Sync + Send,
     R: tokio::io::AsyncRead + Unpin + Sync + Send,
 {
-    // [PULL] Send last known commit to pull updates in case of any
-    com.send_struct(
-		structs::UpdateRequest {
-			endpoint: state.endpoint.clone(),
-			lkc: state.last_known_commit.clone().context("last-known-commit is necessary for pull-update-delta call. Expected Some(_), found None")?
-		}
-    ).await
-    .context("could not send last known commit")?;
-
-    // [PULL] Get delta from last_known_commit to server's most recent commit
-    let mut update: structs::ClientUpdate = com
-        .get_struct()
-        .await
-        .context("could not get update-delta from server")?;
-
-    // [PULL] Filter out updates that match the exclude_list
-    update.delta.retain(
-        |item| !match utils::to_exclude(&item.path, &state.exclude_list) {
-            Ok(val) => val,
-            Err(_) => false,
-        },
-    );
-
-    state.update = Some(update);
-    Ok(())
-}
-async fn check_for_conflicts(state: &mut CommitState) -> Result<()> {
-    let local_delta = &state.local_delta.clone().context(
-        "local-delta is necessary for check-for-conflicts call. Expected Some(_), found None",
-    )?;
-    let update_delta = &state
-        .update
-        .clone()
-        .context("update is necessary for check-for-conflicts call. Expected Some(_), found None")?
-        .delta;
-    let conflicts = local_delta.into_iter().any(|local_change| {
-        update_delta.into_iter().any(|update_change| {
-            if local_change.path.eq(&update_change.path) {
-                local_change.hash.ne(&update_change.hash)
-            } else {
-                local_change.path.starts_with(&update_change.path)
-                    || update_change.path.starts_with(&local_change.path)
+    match &state.last_known_commit {
+        Some(lkc) => {
+            if config.flags.verbose {
+                println!("pulling from server...")
             }
-        })
-    });
-    if conflicts {
-        return Err(anyhow::Error::new(utils::std_err(
-            "found conflicts between pulled update and local changes. Resolve manually",
-        )));
-    }
-    Ok(())
-}
+            // [PULL] Send last known commit to pull updates in case of any
+            com.send_struct(lkc)
+                .await
+                .context("could not send last known commit")?;
 
-async fn download_update<T, R>(state: &mut CommitState, com: &mut BbupCom<T, R>) -> Result<()>
-where
-    T: tokio::io::AsyncWrite + Unpin + Sync + Send,
-    R: tokio::io::AsyncRead + Unpin + Sync + Send,
-{
-    let update = state
-        .update
-        .clone()
-        .context("update is necessary for download-update call. Expected Some(_), found None")?;
+            // [PULL] Get delta from last_known_commit to server's most recent commit
+            let mut update: structs::Commit = com
+                .get_struct()
+                .await
+                .context("could not get update-delta from server")?;
 
-    for change in &update.delta {
-        if change.action != structs::Action::Removed
-            && change.object_type != structs::ObjectType::Dir
-        {
-            com.send_struct(Some(change.path.clone())).await?;
-            com.get_file_to(
-                &state
-                    .link_root
-                    .join(".bbup")
-                    .join("temp")
-                    .join(change.path.clone()),
+            // [PULL] Filter out updates that match the exclude_list
+            update.delta.retain(
+                |item| !match utils::to_exclude(&item.path, &config.exclude_list) {
+                    Ok(val) => val,
+                    Err(_) => false,
+                },
+            );
+
+            if config.flags.verbose {
+                if update.delta.len() == 0 {
+                    println!("pull delta: no missed change to pull")
+                } else {
+                    println!("pull delta:\n{}", update.delta.pretty_print(1))
+                }
+            }
+
+            state.update = Some(update);
+
+            Ok(())
+        }
+        _ => {
+            anyhow::bail!(
+                "Some part of the state was required for pull-update-delta but is missing\nstate.last_known_commit: {}",
+                &state.last_known_commit.is_some()
             )
-            .await?;
         }
     }
-
-    com.send_struct(None::<PathBuf>).await?;
-    Ok(())
 }
-async fn apply_update(state: &mut CommitState) -> Result<()> {
-    let update = state
-        .update
-        .clone()
-        .context("update is necessary for download-update call. Expected Some(_), found None")?;
-    for change in &update.delta {
-        let path = state.link_root.join(&change.path);
-        let from_temp_path = state
-            .link_root
-            .join(".bbup")
-            .join("temp")
-            .join(&change.path);
-        match (change.action, change.object_type) {
-            (structs::Action::Removed, structs::ObjectType::Dir) => std::fs::remove_dir(&path)
-                .context(format!(
-                    "could not remove directory to apply update\npath: {:?}",
-                    path
-                ))?,
-            (structs::Action::Removed, _) => std::fs::remove_file(&path).context(format!(
-                "could not remove file to apply update\npath: {:?}",
-                path
-            ))?,
-            (structs::Action::Added, structs::ObjectType::Dir) => std::fs::create_dir(&path)
-                .context(format!(
-                    "could not create directory to apply update\npath: {:?}",
-                    path
-                ))?,
-            (structs::Action::Edited, structs::ObjectType::Dir) => {
-                unreachable!("Dir cannot be edited: broken update delta")
+async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
+    match (&state.local_delta, &state.update) {
+        (
+            Some(local_delta),
+            Some(structs::Commit {
+                commit_id: _,
+                delta: update_delta,
+            }),
+        ) => {
+            let mut conflicts: Vec<(String, String)> = Vec::new();
+            local_delta.into_iter().for_each(|local_change| {
+                update_delta.into_iter().for_each(|update_change| {
+                    if (local_change.path.eq(&update_change.path)
+                        && local_change.hash.ne(&update_change.hash))
+                        || local_change.path.starts_with(&update_change.path)
+                        || update_change.path.starts_with(&local_change.path)
+                    {
+                        // TODO: make the conflic explanation a little bit better
+                        conflicts.push((
+                            format!("local_change:  {:?}", local_change.path),
+                            format!("update change: {:?}", update_change.path),
+                        ));
+                    }
+                })
+            });
+            if conflicts.len() > 0 {
+                println!("conflicts:");
+                conflicts
+                    .into_iter()
+                    .for_each(|s| println!("\t!!! {}\n\t    {}", s.0, s.1));
+                return Err(anyhow::Error::new(utils::std_err(
+                    "found conflicts between pulled update and local changes. Resolve manually",
+                )));
             }
-            (structs::Action::Added, _) | (structs::Action::Edited, _) => {
-                std::fs::copy(&from_temp_path, &path).context(format!(
-                    "could not copy file from temp to apply update\npath: {:?}",
-                    path
-                ))?;
-            }
+            Ok(())
+        }
+        _ => {
+            anyhow::bail!(
+				"Some part of the state was required for check-for-conflicts but is missing\nstate.local_delta: {}\nstate.update: {}",
+				state.local_delta.is_some(),
+				state.update.is_some(),
+			)
         }
     }
-    match (&mut state.old_tree, &state.new_tree) {
-        (Some(old_tree), Some(new_tree)) => {
-            old_tree.apply_delta(&update.delta)?;
-            fs::save(
-                &state.link_root.join(".bbup").join("old-hash-tree.json"),
-                &old_tree,
-            )?;
-            fs::save(
-                &state.link_root.join(".bbup").join("last-known-commit.json"),
-                &update.commit_id,
-            )?;
-
-            let local_delta = hashtree::delta(&old_tree, &new_tree);
-            state.local_delta = Some(local_delta);
-        }
-        _ => todo!(),
-    };
-
-    Ok(())
 }
-async fn upload_changes<T, R>(state: &mut CommitState, com: &mut BbupCom<T, R>) -> Result<()>
+
+async fn download_update<T, R>(
+    config: &ProcessConfig,
+    state: &mut ProcessState,
+    com: &mut BbupCom<T, R>,
+) -> Result<()>
 where
     T: tokio::io::AsyncWrite + Unpin + Sync + Send,
     R: tokio::io::AsyncRead + Unpin + Sync + Send,
 {
-    // Await green light to procede
-    com.check_ok().await?;
+    match &state.update {
+        Some(structs::Commit {
+            commit_id: _,
+            delta: update_delta,
+        }) => {
+            for change in update_delta {
+                if change.action != structs::Action::Removed
+                    && change.object_type != structs::ObjectType::Dir
+                {
+                    com.send_struct(Some(change.path.clone())).await?;
+                    com.get_file_to(&config.local_temp_path().join(change.path.clone()))
+                        .await?;
+                }
+            }
 
-    let local_delta = state.local_delta.clone().context(
-        "local delta is necessary for upload-changes call. Expected Some(_), found None",
-    )?;
-
-    com.send_struct(local_delta).await?;
-
-    loop {
-        let path: Option<PathBuf> = com.get_struct().await?;
-        let path = match path {
-            Some(val) => val,
-            None => break,
-        };
-        com.send_file_from(&state.link_root.join(path)).await?;
-    }
-
-    let new_commit_id: String = com.get_struct().await?;
-
-    match &state.new_tree {
-        Some(new_tree) => {
-            fs::save(
-                &state.link_root.join(".bbup").join("old-hash-tree.json"),
-                &new_tree,
-            )?;
-            fs::save(
-                &state.link_root.join(".bbup").join("last-known-commit.json"),
-                &new_commit_id,
-            )?;
+            com.send_struct(None::<PathBuf>).await?;
+            Ok(())
         }
-        None => todo!(),
+        _ => {
+            anyhow::bail!(
+				"Some part of the state was required for download-update but is missing\nstate.update: {}",
+				state.update.is_some(),
+			)
+        }
     }
+}
+async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> Result<()> {
+    match (&state.update, &mut state.old_tree) {
+        (
+            Some(structs::Commit {
+                commit_id,
+                delta: update_delta,
+            }),
+            Some(old_tree),
+        ) => {
+            for change in update_delta {
+                let path = config.link_root.join(&change.path);
+                let from_temp_path = config.local_temp_path().join(&change.path);
+                match (change.action, change.object_type) {
+                    (structs::Action::Removed, structs::ObjectType::Dir) => {
+                        std::fs::remove_dir(&path).context(format!(
+                            "could not remove directory to apply update\npath: {:?}",
+                            path
+                        ))?
+                    }
+                    (structs::Action::Removed, _) => std::fs::remove_file(&path).context(
+                        format!("could not remove file to apply update\npath: {:?}", path),
+                    )?,
+                    (structs::Action::Added, structs::ObjectType::Dir) => {
+                        std::fs::create_dir(&path).context(format!(
+                            "could not create directory to apply update\npath: {:?}",
+                            path
+                        ))?
+                    }
+                    (structs::Action::Edited, structs::ObjectType::Dir) => {
+                        unreachable!("Dir cannot be edited: broken update delta")
+                    }
+                    (structs::Action::Added, _) | (structs::Action::Edited, _) => {
+                        std::fs::copy(&from_temp_path, &path).context(format!(
+                            "could not copy file from temp to apply update\npath: {:?}",
+                            path
+                        ))?;
+                    }
+                }
+            }
+            old_tree.apply_delta(update_delta)?;
+            let new_tree = hashtree::get_hash_tree(&config.link_root, &config.exclude_list)?;
+            let local_delta = hashtree::delta(&old_tree, &new_tree);
 
-    Ok(())
+            state.new_tree = Some(new_tree);
+            state.local_delta = Some(local_delta);
+
+            fs::save(&config.old_tree_path(), &old_tree)?;
+            fs::save(&config.lkc_path(), commit_id)?;
+
+            Ok(())
+        }
+        _ => {
+            anyhow::bail!(
+				"Some part of the state was required for apply-update but is missing\nstate.update: {}\nstate.old_tree: {}",
+				state.update.is_some(),
+				state.old_tree.is_some(),
+			)
+        }
+    }
+}
+async fn upload_changes<T, R>(
+    config: &ProcessConfig,
+    state: &mut ProcessState,
+    com: &mut BbupCom<T, R>,
+) -> Result<()>
+where
+    T: tokio::io::AsyncWrite + Unpin + Sync + Send,
+    R: tokio::io::AsyncRead + Unpin + Sync + Send,
+{
+    match (&state.local_delta, &state.new_tree) {
+        (Some(local_delta), Some(new_tree)) => {
+            // Await green light to procede
+            com.check_ok().await?;
+
+            com.send_struct(local_delta).await?;
+
+            loop {
+                let path: Option<PathBuf> = com.get_struct().await?;
+                let path = match path {
+                    Some(val) => val,
+                    None => break,
+                };
+                com.send_file_from(&config.link_root.join(path)).await?;
+            }
+
+            let new_commit_id: String = com.get_struct().await?;
+
+            fs::save(&config.old_tree_path(), &new_tree)?;
+            fs::save(&config.lkc_path(), &new_commit_id)?;
+
+            Ok(())
+        }
+        _ => {
+            anyhow::bail!(
+				"Some part of the state was required for upload-changes but is missing\nstate.local_delta: {}\nstate.new_tree: {}",
+				state.local_delta.is_some(),
+				state.new_tree.is_some(),
+			)
+        }
+    }
 }
 
-async fn process_link(link: &String, config: &fs::ClientConfig, home_dir: &PathBuf) -> Result<()> {
-    let link_root = home_dir.join(link);
-
-    // Parse Link configs
-    let link_config: fs::LinkConfig = fs::load(&link_root.join(".bbup").join("config.yaml"))?;
-    let mut exclude_list: Vec<Regex> = Vec::new();
-    exclude_list
-        .push(Regex::new("\\.bbup/").context("could not generate regex from .bbup pattern")?);
-    for rule in &link_config.exclude_list {
-        exclude_list.push(
-            Regex::new(&rule).context(
-                "could not generate regex from pattern from exclude_list in link config",
-            )?,
-        );
-    }
-
+async fn process_link(config: ProcessConfig) -> Result<()> {
     // Start connection
-    let socket = TcpStream::connect(format!("127.0.0.1:{}", config.settings.local_port))
+    let socket = TcpStream::connect(format!("127.0.0.1:{}", config.connection.local_port))
         .await
         .context("could not connect to server")?;
-    // let (mut rx, mut tx) = socket.into_split();
-
-    let mut com = BbupCom::from_split(socket.into_split(), true);
-
-    // com.send_file_from(&PathBuf::from("foo.txt")).await?;
-
-    // tx.send_file_from(&PathBuf::from("foo.txt")).await?;
-    // tx.send_struct(String::from("AAAAA")).await?;
+    let mut com = BbupCom::from_split(socket.into_split(), config.flags.progress);
 
     // Await green light to procede
     com.check_ok()
         .await
         .context("could not get green light from server to procede with conversation")?;
 
-    com.send_struct(&link_config.endpoint).await?;
+    com.send_struct(&config.endpoint).await?;
 
-    let mut state = CommitState::init(link_root, link_config.endpoint, exclude_list);
+    let mut state = ProcessState::new();
 
-    get_local_delta(&mut state)?;
-    pull_update_delta(&mut state, &mut com).await?;
+    get_local_delta(&config, &mut state)?;
+    pull_update_delta(&config, &mut state, &mut com).await?;
     check_for_conflicts(&mut state).await?;
-    download_update(&mut state, &mut com).await?;
-    apply_update(&mut state).await?;
-    upload_changes(&mut state, &mut com).await?;
+    download_update(&config, &mut state, &mut com).await?;
+    apply_update(&config, &mut state).await?;
+    upload_changes(&config, &mut state, &mut com).await?;
 
     Ok(())
 }
@@ -322,34 +380,69 @@ async fn main() -> Result<()> {
     }
     .context("could not resolve home_dir path")?;
 
-    match args.cmd {
-        SubCommand::Sync {
-            verbose: _verbose,
-            progress: _progress,
-            all: _all,
-        } => {
-            let config: fs::ClientConfig = fs::load(
-                &home_dir
-                    .join(".config")
-                    .join("bbup-client")
-                    .join("config.yaml"),
-            )?;
+    let cwd = std::env::current_dir()?;
 
-            for link in &config.links {
-                match process_link(&link, &config, &home_dir).await {
-                    Ok(_) => {
-                        println!("{} correctly processed", link);
-                    }
-                    Err(err) => {
-                        println!("Failed to process link {}\n{:?}", link, err);
-                    }
-                };
+    let global_config: fs::ClientConfig = fs::load(
+        &home_dir
+            .join(".config")
+            .join("bbup-client")
+            .join("config.yaml"),
+    )?;
+
+    match args.cmd {
+        SubCommand::Sync { verbose, progress } => {
+            if !cwd.join(".bbup").exists() || !cwd.join(".bbup").join("config.yaml").exists() {
+                anyhow::bail!(
+                    "Current directory [{:?}] isn't initialized as a backup source",
+                    cwd
+                )
             }
+
+            let link_root = cwd.clone();
+
+            // Parse Link configs
+            let local_config: fs::LinkConfig =
+                fs::load(&link_root.join(".bbup").join("config.yaml"))?;
+
+            let mut exclude_list: Vec<Regex> = Vec::new();
+            exclude_list.push(Regex::new("\\.bbup/").unwrap());
+            for rule in &local_config.exclude_list {
+                exclude_list.push(Regex::new(&rule).context(
+                    "could not generate regex from pattern from exclude_list in link config",
+                )?);
+            }
+
+            let connection = Connection {
+                local_port: global_config.settings.local_port,
+                // server_port: global_config.settings.server_port,
+                // host_name: global_config.settings.host_name.clone(),
+                // host_address: global_config.settings.host_address.clone(),
+            };
+            let flags = Flags { verbose, progress };
+            let config = ProcessConfig {
+                link_root,
+                exclude_list,
+                endpoint: local_config.endpoint,
+                connection,
+                flags,
+            };
+
+            if verbose {
+                println!("Syncing link: [{:?}]", cwd);
+            }
+            match process_link(config).await {
+                Ok(()) => {
+                    if verbose {
+                        println!("Link correctly synced: [{:?}] ", cwd);
+                    }
+                }
+                Err(err) => {
+                    println!("Failed to sync link [{:?}]\n{:?}", cwd, err);
+                }
+            };
         }
         SubCommand::Init => {
-            println!(
-                "eeeee \x1b[1m\x1b[33mError\x1b[34mError\x1b[36mError\x1b[0mProvaprova sa sa sa"
-            )
+            println!("not implemented yet");
         }
     }
 

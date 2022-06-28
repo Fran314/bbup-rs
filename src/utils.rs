@@ -16,3 +16,16 @@ pub fn to_exclude(
     };
     Ok(exclude_list.iter().any(|rule| rule.is_match(path_str)))
 }
+
+trait OkOrDefault<T> {
+    fn ok_or_def(self, default: T) -> T;
+}
+
+impl<T> OkOrDefault<T> for Option<T> {
+    fn ok_or_def(self, default: T) -> T {
+        match self {
+            Some(val) => val,
+            None => default,
+        }
+    }
+}

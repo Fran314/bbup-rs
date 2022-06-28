@@ -181,8 +181,7 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> Result<()
 
 	// [Client-PULL] send update to client for pull
     com.send_struct(
-		structs::ClientUpdate { 
-			root: state.home_dir.join(&state.archive_root).join(&endpoint), 
+		structs::Commit { 
 			commit_id: state.commit_list[0].commit_id.clone(), 
 			delta 
 		}
