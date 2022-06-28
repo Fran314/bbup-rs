@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use regex::Regex;
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, PartialEq)]
 enum SubCommand {
     /// Pull updates from server and push local updates
     Sync {
@@ -23,6 +23,8 @@ enum SubCommand {
     },
     /// Initialize link
     Init,
+    /// Initialize bbup client
+    Setup,
 }
 
 #[derive(Parser, Debug)]
@@ -379,8 +381,46 @@ async fn main() -> Result<()> {
         None => dirs::home_dir(),
     }
     .context("could not resolve home_dir path")?;
-
     let cwd = std::env::current_dir()?;
+
+    if args.cmd == SubCommand::Setup {
+        if home_dir.join(".config").join("bbup-client").exists()
+            && home_dir
+                .join(".config")
+                .join("bbup-client")
+                .join("config.yaml")
+                .exists()
+        {
+            anyhow::bail!("bbup client is already setup");
+        }
+
+        let local_port = io::get_input("enter local port (0-65535): ")?.parse::<u16>()?;
+        let server_port = io::get_input("enter server port (0-65535): ")?.parse::<u16>()?;
+        let host_name = io::get_input("enter host name: ")?;
+        let host_address = io::get_input("enter host address: ")?;
+
+        std::fs::create_dir_all(home_dir.join(".config").join("bbup-client"))?;
+        let settings = structs::ClientSettings {
+            local_port,
+            server_port,
+            host_name,
+            host_address,
+        };
+        fs::save(
+            &home_dir
+                .join(".config")
+                .join("bbup-client")
+                .join("config.yaml"),
+            &fs::ClientConfig {
+                settings,
+                links: Vec::new(),
+            },
+        )?;
+
+        println!("bbup client set up correctly!");
+
+        return Ok(());
+    }
 
     let global_config: fs::ClientConfig = fs::load(
         &home_dir
@@ -388,6 +428,55 @@ async fn main() -> Result<()> {
             .join("bbup-client")
             .join("config.yaml"),
     )?;
+
+    if args.cmd == SubCommand::Init {
+        if cwd.join(".bbup").exists() && cwd.join(".bbup").join("config.yaml").exists() {
+            anyhow::bail!(
+                "Current directory [{:?}] is already initialized as a backup source",
+                cwd
+            )
+        }
+        if !cwd.join(".bbup").exists() {
+            std::fs::create_dir_all(cwd.join(".bbup"))?;
+        }
+        let endpoint = PathBuf::from(io::get_input("set endpoint (relative to archive root): ")?);
+        let add_exclude_list = io::get_input("add exclude list [Y/n]?: ")?;
+        let mut exclude_list: Vec<String> = Vec::new();
+        if !add_exclude_list.eq("n") && !add_exclude_list.eq("N") {
+            println!("add regex rules in string form. To stop, enter empty string");
+            loop {
+                let rule = io::get_input("rule: ")?;
+                if rule.eq("") {
+                    break;
+                }
+                exclude_list.push(rule);
+            }
+        }
+        let local_config = fs::LinkConfig {
+            link_type: structs::LinkType::Bijection,
+            endpoint,
+            exclude_list: exclude_list.clone(),
+        };
+
+        let mut exclude_list_regex: Vec<Regex> = Vec::new();
+        exclude_list_regex.push(Regex::new("\\.bbup/").unwrap());
+        for rule in &exclude_list {
+            exclude_list_regex.push(Regex::new(&rule).context(
+                "could not generate regex from pattern from exclude_list in link config",
+            )?);
+        }
+        fs::save(&cwd.join(".bbup").join("config.yaml"), &local_config)?;
+        let tree = hashtree::get_hash_tree(&cwd, &exclude_list_regex)?;
+        fs::save(&cwd.join(".bbup").join("old-hash-tree.json"), &tree)?;
+        fs::save(
+            &cwd.join(".bbup").join("last-known-commit.json"),
+            &String::from("0").repeat(64),
+        )?;
+
+        println!("backup source initialized correctly!");
+
+        return Ok(());
+    }
 
     match args.cmd {
         SubCommand::Sync { verbose, progress } => {
@@ -438,50 +527,7 @@ async fn main() -> Result<()> {
                 }
             };
         }
-        SubCommand::Init => {
-            if cwd.join(".bbup").exists() && cwd.join(".bbup").join("config.yaml").exists() {
-                anyhow::bail!(
-                    "Current directory [{:?}] is already initialized as a backup source",
-                    cwd
-                )
-            }
-            if !cwd.join(".bbup").exists() {
-                std::fs::create_dir(cwd.join(".bbup"))?;
-            }
-            let endpoint = PathBuf::from(io::get_input("set endpoint: ")?);
-            let add_exclude_list = io::get_input("add exclude list [Y/n]?: ")?;
-            let mut exclude_list: Vec<String> = Vec::new();
-            if !add_exclude_list.eq("n") && !add_exclude_list.eq("N") {
-                println!("add regex rules in string form. To stop, enter empty string");
-                loop {
-                    let rule = io::get_input("rule: ")?;
-                    if rule.eq("") {
-                        break;
-                    }
-                    exclude_list.push(rule);
-                }
-            }
-            let local_config = fs::LinkConfig {
-                link_type: structs::LinkType::Bijection,
-                endpoint,
-                exclude_list: exclude_list.clone(),
-            };
-
-            let mut exclude_list_regex: Vec<Regex> = Vec::new();
-            exclude_list_regex.push(Regex::new("\\.bbup/").unwrap());
-            for rule in &exclude_list {
-                exclude_list_regex.push(Regex::new(&rule).context(
-                    "could not generate regex from pattern from exclude_list in link config",
-                )?);
-            }
-            fs::save(&cwd.join(".bbup").join("config.yaml"), &local_config)?;
-            let tree = hashtree::get_hash_tree(&cwd, &exclude_list_regex)?;
-            fs::save(&cwd.join(".bbup").join("old-hash-tree.json"), &tree)?;
-            fs::save(
-                &cwd.join(".bbup").join("last-known-commit.json"),
-                &String::new(),
-            )?;
-        }
+        _ => { /* already handled */ }
     }
 
     Ok(())

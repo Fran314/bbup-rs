@@ -45,7 +45,8 @@ pub enum Error {
 //--- SERVER STUFF ---//
 pub type CommitList = Vec<structs::Commit>;
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServerConfing {
+pub struct ServerConfig {
+    pub server_port: u16,
     pub archive_root: PathBuf,
 }
 //--- ---//

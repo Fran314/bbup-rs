@@ -1,10 +1,10 @@
 use std::{path::PathBuf, sync::Arc};
 
-use bbup_rust::{fs, structs, random};
+use bbup_rust::{fs, structs, random, io};
 // use bbup_rust::comunications::{BbupRead, BbupWrite};
 
 use anyhow::{Result, Context};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tokio::{
 	sync::Mutex,
     net::{TcpListener, TcpStream},
@@ -13,12 +13,13 @@ use tokio::{
 struct ServerState {
 	home_dir: PathBuf,
 	archive_root: PathBuf,
+	server_port: u16,
     commit_list: fs::CommitList,
 }
 
 impl ServerState {
 	pub fn load(home_dir: PathBuf) -> Result<ServerState> {
-		let config: fs::ServerConfing = fs::load(&home_dir.join(".config").join("bbup-server").join("config.yaml"))?;
+		let config: fs::ServerConfig = fs::load(&home_dir.join(".config").join("bbup-server").join("config.yaml"))?;
 
 		// Load server state, necessary for conversation and
 		//	"shared" between tasks (though only one can use it
@@ -28,6 +29,7 @@ impl ServerState {
 		Ok(ServerState {
 			home_dir: home_dir,
 			archive_root: config.archive_root,
+			server_port: config.server_port,
 			commit_list
 		})
 	}
@@ -35,7 +37,7 @@ impl ServerState {
 	pub fn save(&mut self) -> Result<()> {
 		fs::save(
 			&self.home_dir.join(".config").join("bbup-server").join("config.yaml"),
-			&fs::ServerConfing { archive_root: self.archive_root.clone()}
+			&fs::ServerConfig { server_port: self.server_port, archive_root: self.archive_root.clone()}
 		)?;
 		fs::save(
 			&self.home_dir.join(".config").join("bbup-server").join("commit-list.json"),
@@ -46,11 +48,22 @@ impl ServerState {
 	}
 }
 
+#[derive(Subcommand, Debug, PartialEq)]
+enum SubCommand {
+    /// Run the daemon
+    Run,
+    /// Initialize bbup client
+    Setup,
+}
+
 #[derive(Parser, Debug)]
 struct Args {
     /// Custom home directory for testing
-    #[clap(short, long, value_parser)]
-    dir: Option<PathBuf>,
+    #[clap(long, value_parser)]
+    home_dir: Option<PathBuf>,
+
+    #[clap(subcommand)]
+    cmd: SubCommand,
 }
 
 fn merge_delta(main: &mut structs::Delta, prec: &structs::Delta) {
@@ -129,18 +142,44 @@ fn get_update_delta(commit_list: &fs::CommitList, endpoint: &PathBuf, lkc: Strin
 async fn main() -> Result<()> {
 	// Parse command line arguments
     let args = Args::parse();
-    let home_dir = match args.dir {
+    let home_dir = match args.home_dir {
         Some(val) => Some(val),
         None => dirs::home_dir(),
     }.context("could not resolve home_dir path")?;
 
+	if args.cmd == SubCommand::Setup {
+		if home_dir.join(".config").join("bbup-server").exists()
+            && home_dir
+                .join(".config")
+                .join("bbup-server")
+                .join("config.yaml")
+                .exists()
+        {
+            anyhow::bail!("bbup server is already setup");
+        }
+
+        std::fs::create_dir_all(home_dir.join(".config").join("bbup-server"))?;
+        let server_port = io::get_input("enter server port (0-65535): ")?.parse::<u16>()?;
+		let archive_root = PathBuf::from(io::get_input("enter archive root (relative to ~): ")?);
+		fs::save(&home_dir.join(".config").join("bbup-server").join("config.yaml"), &fs::ServerConfig { server_port, archive_root })?;
+
+		let mut commit_list: fs::CommitList = Vec::new();
+		commit_list.push(structs::Commit { commit_id: String::from("0").repeat(64), delta: Vec::new() });
+		fs::save(&home_dir.join(".config").join("bbup-server").join("commit-list.json"), &commit_list)?;
+
+        println!("bbup server set up correctly!");
+
+		return Ok(());
+	}
+
 	// Load server state, necessary for conversation and
 	//	"shared" between tasks (though only one can use it
 	//	at a time and those who can't have it terminate)
-    let state = Arc::new(Mutex::new(ServerState::load(home_dir)?));
+	let state = ServerState::load(home_dir)?;
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", state.server_port)).await?;
+    let state = Arc::new(Mutex::new(state));
 
 	// Start TCP server and spawn a task for each connection
-    let listener = TcpListener::bind("127.0.0.1:3000").await?;
     loop {
         let (socket, _) = listener.accept().await?;
         let state = state.clone();
