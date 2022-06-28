@@ -3,9 +3,9 @@ use tokio::net::TcpStream;
 
 use bbup_rust::comunications::BbupCom;
 use bbup_rust::structs::PrettyPrint;
-use bbup_rust::{fs, hashtree, structs, utils};
+use bbup_rust::{fs, hashtree, io, structs, utils};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use regex::Regex;
 
@@ -398,11 +398,8 @@ async fn main() -> Result<()> {
                 )
             }
 
-            let link_root = cwd.clone();
-
             // Parse Link configs
-            let local_config: fs::LinkConfig =
-                fs::load(&link_root.join(".bbup").join("config.yaml"))?;
+            let local_config: fs::LinkConfig = fs::load(&cwd.join(".bbup").join("config.yaml"))?;
 
             let mut exclude_list: Vec<Regex> = Vec::new();
             exclude_list.push(Regex::new("\\.bbup/").unwrap());
@@ -420,7 +417,7 @@ async fn main() -> Result<()> {
             };
             let flags = Flags { verbose, progress };
             let config = ProcessConfig {
-                link_root,
+                link_root: cwd.clone(),
                 exclude_list,
                 endpoint: local_config.endpoint,
                 connection,
@@ -437,12 +434,53 @@ async fn main() -> Result<()> {
                     }
                 }
                 Err(err) => {
-                    println!("Failed to sync link [{:?}]\n{:?}", cwd, err);
+                    bail!("Failed to sync link [{:?}]\n{:?}", cwd, err);
                 }
             };
         }
         SubCommand::Init => {
-            println!("not implemented yet");
+            if cwd.join(".bbup").exists() && cwd.join(".bbup").join("config.yaml").exists() {
+                anyhow::bail!(
+                    "Current directory [{:?}] is already initialized as a backup source",
+                    cwd
+                )
+            }
+            if !cwd.join(".bbup").exists() {
+                std::fs::create_dir(cwd.join(".bbup"))?;
+            }
+            let endpoint = PathBuf::from(io::get_input("set endpoint: ")?);
+            let add_exclude_list = io::get_input("add exclude list [Y/n]?: ")?;
+            let mut exclude_list: Vec<String> = Vec::new();
+            if !add_exclude_list.eq("n") && !add_exclude_list.eq("N") {
+                println!("add regex rules in string form. To stop, enter empty string");
+                loop {
+                    let rule = io::get_input("rule: ")?;
+                    if rule.eq("") {
+                        break;
+                    }
+                    exclude_list.push(rule);
+                }
+            }
+            let local_config = fs::LinkConfig {
+                link_type: structs::LinkType::Bijection,
+                endpoint,
+                exclude_list: exclude_list.clone(),
+            };
+
+            let mut exclude_list_regex: Vec<Regex> = Vec::new();
+            exclude_list_regex.push(Regex::new("\\.bbup/").unwrap());
+            for rule in &exclude_list {
+                exclude_list_regex.push(Regex::new(&rule).context(
+                    "could not generate regex from pattern from exclude_list in link config",
+                )?);
+            }
+            fs::save(&cwd.join(".bbup").join("config.yaml"), &local_config)?;
+            let tree = hashtree::get_hash_tree(&cwd, &exclude_list_regex)?;
+            fs::save(&cwd.join(".bbup").join("old-hash-tree.json"), &tree)?;
+            fs::save(
+                &cwd.join(".bbup").join("last-known-commit.json"),
+                &String::new(),
+            )?;
         }
     }
 
