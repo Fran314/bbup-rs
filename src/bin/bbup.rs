@@ -17,7 +17,7 @@ enum SubCommand {
         #[clap(short, long, value_parser)]
         verbose: bool,
 
-        /// Show progress during transfer
+        /// Show progress during file transfer
         #[clap(short, long, value_parser)]
         progress: bool,
     },
@@ -470,9 +470,11 @@ async fn main() -> Result<()> {
             std::fs::create_dir_all(cwd.join(".bbup"))?;
         }
         let endpoint = PathBuf::from(io::get_input("set endpoint (relative to archive root): ")?);
-        let add_exclude_list = io::get_input("add exclude list [Y/n]?: ")?;
+        let add_exclude_list = io::get_input("add exclude list [y/N]?: ")?;
         let mut exclude_list: Vec<String> = Vec::new();
-        if !add_exclude_list.eq("n") && !add_exclude_list.eq("N") {
+        if add_exclude_list.to_ascii_lowercase().eq("y")
+            || add_exclude_list.to_ascii_lowercase().eq("yes")
+        {
             println!("add regex rules in string form. To stop, enter empty string");
             loop {
                 let rule = io::get_input("rule: ")?;

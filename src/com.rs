@@ -77,57 +77,48 @@ pub enum JobType {
     Quit,
 }
 
-enum Direction {
-    Upload,
-    Download,
+fn pb_style_from(direction: &str, name: &str) -> ProgressStyle {
+    let style_path = String::from("[")
+        + direction
+        + "]\t"
+        + name
+        + "\t\t{bytes}\t{percent}%\t{bytes_per_sec}\t{elapsed_precise}";
+    ProgressStyle::default_bar().template(style_path.as_str())
 }
-async fn update_progressbar(
-    direction: Direction,
-    len: u64,
-    bytes: Arc<Mutex<u64>>,
-    path: PathBuf,
-    done: Arc<Mutex<bool>>,
-) {
-    let pb = ProgressBar::new(len);
-    let str_path = match path.file_name().and_then(std::ffi::OsStr::to_str) {
-        Some(val) => String::from(val),
-        None => String::from(format!("{:?}", path.file_name())),
-    };
-
-    // let style_path = String::from("\x1b[1m\x1b[36m↗\x1b[0m\t")
-    //     + str_path.clone().as_str()
-    //     + "\t\t{bytes}\t{percent}%\t{bytes_per_sec}\t{elapsed_precise}";
-    let style_path = match direction {
-        Direction::Upload => {
-            String::from("[upload]\t")
-                + str_path.clone().as_str()
-                + "\t\t{bytes}\t{percent}%\t{bytes_per_sec}\t{elapsed_precise}"
-        }
-        Direction::Download => {
-            String::from("[download]\t")
-                + str_path.clone().as_str()
-                + "\t\t{bytes}\t{percent}%\t{bytes_per_sec}\t{elapsed_precise}"
-        }
-    };
-
-    pb.set_style(ProgressStyle::default_bar().template(style_path.as_str()));
-    while !*done.lock().unwrap() {
-        pb.set_position(*bytes.lock().unwrap());
+async fn update_progressbar(pb: Arc<Mutex<ProgressBar>>, bytes: Arc<Mutex<u64>>) {
+    loop {
+        pb.lock().unwrap().set_position(*bytes.lock().unwrap());
         tokio::time::sleep(tokio::time::Duration::from_millis(45)).await;
     }
-    pb.finish();
 }
 
 pub struct ProgressWriter<'a, W: AsyncWrite + Unpin + Sync + Send> {
+    pb_task_handle: tokio::task::JoinHandle<()>,
+    pb: Arc<Mutex<ProgressBar>>,
     bytes_written: Arc<Mutex<u64>>,
     pub writer: &'a mut W,
 }
 impl<'a, W: AsyncWrite + Unpin + Sync + Send> ProgressWriter<'a, W> {
-    pub fn new(writer: &'a mut W) -> ProgressWriter<'a, W> {
+    pub fn new(writer: &'a mut W, len: u64, name: &String) -> ProgressWriter<'a, W> {
+        let pb = ProgressBar::new(len);
+        pb.set_style(pb_style_from("upload", name));
+
+        let pb = Arc::new(Mutex::new(pb));
+        let bytes_written = Arc::new(Mutex::new(0u64));
+
+        let pb_task_handle = tokio::spawn(update_progressbar(pb.clone(), bytes_written.clone()));
+
         ProgressWriter {
-            bytes_written: Arc::new(Mutex::new(0u64)),
+            pb_task_handle,
+            pb,
+            bytes_written,
             writer,
         }
+    }
+
+    pub async fn finish(self) {
+        self.pb.lock().unwrap().finish();
+        self.pb_task_handle.abort();
     }
 }
 impl<'a, W: AsyncWrite + Unpin + Sync + Send> AsyncWrite for ProgressWriter<'a, W> {
@@ -162,18 +153,35 @@ impl<'a, W: AsyncWrite + Unpin + Sync + Send> AsyncWrite for ProgressWriter<'a, 
 }
 
 pub struct ProgressReader<'a, W: AsyncRead + Unpin + Sync + Send> {
+    pb_task_handle: tokio::task::JoinHandle<()>,
+    pb: Arc<Mutex<ProgressBar>>,
     bytes_read: Arc<Mutex<u64>>,
     pub reader: &'a mut W,
 }
-impl<'a, W: AsyncRead + Unpin + Sync + Send> ProgressReader<'a, W> {
-    pub fn new(reader: &'a mut W) -> ProgressReader<'a, W> {
+impl<'a, R: AsyncRead + Unpin + Sync + Send> ProgressReader<'a, R> {
+    pub fn new(reader: &'a mut R, len: u64, name: &String) -> ProgressReader<'a, R> {
+        let pb = ProgressBar::new(len);
+        pb.set_style(pb_style_from("download", name));
+
+        let pb = Arc::new(Mutex::new(pb));
+        let bytes_read = Arc::new(Mutex::new(0u64));
+
+        let pb_task_handle = tokio::spawn(update_progressbar(pb.clone(), bytes_read.clone()));
+
         ProgressReader {
-            bytes_read: Arc::new(Mutex::new(0u64)),
+            pb_task_handle,
+            pb,
+            bytes_read,
             reader,
         }
     }
+
+    pub async fn finish(self) {
+        self.pb.lock().unwrap().finish();
+        self.pb_task_handle.abort();
+    }
 }
-impl<'a, W: AsyncRead + Unpin + Sync + Send> AsyncRead for ProgressReader<'a, W> {
+impl<'a, R: AsyncRead + Unpin + Sync + Send> AsyncRead for ProgressReader<'a, R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -292,21 +300,16 @@ impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> Bb
             })?;
 
         if self.progress {
-            let mut pw = ProgressWriter::new(&mut self.tx);
-            let done = Arc::new(Mutex::new(false));
-            let handle = tokio::spawn(update_progressbar(
-                Direction::Upload,
-                len,
-                pw.bytes_written.clone(),
-                path.clone(),
-                done.clone(),
-            ));
+            let name = match path.file_name().and_then(std::ffi::OsStr::to_str) {
+                Some(val) => String::from(val),
+                None => String::from(format!("{:?}", path.file_name())),
+            };
+            let mut pw = ProgressWriter::new(&mut self.tx, len, &name);
             tokio::io::copy(&mut file, &mut pw)
                 .await
                 .map_err(|error| Error::BufferCopyError { error })?;
 
-            *done.lock().unwrap() = true;
-            handle.await.unwrap();
+            pw.finish().await;
         } else {
             tokio::io::copy(&mut file, &mut self.tx)
                 .await
@@ -384,27 +387,20 @@ impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> Bb
             })?;
 
         if self.progress {
-            let pw = ProgressReader::new(&mut self.rx);
-            let done = Arc::new(Mutex::new(false));
-            let pb_handle = tokio::spawn(update_progressbar(
-                Direction::Download,
-                len,
-                pw.bytes_read.clone(),
-                path.clone(),
-                done.clone(),
-            ));
-
+            let name = match path.file_name().and_then(std::ffi::OsStr::to_str) {
+                Some(val) => String::from(val),
+                None => String::from(format!("{:?}", path.file_name())),
+            };
+            let pw = ProgressReader::new(&mut self.rx, len, &name);
             let mut handle = pw.take(len);
             tokio::io::copy(&mut handle, &mut file)
                 .await
                 .map_err(|error| Error::BufferCopyError { error })?;
-
             file.flush()
                 .await
                 .map_err(|error| Error::FlushFileError { error })?;
 
-            *done.lock().unwrap() = true;
-            pb_handle.await.unwrap();
+            handle.into_inner().finish().await;
         } else {
             let mut handle = (&mut self.rx).take(len);
             tokio::io::copy(&mut handle, &mut file)

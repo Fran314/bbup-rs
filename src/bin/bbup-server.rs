@@ -52,9 +52,9 @@ impl ServerState {
 enum SubCommand {
     /// Run the daemon
     Run {
-		/// Increase verbosity
+		/// Show progress during file transfer
 		#[clap(short, long)]
-		verbose: bool
+		progress: bool
 	},
     /// Initialize bbup client
     Setup,
@@ -186,13 +186,16 @@ async fn main() -> Result<()> {
     let state = Arc::new(Mutex::new(state));
 
 	match args.cmd {
-		SubCommand::Run { verbose } => {
+		SubCommand::Run { progress } => {
 			// Start TCP server and spawn a task for each connection
 			loop {
 				let (socket, _) = listener.accept().await?;
 				let state = state.clone();
 				tokio::spawn(async move {
-					process(socket, state, verbose).await.unwrap();
+					match process(socket, state, progress).await {
+						Ok(()) => println!("connection processed correctly"),
+						Err(err) => println!("Error: {err:?}"),
+					}
 				});
 			}
 		},
@@ -201,8 +204,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>, verbose: bool) -> Result<()> {
-	let mut com = com::BbupCom::from_split(socket.into_split(), verbose);
+async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>, progress: bool) -> Result<()> {
+	let mut com = com::BbupCom::from_split(socket.into_split(), progress);
 
 	// Try to lock state and get conversation privilege
     let mut state = match state.try_lock() {
@@ -236,7 +239,7 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>, verbose: boo
 				// send update delta to client for pull
 				com.send_struct(
 					structs::Commit { 
-						commit_id: state.commit_list[0].commit_id.clone(), 
+						commit_id: state.commit_list[state.commit_list.len() - 1].commit_id.clone(), 
 						delta 
 					}
 				).await.context("could not send update delta")?;
