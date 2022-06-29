@@ -3,7 +3,7 @@ use tokio::net::TcpStream;
 
 use bbup_rust::comunications::BbupCom;
 use bbup_rust::structs::PrettyPrint;
-use bbup_rust::{fs, hashtree, io, structs, utils};
+use bbup_rust::{fs, hashtree, io, ssh_tunnel, structs, utils};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
@@ -44,9 +44,9 @@ struct Flags {
 }
 struct Connection {
     local_port: u16,
-    // server_port: u16,
-    // host_name: String,
-    // host_address: String,
+    server_port: u16,
+    host_name: String,
+    host_address: String,
 }
 struct ProcessConfig {
     link_root: PathBuf,
@@ -347,6 +347,19 @@ where
 }
 
 async fn process_link(config: ProcessConfig) -> Result<()> {
+    let mut tunnel = ssh_tunnel::SshTunnel::to(
+        config.connection.local_port,
+        config.connection.server_port,
+        config.connection.host_name.clone(),
+        config.connection.host_address.clone(),
+    )?;
+
+    if config.flags.verbose {
+        println!("ssh tunnel PID: {}", &tunnel.pid());
+    }
+
+    tunnel.wait_for_ready()?;
+
     // Start connection
     let socket = TcpStream::connect(format!("127.0.0.1:{}", config.connection.local_port))
         .await
@@ -369,6 +382,7 @@ async fn process_link(config: ProcessConfig) -> Result<()> {
     apply_update(&config, &mut state).await?;
     upload_changes(&config, &mut state, &mut com).await?;
 
+    tunnel.termiate();
     Ok(())
 }
 
@@ -500,9 +514,9 @@ async fn main() -> Result<()> {
 
             let connection = Connection {
                 local_port: global_config.settings.local_port,
-                // server_port: global_config.settings.server_port,
-                // host_name: global_config.settings.host_name.clone(),
-                // host_address: global_config.settings.host_address.clone(),
+                server_port: global_config.settings.server_port,
+                host_name: global_config.settings.host_name.clone(),
+                host_address: global_config.settings.host_address.clone(),
             };
             let flags = Flags { verbose, progress };
             let config = ProcessConfig {

@@ -106,7 +106,7 @@ async fn update_progressbar(
     pb.set_style(ProgressStyle::default_bar().template(style_path.as_str()));
     while !*done.lock().unwrap() {
         pb.set_position(*bytes.lock().unwrap());
-        tokio::time::sleep(tokio::time::Duration::from_millis(16)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(45)).await;
     }
     pb.finish();
 }

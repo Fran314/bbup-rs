@@ -3,13 +3,6 @@
 ## Setup
 download the binaries from the lates release or build them
 
-> N.B: the system isn't fully implemented yet. This build is for test only, and because of this the server and the client must be on the same machine. Furthermore, [server_port] and [local_port] must be the same value. On future builds, the only restriction will be that the server must be on a rechable address form the client and it will need to be accessible via ssh; the [server_port] and [local_port] will be allowed to be any value (not necessarily the same)
-
-> For now I suggest to use something like [server_port] = [local_port] = 3000
-
-> To emulate the final result, you can use different values for [server_port] and [local_port] (let's say [server_port] = 4000 and [local_port] = 3000) and run the following command on another terminal  
-> `ssh -R [local_port]:localhost:[server_port] [host_user]@[host_address]`
-
 ### Server
 - Put or link the `bbup-server` binary in a place known to the PATH variable (I use `~/.local/bin`)
 - Create a directory that will be your archive root
@@ -19,6 +12,7 @@ download the binaries from the lates release or build them
 	```
 	You'll be asked to input the following:
 	- [server_port]: the port that the daemon will listen on. This port does not need to be portforwarded, as the comunication will happen on an ssh tunnel
+	- [archive_root]: the path to the root of the archive. This path must be relative to ~ (i.e: if the archive root is ~/foo/bar/archive/, enter `foo/bar/archive/`)
 - Start the server with
 	```bash
 	bbup-server run
@@ -32,16 +26,18 @@ download the binaries from the lates release or build them
 	```
 	You will be asked to input the following:
 	- [local_port]: the port that the client will connect to
-	- [server_port]: the port utilized by the daemon on the server (not useful yet)
-	- [host_user]: the username of the user utilized by the server (not useful yet)
-	- [host_address]: the address of the server (not useful yet)
+	- [server_port]: the port utilized by the daemon on the server
+	- [host_user]: the username of the user utilized by the server
+	- [host_address]: the address of the server
 - Create a directory that will be your backup source
 - Move to the backup source and initialize the source with
 	```bash
 	cd to/the/backup/source
 	bbup init
 	```
-	You will be asked to 
+	You will be asked to input the following:
+	- [endpoint]: the endpoint for the backup of this backup source. This is a path to the root of the endpoint relative to the root of the archive (i.e: if the endpoint is `~/foo/bar/archive/moo/boo/my-photos`, enter `moo/boo/my-photos`)
+	- [exclude_list]: the list of paths to exclude (like a .gitignore)
 
 ## Other
 To build for RaspberryPi (probably 4, don't know for other models)
