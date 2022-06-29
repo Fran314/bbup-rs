@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use bbup_rust::{fs, structs, random, io};
+use bbup_rust::{fs, structs, random, io, com};
 // use bbup_rust::comunications::{BbupRead, BbupWrite};
 
 use anyhow::{Result, Context};
@@ -51,7 +51,11 @@ impl ServerState {
 #[derive(Subcommand, Debug, PartialEq)]
 enum SubCommand {
     /// Run the daemon
-    Run,
+    Run {
+		/// Increase verbosity
+		#[clap(short, long)]
+		verbose: bool
+	},
     /// Initialize bbup client
     Setup,
 }
@@ -161,11 +165,13 @@ async fn main() -> Result<()> {
         std::fs::create_dir_all(home_dir.join(".config").join("bbup-server"))?;
         let server_port = io::get_input("enter server port (0-65535): ")?.parse::<u16>()?;
 		let archive_root = PathBuf::from(io::get_input("enter archive root (relative to ~): ")?);
-		fs::save(&home_dir.join(".config").join("bbup-server").join("config.yaml"), &fs::ServerConfig { server_port, archive_root })?;
+		fs::save(&home_dir.join(".config").join("bbup-server").join("config.yaml"), &fs::ServerConfig { server_port, archive_root: archive_root.clone() })?;
 
 		let mut commit_list: fs::CommitList = Vec::new();
 		commit_list.push(structs::Commit { commit_id: String::from("0").repeat(64), delta: Vec::new() });
 		fs::save(&home_dir.join(".config").join("bbup-server").join("commit-list.json"), &commit_list)?;
+
+		std::fs::create_dir_all(home_dir.join(&archive_root).join(".bbup").join("temp"))?;
 
         println!("bbup server set up correctly!");
 
@@ -179,20 +185,24 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(format!("127.0.0.1:{}", state.server_port)).await?;
     let state = Arc::new(Mutex::new(state));
 
-	// Start TCP server and spawn a task for each connection
-    loop {
-        let (socket, _) = listener.accept().await?;
-        let state = state.clone();
-        tokio::spawn(async move {
-            process(socket, state).await.unwrap();
-        });
-    }
+	match args.cmd {
+		SubCommand::Run { verbose } => {
+			// Start TCP server and spawn a task for each connection
+			loop {
+				let (socket, _) = listener.accept().await?;
+				let state = state.clone();
+				tokio::spawn(async move {
+					process(socket, state, verbose).await.unwrap();
+				});
+			}
+		},
+		_ => { /* already handled */}
+	}
+    Ok(())
 }
 
-async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> Result<()> {
-	let mut com = bbup_rust::comunications::BbupCom::from_split(socket.into_split(), false);
-    // let (mut rx, mut tx) = socket.into_split();
-	// com.get_file_to(&PathBuf::from("boo.txt")).await?;
+async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>, verbose: bool) -> Result<()> {
+	let mut com = com::BbupCom::from_split(socket.into_split(), verbose);
 
 	// Try to lock state and get conversation privilege
     let mut state = match state.try_lock() {
@@ -205,107 +215,138 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>) -> Result<()
             return Ok(());
         }
     };
-
-
 	// Reply with green light to conversation, send OK
-	com.send_ok().await?;
+	com.send_ok().await.context("could not send greenlight for conversation")?;
 
-	let endpoint: PathBuf = com.get_struct().await?;
-
-	// [Client-PULL] recieve last known commit from CLIENT
-    let last_known_commit: String = com.get_struct().await?;
-
-	// [Client-PULL] calculate update for client
-	let delta = get_update_delta(&state.commit_list, &endpoint, last_known_commit);
-
-	// [Client-PULL] send update to client for pull
-    com.send_struct(
-		structs::Commit { 
-			commit_id: state.commit_list[0].commit_id.clone(), 
-			delta 
-		}
-    ).await?;
+	let endpoint: PathBuf = com.get_struct().await.context("could not get backup endpoint")?;
 
 	loop {
-		let path: Option<PathBuf> = com.get_struct().await?;
-		let path = match path {
-			Some(val) => val,
-			None => break
-		};
-		com.send_file_from(&state.home_dir.join(&state.archive_root).join(&endpoint).join(path)).await?;
+		let jt: com::JobType = com.get_struct().await.context("could not get job type")?;
+		match jt {
+			com::JobType::Quit => { 
+				com.send_ok().await?;
+				break
+			},
+			com::JobType::Pull => {
+				let last_known_commit: String = com.get_struct().await.context("could not get lkc")?;
+			
+				// calculate update for client
+				let delta = get_update_delta(&state.commit_list, &endpoint, last_known_commit);
+			
+				// send update delta to client for pull
+				com.send_struct(
+					structs::Commit { 
+						commit_id: state.commit_list[0].commit_id.clone(), 
+						delta 
+					}
+				).await.context("could not send update delta")?;
+			
+				// send all files requested by client
+				loop {
+					let path: Option<PathBuf> = com.get_struct().await.context("could not get path for file to send")?;
+					let path = match path {
+						Some(val) => val,
+						None => break
+					};
+					com.send_file_from(&state.home_dir.join(&state.archive_root).join(&endpoint).join(&path))
+						.await
+						.context(
+							format!(
+								"could not send file at path: {:?}", 
+								&state.home_dir.join(&state.archive_root).join(&endpoint).join(&path)
+							)
+						)?;
+				}
+			}
+			com::JobType::Push => {
+				std::fs::create_dir_all(state.home_dir.join(&state.archive_root).join(".bbup").join("temp"))?;
+				std::fs::remove_dir_all(state.home_dir.join(&state.archive_root).join(".bbup").join("temp"))?;
+				std::fs::create_dir(state.home_dir.join(&state.archive_root).join(".bbup").join("temp"))?;
+
+				// Reply with green light for push
+				com.send_ok().await.context("could not send greenlight for push")?;
+			
+				let local_delta: structs::Delta = com.get_struct().await.context("could not get delta from client")?;
+			
+				for change in &local_delta {
+					if change.action != structs::Action::Removed
+						&& change.object_type != structs::ObjectType::Dir
+					{
+						com.send_struct(Some(change.path.clone())).await.context(
+							format!(
+								"could not send path for file to send at path: {:?}", 
+								&change.path.clone()
+							)
+						)?;
+						com.get_file_to(
+							&state
+								.home_dir
+								.join(&state.archive_root)
+								.join(".bbup")
+								.join("temp")
+								.join(change.path.clone()),
+						)
+						.await
+						.context(
+							format!(
+								"could not get file at path: {:?}", 
+								&state
+									.home_dir
+									.join(&state.archive_root)
+									.join(".bbup")
+									.join("temp")
+									.join(change.path.clone())
+							)
+						)?;
+					}
+				}
+				com.send_struct(None::<PathBuf>).await.context("could not send empty path to signal end of file transfer")?;
+			
+				for change in &local_delta {
+					let path = state.home_dir.join(&state.archive_root).join(&endpoint).join(&change.path);
+					let from_temp_path = state
+						.home_dir
+						.join(&state.archive_root)
+						.join(".bbup")
+						.join("temp")
+						.join(&change.path);
+
+					match (change.action, change.object_type) {
+						(structs::Action::Removed, structs::ObjectType::Dir) => std::fs::remove_dir(&path)
+							.context(format!(
+								"could not remove directory to apply update\npath: {:?}",
+								path
+							))?,
+						(structs::Action::Removed, _) => std::fs::remove_file(&path).context(format!(
+							"could not remove file to apply update\npath: {:?}",
+							path
+						))?,
+						(structs::Action::Added, structs::ObjectType::Dir) => std::fs::create_dir(&path)
+							.context(format!(
+								"could not create directory to apply update\npath: {:?}",
+								path
+							))?,
+						(structs::Action::Edited, structs::ObjectType::Dir) => {
+							unreachable!("Dir cannot be edited: broken update delta")
+						}
+						(structs::Action::Added, _) | (structs::Action::Edited, _) => {
+							std::fs::rename(&from_temp_path, &path).context(format!(
+								"could not copy file from temp to apply update\npath: {:?}",
+								path
+							))?;
+						}
+					}
+				}
+			
+				let local_delta: structs::Delta = local_delta.into_iter().map(|change| structs::Change { path: endpoint.join(&change.path), ..change}).collect();
+				let commit_id = random::random_hex(64);
+				state.commit_list.push(structs::Commit { commit_id: commit_id.clone(), delta: local_delta });
+				state.save().context("could not save push update")?;
+			
+				com.send_struct(commit_id).await.context("could not send commit id for the push")?;
+			}
+		}
 	}
-
-
-	std::fs::remove_dir_all(state.home_dir.join(&state.archive_root).join(".bbup").join("temp"))?;
-	std::fs::create_dir(state.home_dir.join(&state.archive_root).join(".bbup").join("temp"))?;
-	// Reply with green light to conversation, send OK
-	com.send_ok().await?;
-
-	let local_delta: structs::Delta = com.get_struct().await?;
-
-	for change in &local_delta {
-        if change.action != structs::Action::Removed
-            && change.object_type != structs::ObjectType::Dir
-        {
-            com.send_struct(Some(change.path.clone())).await?;
-            com.get_file_to(
-                &state
-					.home_dir
-					.join(&state.archive_root)
-                    .join(".bbup")
-                    .join("temp")
-                    .join(change.path.clone()),
-            )
-            .await?;
-        }
-	}
-    com.send_struct(None::<PathBuf>).await?;
-
-	for change in &local_delta {
-        let path = state.home_dir.join(&state.archive_root).join(&endpoint).join(&change.path);
-        let from_temp_path = state
-			.home_dir
-			.join(&state.archive_root)
-            .join(".bbup")
-            .join("temp")
-            .join(&change.path);
-        match (change.action, change.object_type) {
-            (structs::Action::Removed, structs::ObjectType::Dir) => std::fs::remove_dir(&path)
-                .context(format!(
-                    "could not remove directory to apply update\npath: {:?}",
-                    path
-                ))?,
-            (structs::Action::Removed, _) => std::fs::remove_file(&path).context(format!(
-                "could not remove file to apply update\npath: {:?}",
-                path
-            ))?,
-            (structs::Action::Added, structs::ObjectType::Dir) => std::fs::create_dir(&path)
-                .context(format!(
-                    "could not create directory to apply update\npath: {:?}",
-                    path
-                ))?,
-            (structs::Action::Edited, structs::ObjectType::Dir) => {
-                unreachable!("Dir cannot be edited: broken update delta")
-            }
-            (structs::Action::Added, _) | (structs::Action::Edited, _) => {
-                std::fs::copy(&from_temp_path, &path).context(format!(
-                    "could not copy file from temp to apply update\npath: {:?}",
-                    path
-                ))?;
-            }
-        }
-    }
-
-	let local_delta: structs::Delta = local_delta.into_iter().map(|change| structs::Change { path: endpoint.join(&change.path), ..change}).collect();
-	let commit_id = random::random_hex(64);
-	state.commit_list.push(structs::Commit { commit_id: commit_id.clone(), delta: local_delta });
-	state.save()?;
-
-	com.send_struct(commit_id).await?;
-
-
-	// Rest of protocol
-
-
+	
     Ok(())
 }

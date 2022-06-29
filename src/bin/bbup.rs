@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 use tokio::net::TcpStream;
 
-use bbup_rust::comunications::BbupCom;
+use bbup_rust::com::BbupCom;
 use bbup_rust::structs::PrettyPrint;
-use bbup_rust::{fs, hashtree, io, ssh_tunnel, structs, utils};
+use bbup_rust::{com, fs, hashtree, io, ssh_tunnel, structs, utils};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
@@ -276,7 +276,7 @@ async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> Resul
                         unreachable!("Dir cannot be edited: broken update delta")
                     }
                     (structs::Action::Added, _) | (structs::Action::Edited, _) => {
-                        std::fs::copy(&from_temp_path, &path).context(format!(
+                        std::fs::rename(&from_temp_path, &path).context(format!(
                             "could not copy file from temp to apply update\npath: {:?}",
                             path
                         ))?;
@@ -375,12 +375,28 @@ async fn process_link(config: ProcessConfig) -> Result<()> {
 
     let mut state = ProcessState::new();
 
-    get_local_delta(&config, &mut state)?;
-    pull_update_delta(&config, &mut state, &mut com).await?;
-    check_for_conflicts(&mut state).await?;
-    download_update(&config, &mut state, &mut com).await?;
-    apply_update(&config, &mut state).await?;
-    upload_changes(&config, &mut state, &mut com).await?;
+    {
+        // GET DELTA
+        get_local_delta(&config, &mut state)?;
+    }
+
+    {
+        // PULL
+        com.send_struct(com::JobType::Pull).await?;
+        pull_update_delta(&config, &mut state, &mut com).await?;
+        check_for_conflicts(&mut state).await?;
+        download_update(&config, &mut state, &mut com).await?;
+        apply_update(&config, &mut state).await?;
+    }
+
+    {
+        // PUSH
+        com.send_struct(com::JobType::Push).await?;
+        upload_changes(&config, &mut state, &mut com).await?;
+    }
+
+    // Terminate conversation with server
+    com.send_struct(com::JobType::Quit).await?;
 
     tunnel.termiate();
     Ok(())

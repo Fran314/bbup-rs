@@ -14,7 +14,7 @@ impl SshTunnel {
     ) -> std::io::Result<SshTunnel> {
         let ssh_tunnel_handle = std::process::Command::new("ssh")
             .arg("-tt")
-            .arg("-R")
+            .arg("-L")
             .arg(format!("{}:localhost:{}", local_port, server_port,))
             .arg(format!("{}@{}", host_user, host_address))
             .stdin(std::process::Stdio::piped())

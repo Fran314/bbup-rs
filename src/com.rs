@@ -5,7 +5,7 @@ use std::{
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use thiserror::Error;
@@ -68,6 +68,13 @@ pub enum Error {
 
     #[error("Generic error {0:#?}")]
     GenericError(String),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum JobType {
+    Pull,
+    Push,
+    Quit,
 }
 
 enum Direction {
@@ -253,6 +260,7 @@ impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> Bb
             bincode::serialize(&content).map_err(|error| Error::SerializationError { error })?,
         )
         .await?;
+        self.check_ok().await?;
 
         Ok(())
     }
@@ -348,6 +356,7 @@ impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> Bb
     {
         self.check_ok().await?;
         let buffer = self.get_block().await?;
+        self.send_ok().await?;
         Ok(bincode::deserialize::<S>(&buffer[..])
             .map_err(|error| Error::DeserializationError { error })?)
     }
