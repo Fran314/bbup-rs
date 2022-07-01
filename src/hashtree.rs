@@ -1,255 +1,313 @@
-#![allow(dead_code)]
+use crate::utils;
 
-use std::fs;
-use std::io;
-use std::path::Path;
+use crate::structs::{Action, Change, Delta, ObjectType};
+
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use base64ct::{Base64, Encoding};
 use sha2::{Digest, Sha256};
 
 use serde::{Deserialize, Serialize};
 
+use regex::Regex;
+
 #[derive(PartialEq)]
-pub enum Traverse {
+enum Traverse {
     Pre,
     Post,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
-pub enum Type {
-    Dir,
-    File,
-    Symlink,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HashTreeNode {
-    pub file_name: String,
-    pub nodetype: Type,
+    pub nodetype: ObjectType,
     pub hash: String,
-    pub children: Vec<HashTreeNode>,
-}
-impl HashTreeNode {
-    fn to_string(&self) -> String {
-        self.file_name.clone() + self.hash.as_str()
-    }
+    pub children: HashMap<PathBuf, HashTreeNode>,
 }
 
-#[derive(Debug)]
-pub struct Diff {
-    pub added: Vec<(Type, String)>,
-    pub edited: Vec<(Type, String)>,
-    pub removed: Vec<(Type, String)>,
+impl HashTreeNode {
+    pub fn apply_delta(&mut self, delta: &Delta) -> std::io::Result<()> {
+        for change in delta {
+            let mut path: Vec<PathBuf> = change
+                .path
+                .components()
+                .into_iter()
+                .map(|component| PathBuf::from(component.as_os_str()))
+                .collect();
+
+            for i in 0..(path.len() - 1) {
+                path[i] = path[i].join("");
+            }
+
+            self.apply_change(path, change.action, change.object_type, change.hash.clone())?;
+        }
+
+        Ok(())
+    }
+    pub fn apply_change(
+        &mut self,
+        path: Vec<PathBuf>,
+        action: Action,
+        object_type: ObjectType,
+        hash: Option<String>,
+    ) -> std::io::Result<()> {
+        if path.len() == 1 {
+            match action {
+                Action::Added => {
+                    let children: HashMap<PathBuf, HashTreeNode> = HashMap::new();
+                    let hash = match hash {
+                        Some(val) => val,
+                        None => hash_children(&children)?,
+                    };
+                    self.children.insert(
+                        path[0].clone(),
+                        HashTreeNode {
+                            nodetype: object_type,
+                            hash,
+                            children,
+                        },
+                    );
+                }
+                Action::Edited => {
+                    let child = self.children.get_mut(&path[0]);
+                    match child {
+                        Some(val) if val.nodetype == object_type => {
+                            val.hash = hash.ok_or(utils::std_err(
+                                "Edit action should always include an hash, broken change",
+                            ))?;
+                        }
+                        Some(_) => {
+                            return Err(utils::std_err(
+                                "Trying to edit a child with a type mismatch",
+                            ))
+                        }
+                        None => {
+                            return Err(utils::std_err(
+                                "Trying to edit a child that does not exist",
+                            ))
+                        }
+                    };
+                }
+                Action::Removed => {
+                    let child = self.children.get(&path[0]);
+                    match child {
+                        Some(val) if val.nodetype == object_type => {
+                            self.children.remove(&path[0]);
+                        }
+                        Some(_) => {
+                            return Err(utils::std_err(
+                                "Trying to remove a child with a type mismatch",
+                            ))
+                        }
+                        None => {
+                            return Err(utils::std_err(
+                                "Trying to remove a child that does not exist",
+                            ))
+                        }
+                    };
+                }
+            }
+        } else {
+            let child = self.children.get_mut(&path[0]);
+            match child {
+                Some(child) => child.apply_change(path[1..].to_vec(), action, object_type, hash)?,
+                None => {
+                    return Err(utils::std_err(
+                        "Cannot follow path to apply change: child doesn't exist",
+                    ))
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn hash_string(s: &str) -> String {
     let hash = Sha256::digest(s);
     Base64::encode_string(&hash)
 }
-fn hash_children(v: &Vec<HashTreeNode>) -> String {
+fn hash_children(children: &HashMap<PathBuf, HashTreeNode>) -> std::io::Result<String> {
     let mut s = String::new();
-    for child in v {
-        s += child.to_string().as_str();
+    for (child_name, child_node) in children {
+        s += child_name
+            .to_str()
+            .ok_or(utils::std_err("cannot convert child name to str"))?;
+        s += child_node.hash.as_str();
     }
-    hash_string(&s.as_str())
+    Ok(hash_string(&s.as_str()))
 }
-fn hash_file(path: &str) -> io::Result<String> {
+fn hash_file(path: &PathBuf) -> std::io::Result<String> {
     let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
-    io::copy(&mut file, &mut hasher)?;
+    std::io::copy(&mut file, &mut hasher)?;
     let hash = hasher.finalize();
 
     Ok(Base64::encode_string(&hash))
 }
-fn hash_symlink(path: &str) -> io::Result<String> {
+fn hash_symlink(path: &PathBuf) -> std::io::Result<String> {
     let p_path = fs::read_link(path)?;
-    let outpath = p_path.to_str().ok_or(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        "invalid Unicode",
-    ))?;
+    let outpath = p_path.to_str().ok_or(utils::std_err("invalid Unicode"))?;
 
     Ok(hash_string(&outpath))
 }
-
-pub fn hash_tree(path: &str) -> io::Result<HashTreeNode> {
-    let p_path = Path::new(path);
-    let file_name = p_path
-        .file_name()
-        .ok_or(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "invalid file_name",
-        ))?
-        .to_str()
-        .ok_or(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "invalid Unicode",
-        ))?;
+pub fn get_hash_tree(root: &PathBuf, exclude_list: &Vec<Regex>) -> std::io::Result<HashTreeNode> {
+    get_hash_tree_rec(root, &std::path::Path::new("").to_path_buf(), exclude_list)
+}
+fn get_hash_tree_rec(
+    root: &PathBuf,
+    rel_path: &PathBuf,
+    exclude_list: &Vec<Regex>,
+) -> std::io::Result<HashTreeNode> {
+    let full_path = root.join(rel_path);
 
     let hash;
-    let nodetype: Type;
-    let mut children: Vec<HashTreeNode> = Vec::new();
+    let nodetype: ObjectType;
+    let mut children: HashMap<PathBuf, HashTreeNode> = HashMap::new();
 
-    if p_path.is_dir() {
-        nodetype = Type::Dir;
-        for entry in fs::read_dir(p_path)? {
-            let entry_path = entry?.path();
-            let path_str = entry_path.to_str().ok_or(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "invalid Unicode",
-            ))?;
-            children.push(hash_tree(&path_str)?);
+    if full_path.is_dir() {
+        nodetype = ObjectType::Dir;
+        for entry in fs::read_dir(&full_path)? {
+            let entry_name = {
+                let entry_path = entry?.path().to_path_buf();
+                let mut entry_name = entry_path
+                    .strip_prefix(<PathBuf as AsRef<Path>>::as_ref(&full_path))
+                    .map_err(utils::to_io_err)?
+                    .to_path_buf();
+
+                // Make sure that the directories end with the path separator
+                if entry_path.is_dir() {
+                    entry_name.push("");
+                }
+                entry_name
+            };
+
+            let rel_subpath = rel_path.join(&entry_name);
+            if !utils::to_exclude(&rel_subpath, exclude_list)? {
+                // If for some reasons the whole relative subpath is needed as key
+                //	instead of the entry name only, change
+                //		entry_name.clone()
+                //	with
+                //		rel_subpath.clone()
+                children.insert(
+                    entry_name.clone(),
+                    get_hash_tree_rec(root, &rel_subpath, exclude_list)?,
+                );
+            }
         }
-        children.sort_by(|a, b| a.file_name.cmp(&b.file_name));
-        hash = hash_children(&children);
-    } else if p_path.is_symlink() {
-        nodetype = Type::Symlink;
-        hash = hash_symlink(path)?;
+        hash = hash_children(&children)?;
+    } else if full_path.is_symlink() {
+        nodetype = ObjectType::Symlink;
+        hash = hash_symlink(&full_path)?;
     } else {
-        nodetype = Type::File;
-        hash = hash_file(path)?;
+        nodetype = ObjectType::File;
+        hash = hash_file(&full_path)?;
     }
 
     Ok(HashTreeNode {
-        file_name: String::from(file_name),
         nodetype,
         hash,
         children,
     })
 }
 
-fn join_paths(root: &String, subdir: &String) -> Option<String> {
-    Some(String::from(
-        Path::new(&root).join(Path::new(&subdir)).to_str()?,
-    ))
+fn get_both_keys<T: Clone + Eq + std::hash::Hash, S>(
+    arg0: &HashMap<T, S>,
+    arg1: &HashMap<T, S>,
+) -> Vec<T> {
+    let mut output_hm: HashMap<T, bool> = HashMap::new();
+    arg0.keys().for_each(|el| {
+        output_hm.insert(el.clone(), false);
+    });
+    arg1.keys().for_each(|el| {
+        output_hm.insert(el.clone(), false);
+    });
+    Vec::from_iter(output_hm.keys().into_iter().map(|el| el.clone()))
 }
-fn add_prefix(root: &String, v: &Vec<(Type, String)>) -> Option<Vec<(Type, String)>> {
-    let mut output: Vec<(Type, String)> = Vec::new();
-    for node in v {
-        output.push((node.0, join_paths(&root, &node.1)?));
-    }
-    Some(output)
+fn add_prefix_to_changelist(prefix: &PathBuf, vec: &Delta) -> Delta {
+    Vec::from_iter(vec.into_iter().map(|el| Change {
+        path: prefix.join(&el.path),
+        ..el.clone()
+    }))
 }
-pub fn list_nodes(arg: &HashTreeNode, mode: &Traverse) -> Option<Vec<(Type, String)>> {
-    let mut output: Vec<(Type, String)> = Vec::new();
-    if mode == &Traverse::Pre {
-        output.push((arg.nodetype, arg.file_name.clone()));
-    }
-    for child in &arg.children {
-        for node in list_nodes(child, mode)? {
-            output.push((node.0, join_paths(&arg.file_name, &node.1)?));
+fn action_on_subtree(arg: &HashTreeNode, action: Action, mode: &Traverse) -> Delta {
+    let mut output: Delta = Vec::new();
+    for (key, child) in &arg.children {
+        let hash = match (action, child.nodetype) {
+            (Action::Removed, _) | (_, ObjectType::Dir) => None,
+            _ => Some(child.hash.clone()),
+        };
+        let child_change = Change::new(action.clone(), child.nodetype.clone(), key.clone(), hash);
+        if mode == &Traverse::Pre {
+            output.push(child_change.clone());
         }
-    }
-    if mode == &Traverse::Post {
-        output.push((arg.nodetype, arg.file_name.clone()));
-    }
-    Some(output)
-}
-fn find<'a>(s: &String, arg: &'a Vec<HashTreeNode>) -> Option<&'a HashTreeNode> {
-    match arg.binary_search_by(|ht| ht.file_name.cmp(s)) {
-        Ok(val) => Some(&arg[val]),
-        Err(_) => None,
-    }
-}
-fn get_children(arg: &HashTreeNode) -> Vec<String> {
-    let mut output: Vec<String> = Vec::new();
-    for child in &arg.children {
-        output.push(child.file_name.clone());
+        output.append(&mut add_prefix_to_changelist(
+            &key,
+            &action_on_subtree(child, action, mode),
+        ));
+        if mode == &Traverse::Post {
+            output.push(child_change.clone());
+        }
     }
     output
 }
-fn join_sets(arg0: &Vec<String>, arg1: &Vec<String>) -> Vec<String> {
-    let mut i = 0;
-    let mut j = 0;
 
-    let mut output: Vec<String> = Vec::new();
-    while i < arg0.len() && j < arg1.len() {
-        let ord = arg0[i].cmp(&arg1[j]);
-        if ord == std::cmp::Ordering::Less {
-            output.push(arg0[i].clone());
-            i += 1;
-        } else if ord == std::cmp::Ordering::Greater {
-            output.push(arg1[j].clone());
-            j += 1;
-        } else {
-            output.push(arg0[i].clone());
-            i += 1;
-            j += 1;
-        }
+pub fn delta(old_tree: &HashTreeNode, new_tree: &HashTreeNode) -> Delta {
+    let mut output: Delta = Vec::new();
+
+    for key in get_both_keys(&old_tree.children, &new_tree.children) {
+        match (old_tree.children.get(&key), new_tree.children.get(&key)) {
+			(Some(child0), None) => {
+				let child0_subtree = action_on_subtree(&child0, Action::Removed, &Traverse::Post);
+				output.append(&mut add_prefix_to_changelist(&key, &child0_subtree));
+				output.push(Change::new(Action::Removed, child0.nodetype.clone(), key.clone(), None));
+			},
+			(None, Some(child1)) => {
+				let child1_subtree = action_on_subtree(&child1, Action::Added, &Traverse::Pre);
+				let hash = match child1.nodetype {
+					ObjectType::Dir => None,
+					_ => Some(child1.hash.clone()),
+				};
+				output.push(Change::new(Action::Added, child1.nodetype.clone(), key.clone(), hash));
+				output.append(&mut add_prefix_to_changelist(&key, &child1_subtree));
+			},
+			(Some(child0), Some(child1)) => {
+				if child0.hash.ne(&child1.hash) {
+					match (child0.nodetype, child1.nodetype) {
+						(ObjectType::Dir, ObjectType::Dir) => {
+							let children_delta = delta(&child0, &child1);
+							output.append(&mut add_prefix_to_changelist(&key, &children_delta));
+						},
+						(type0, type1) if type0 == type1 => {
+							output.push(Change::new(
+								Action::Edited,
+								type1,
+								key.clone(),
+								Some(child1.hash.clone())
+							));
+						},
+						(type0, type1) if type0 != type1 => {
+							let child0_subtree = action_on_subtree(&child0, Action::Removed, &Traverse::Post);
+							output.append(&mut add_prefix_to_changelist(&key, &child0_subtree));
+							output.push(Change::new(Action::Removed, child0.nodetype.clone(), key.clone(), None));
+
+							let child1_subtree = action_on_subtree(&child1, Action::Added, &Traverse::Pre);
+							let hash = match child1.nodetype {
+								ObjectType::Dir => None,
+								_ => Some(child1.hash.clone()),
+							};
+							output.push(Change::new(Action::Added, child1.nodetype.clone(), key.clone(), hash));
+							output.append(&mut add_prefix_to_changelist(&key, &child1_subtree));
+						},
+						_ => unreachable!("The patterns before cover all the possible cases"),
+					};
+				}
+			},
+			(None, None) => unreachable!("Unexpected error upon set union: an element in the set union does not belong in either of the two original sets"),
+		}
     }
-
-    while i < arg0.len() {
-        output.push(arg0[i].clone());
-        i += 1;
-    }
-
-    while j < arg1.len() {
-        output.push(arg1[j].clone());
-        j += 1;
-    }
-
     output
-}
-pub fn diff(old_tree: &HashTreeNode, new_tree: &HashTreeNode) -> Option<Diff> {
-    let mut output = Diff {
-        added: Vec::new(),
-        edited: Vec::new(),
-        removed: Vec::new(),
-    };
-    if old_tree.hash.ne(&new_tree.hash) {
-        match (old_tree.nodetype, new_tree.nodetype) {
-            (Type::Dir, Type::Dir) => {
-                for child in join_sets(&get_children(&old_tree), &get_children(&new_tree)) {
-                    let c0 = find(&child, &old_tree.children);
-                    let c1 = find(&child, &new_tree.children);
-
-                    match (c0, c1) {
-                        (Some(child0), Some(child1)) => {
-							let child_output = diff(&child0, &child1)?;
-							output.added.append(&mut add_prefix(&old_tree
-								.file_name, &child_output.added)?);
-							output.edited.append(&mut add_prefix(&old_tree
-								.file_name, &child_output.edited)?);
-							output.removed.append(&mut add_prefix(&old_tree
-								.file_name, &child_output.removed)?);
-						}
-                        (Some(child0), None) => {
-							output.removed.append(&mut add_prefix(&old_tree
-								.file_name, &list_nodes(&child0, &Traverse::Post)?)?);
-						},
-                        (None, Some(child1)) => {
-							output.added.append(&mut add_prefix(&new_tree.file_name, &list_nodes(&child1, &Traverse::Pre)?)?);
-						},
-                        (None, None) => unreachable!("Unexpected error upon set union: an element in the set union does not belong in either of the two original sets"),
-                    }
-                }
-            }
-            (type0, type1) if type0 == type1 && type0 != Type::Dir => {
-                output
-                    .edited
-                    .push((old_tree.nodetype, old_tree.file_name.clone()));
-            }
-            (type0, type1) if type0 != type1 => {
-                output
-                    .removed
-                    .append(&mut list_nodes(&old_tree, &Traverse::Post)?);
-                output
-                    .added
-                    .append(&mut list_nodes(&new_tree, &Traverse::Pre)?);
-            }
-            _ => unreachable!("The patterns before cover all the possible cases"),
-        }
-    }
-    Some(output)
-}
-
-pub fn load_tree(path: &str) -> std::io::Result<HashTreeNode> {
-    let serialized = fs::read_to_string(&path)?;
-    let ht: HashTreeNode = serde_json::from_str(&serialized)?;
-    Ok(ht)
-}
-
-pub fn save_tree(path: &str, tree: &HashTreeNode) -> std::io::Result<()> {
-    let serialized = serde_json::to_string(&tree)?;
-    fs::write(&path, serialized)?;
-    Ok(())
 }
