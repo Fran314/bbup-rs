@@ -1,3 +1,5 @@
+use crate::path::ForceFilename;
+
 use std::{
     path::PathBuf,
     pin::Pin,
@@ -300,11 +302,7 @@ impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> Bb
             })?;
 
         if self.progress {
-            let name = match path.file_name().and_then(std::ffi::OsStr::to_str) {
-                Some(val) => String::from(val),
-                None => String::from(format!("{:?}", path.file_name())),
-            };
-            let mut pw = ProgressWriter::new(&mut self.tx, len, &name);
+            let mut pw = ProgressWriter::new(&mut self.tx, len, &path.force_file_name());
             tokio::io::copy(&mut file, &mut pw)
                 .await
                 .map_err(|error| Error::BufferCopyError { error })?;
@@ -387,11 +385,7 @@ impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> Bb
             })?;
 
         if self.progress {
-            let name = match path.file_name().and_then(std::ffi::OsStr::to_str) {
-                Some(val) => String::from(val),
-                None => String::from(format!("{:?}", path.file_name())),
-            };
-            let pw = ProgressReader::new(&mut self.rx, len, &name);
+            let pw = ProgressReader::new(&mut self.rx, len, &path.force_file_name());
             let mut handle = pw.take(len);
             tokio::io::copy(&mut handle, &mut file)
                 .await

@@ -1,41 +1,88 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-//--- COMMON STUFF ---//
-#[derive(Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
-pub enum ObjectType {
+use crate::path::{AbstractPath, FileType};
+
+//--- STUFF TO SORT ---//
+#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Enumerate the types of addition that can be done
+pub enum Adding {
     Dir,
-    File,
-    Symlink,
+
+    /// `FileType(FileType::File | FileType::SymLink, hash)` where `hash` is the hash of the content of the file added
+    FileType(FileType, String),
 }
-#[derive(Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
-pub enum Action {
-    Added,
-    Edited,
-    Removed,
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Enumerate the types of edit that can be done
+pub enum Editing {
+    /// `FileType(FileType::File | FileType::SymLink, hash)` where `hash` is the hash of the content of the file added
+    FileType(FileType, String),
 }
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Enumerate the types of removal that can be done
+pub enum Removing {
+    Dir,
+    FileType(FileType),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Wrapper containint the type of the change done
+pub enum ChangeType {
+    Added(Adding),
+    Edited(Editing),
+    Removed(Removing),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Struct containing all the necessary information
+/// on a change that occurred between hashtrees
 pub struct Change {
-    pub action: Action,
-    pub object_type: ObjectType,
-    pub path: PathBuf,
-    pub hash: Option<String>,
+    /// Path where the change occurred
+    pub path: AbstractPath,
+
+    /// Type of change that occurred
+    pub change_type: ChangeType,
 }
-impl Change {
-    pub fn new(
-        action: Action,
-        object_type: ObjectType,
-        path: PathBuf,
-        hash: Option<String>,
-    ) -> Change {
-        Change {
-            action,
-            object_type,
-            path,
-            hash,
-        }
-    }
-}
+//--- ---//
+
+//--- COMMON STUFF ---//
+// #[derive(Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
+// pub enum ObjectType {
+//     Dir,
+//     File,
+//     Symlink,
+// }
+// #[derive(Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
+// pub enum Action {
+//     Added,
+//     Edited,
+//     Removed,
+// }
+// #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+// pub struct Change {
+//     pub action: Action,
+//     pub object_type: ObjectType,
+//     pub path: PathBuf,
+//     pub hash: Option<String>,
+// }
+// impl Change {
+//     pub fn new(
+//         action: Action,
+//         object_type: ObjectType,
+//         path: PathBuf,
+//         hash: Option<String>,
+//     ) -> Change {
+//         Change {
+//             action,
+//             object_type,
+//             path,
+//             hash,
+//         }
+//     }
+// }
+
 pub type Delta = Vec<Change>;
 pub trait PrettyPrint {
     fn pretty_print(&self, indent: u8) -> String;
@@ -46,20 +93,18 @@ impl PrettyPrint for Delta {
         let mut output = String::new();
         for i in 0..self.len() {
             output += ind.as_str();
-            output += match self[i].action {
-                Action::Added => "+++  ",
-                Action::Edited => "~~~  ",
-                Action::Removed => "---  ",
+
+            output += match self[i].change_type {
+                ChangeType::Added(Adding::Dir) => "+++  dir   ",
+                ChangeType::Added(Adding::FileType(FileType::File, _)) => "+++  file  ",
+                ChangeType::Added(Adding::FileType(FileType::SymLink, _)) => "+++  sylk  ",
+                ChangeType::Edited(Editing::FileType(FileType::File, _)) => "~~~  file  ",
+                ChangeType::Edited(Editing::FileType(FileType::SymLink, _)) => "~~~  sylk  ",
+                ChangeType::Removed(Removing::Dir) => "---  dir   ",
+                ChangeType::Removed(Removing::FileType(FileType::File)) => "---  file  ",
+                ChangeType::Removed(Removing::FileType(FileType::SymLink)) => "---  sylk  ",
             };
-            output += match self[i].object_type {
-                ObjectType::Dir => "dir   ",
-                ObjectType::File => "file  ",
-                ObjectType::Symlink => "sylk  ",
-            };
-            match self[i].path.to_str() {
-                Some(val) => output += val,
-                None => output += format!("[non-utf8 path] {:?}", self[i].path).as_str(),
-            };
+            output += self[i].path.to_string().as_str();
             if i != self.len() - 1 {
                 output += "\n";
             }

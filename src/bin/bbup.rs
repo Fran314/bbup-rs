@@ -1,9 +1,11 @@
+use bbup_rust::hashtree2::ExcludeList;
+use bbup_rust::path::AbstractPath;
 use std::path::PathBuf;
 use tokio::net::TcpStream;
 
 use bbup_rust::com::BbupCom;
 use bbup_rust::structs::PrettyPrint;
-use bbup_rust::{com, fs, hashtree, io, ssh_tunnel, structs, utils};
+use bbup_rust::{com, fs, hashtree2 as hashtree, io, ssh_tunnel, structs, utils};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
@@ -50,8 +52,8 @@ struct Connection {
 }
 struct ProcessConfig {
     link_root: PathBuf,
-    exclude_list: Vec<Regex>,
-    endpoint: PathBuf,
+    exclude_list: hashtree::ExcludeList,
+    endpoint: AbstractPath,
     connection: Connection,
     flags: Flags,
 }
@@ -68,8 +70,8 @@ impl ProcessConfig {
 }
 struct ProcessState {
     last_known_commit: Option<String>,
-    old_tree: Option<hashtree::HashTreeNode>,
-    new_tree: Option<hashtree::HashTreeNode>,
+    old_tree: Option<hashtree::Tree>,
+    new_tree: Option<hashtree::Tree>,
     local_delta: Option<structs::Delta>,
     update: Option<structs::Commit>,
 }
@@ -94,7 +96,7 @@ fn get_local_delta(config: &ProcessConfig, state: &mut ProcessState) -> Result<(
     state.last_known_commit = Some(fs::load(&config.lkc_path())?);
 
     let old_tree = fs::load(&config.old_tree_path())?;
-    let new_tree = hashtree::get_hash_tree(&config.link_root, &config.exclude_list)?;
+    let new_tree = hashtree::generate_hash_tree(&config.link_root, &config.exclude_list)?;
     let local_delta = hashtree::delta(&old_tree, &new_tree);
 
     if config.flags.verbose {
@@ -136,12 +138,13 @@ where
                 .context("could not get update-delta from server")?;
 
             // [PULL] Filter out updates that match the exclude_list
-            update.delta.retain(
-                |item| !match utils::to_exclude(&item.path, &config.exclude_list) {
-                    Ok(val) => val,
-                    Err(_) => false,
-                },
-            );
+            update.delta.retain(|change| !match change.change_type {
+                structs::ChangeType::Added(structs::Adding::Dir)
+                | structs::ChangeType::Removed(structs::Removing::Dir) => {
+                    config.exclude_list.should_exclude(&change.path, true)
+                }
+                _ => config.exclude_list.should_exclude(&change.path, false),
+            });
 
             if config.flags.verbose {
                 if update.delta.len() == 0 {
@@ -173,13 +176,67 @@ async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
             }),
         ) => {
             let mut conflicts: Vec<(String, String)> = Vec::new();
+
+            // TODO
+            // TODO
+            // TODO * 1000
             local_delta.into_iter().for_each(|local_change| {
                 update_delta.into_iter().for_each(|update_change| {
-                    if (local_change.path.eq(&update_change.path)
-                        && local_change.hash.ne(&update_change.hash))
-                        || local_change.path.starts_with(&update_change.path)
-                        || update_change.path.starts_with(&local_change.path)
-                    {
+                    let is_conflict = {
+                        if local_change.path.eq(&update_change.path) {
+                            match (&local_change.change_type, &update_change.change_type) {
+                                (
+                                    structs::ChangeType::Added(structs::Adding::Dir),
+                                    structs::ChangeType::Added(structs::Adding::Dir),
+                                )
+                                | (
+                                    structs::ChangeType::Removed(structs::Removing::Dir),
+                                    structs::ChangeType::Removed(structs::Removing::Dir),
+                                ) => false,
+
+                                (
+                                    structs::ChangeType::Added(structs::Adding::FileType(
+                                        type0,
+                                        hash0,
+                                    )),
+                                    structs::ChangeType::Added(structs::Adding::FileType(
+                                        type1,
+                                        hash1,
+                                    )),
+                                )
+                                | (
+                                    structs::ChangeType::Edited(structs::Editing::FileType(
+                                        type0,
+                                        hash0,
+                                    )),
+                                    structs::ChangeType::Edited(structs::Editing::FileType(
+                                        type1,
+                                        hash1,
+                                    )),
+                                ) if type0 == type1 && hash0 == hash1 => false,
+
+                                (
+                                    structs::ChangeType::Removed(structs::Removing::FileType(
+                                        type0,
+                                    )),
+                                    structs::ChangeType::Removed(structs::Removing::FileType(
+                                        type1,
+                                    )),
+                                ) if type0 == type1 => false,
+
+                                _ => true,
+                            }
+                        } else {
+                            local_change.path.starts_with(&update_change.path)
+                                || update_change.path.starts_with(&local_change.path)
+                        }
+                    };
+
+                    // local_change.path.starts_with(&update_change.path)
+                    //     || update_change.path.starts_with(&local_change.path);
+                    // if !is_conflict && local_change.path.eq(&update_change.path) {}
+
+                    if is_conflict {
                         // TODO: make the conflic explanation a little bit better
                         conflicts.push((
                             format!("local_change:  {:?}", local_change.path),
@@ -223,15 +280,30 @@ where
             commit_id: _,
             delta: update_delta,
         }) => {
+            // Get all files that need to be downloaded from server
             for change in update_delta {
-                if change.action != structs::Action::Removed
-                    && change.object_type != structs::ObjectType::Dir
-                {
-                    com.send_struct(Some(change.path.clone())).await?;
-                    com.get_file_to(&config.local_temp_path().join(change.path.clone()))
-                        .await?;
-                }
+                match change.change_type {
+                    structs::ChangeType::Added(structs::Adding::FileType(_, _))
+                    | structs::ChangeType::Edited(_) => {
+                        com.send_struct(Some(change.path.clone())).await?;
+
+                        let full_path = &config.local_temp_path().join(change.path.to_path_buf());
+                        com.get_file_to(&full_path)
+                            .await
+                            .context(format!("could not get file at path: {full_path:?}"))?;
+                    }
+                    _ => {}
+                };
             }
+            // for change in update_delta {
+            //     if change.action != structs::Action::Removed
+            //         && change.object_type != structs::ObjectType::Dir
+            //     {
+            //         com.send_struct(Some(change.path.clone())).await?;
+            //         com.get_file_to(&config.local_temp_path().join(change.path.clone()))
+            //             .await?;
+            //     }
+            // }
 
             com.send_struct(None::<PathBuf>).await?;
             Ok(())
@@ -254,37 +326,37 @@ async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> Resul
             Some(old_tree),
         ) => {
             for change in update_delta {
-                let path = config.link_root.join(&change.path);
-                let from_temp_path = config.local_temp_path().join(&change.path);
-                match (change.action, change.object_type) {
-                    (structs::Action::Removed, structs::ObjectType::Dir) => {
-                        std::fs::remove_dir(&path).context(format!(
-                            "could not remove directory to apply update\npath: {:?}",
-                            path
-                        ))?
-                    }
-                    (structs::Action::Removed, _) => std::fs::remove_file(&path).context(
-                        format!("could not remove file to apply update\npath: {:?}", path),
-                    )?,
-                    (structs::Action::Added, structs::ObjectType::Dir) => {
-                        std::fs::create_dir(&path).context(format!(
+                let path = config.link_root.join(&change.path.to_path_buf());
+                let from_temp_path = config.local_temp_path().join(&change.path.to_path_buf());
+                match change.change_type {
+                    structs::ChangeType::Added(structs::Adding::Dir) => std::fs::create_dir(&path)
+                        .context(format!(
                             "could not create directory to apply update\npath: {:?}",
                             path
-                        ))?
-                    }
-                    (structs::Action::Edited, structs::ObjectType::Dir) => {
-                        unreachable!("Dir cannot be edited: broken update delta")
-                    }
-                    (structs::Action::Added, _) | (structs::Action::Edited, _) => {
+                        ))?,
+                    structs::ChangeType::Added(structs::Adding::FileType(_, _))
+                    | structs::ChangeType::Edited(_) => {
                         std::fs::rename(&from_temp_path, &path).context(format!(
                             "could not copy file from temp to apply update\npath: {:?}",
                             path
                         ))?;
                     }
+                    structs::ChangeType::Removed(structs::Removing::Dir) => {
+                        std::fs::remove_dir(&path).context(format!(
+                            "could not remove directory to apply update\npath: {:?}",
+                            path
+                        ))?
+                    }
+                    structs::ChangeType::Removed(structs::Removing::FileType(_)) => {
+                        std::fs::remove_file(&path).context(format!(
+                            "could not remove file to apply update\npath: {:?}",
+                            path
+                        ))?
+                    }
                 }
             }
             old_tree.apply_delta(update_delta)?;
-            let new_tree = hashtree::get_hash_tree(&config.link_root, &config.exclude_list)?;
+            let new_tree = hashtree::generate_hash_tree(&config.link_root, &config.exclude_list)?;
             let local_delta = hashtree::delta(&old_tree, &new_tree);
 
             state.new_tree = Some(new_tree);
@@ -321,12 +393,13 @@ where
             com.send_struct(local_delta).await?;
 
             loop {
-                let path: Option<PathBuf> = com.get_struct().await?;
+                let path: Option<AbstractPath> = com.get_struct().await?;
                 let path = match path {
                     Some(val) => val,
                     None => break,
                 };
-                com.send_file_from(&config.link_root.join(path)).await?;
+                com.send_file_from(&config.link_root.join(path.to_path_buf()))
+                    .await?;
             }
 
             let new_commit_id: String = com.get_struct().await?;
@@ -469,9 +542,10 @@ async fn main() -> Result<()> {
         if !cwd.join(".bbup").exists() {
             std::fs::create_dir_all(cwd.join(".bbup"))?;
         }
+        // TODO this should somehow convert to AbstractPath
         let endpoint = PathBuf::from(io::get_input("set endpoint (relative to archive root): ")?);
         let add_exclude_list = io::get_input("add exclude list [y/N]?: ")?;
-        let mut exclude_list: Vec<String> = Vec::new();
+        let mut exclude_list_rules: Vec<String> = Vec::new();
         if add_exclude_list.to_ascii_lowercase().eq("y")
             || add_exclude_list.to_ascii_lowercase().eq("yes")
         {
@@ -481,24 +555,28 @@ async fn main() -> Result<()> {
                 if rule.eq("") {
                     break;
                 }
-                exclude_list.push(rule);
+                exclude_list_rules.push(rule);
             }
         }
         let local_config = fs::LinkConfig {
             link_type: structs::LinkType::Bijection,
-            endpoint,
-            exclude_list: exclude_list.clone(),
+            // TODO see above, where endpoint should be read as AbstractPath. This is a quickfix
+            endpoint: AbstractPath::from(endpoint)?,
+            exclude_list: exclude_list_rules.clone(),
         };
 
-        let mut exclude_list_regex: Vec<Regex> = Vec::new();
-        exclude_list_regex.push(Regex::new("\\.bbup/").unwrap());
-        for rule in &exclude_list {
-            exclude_list_regex.push(Regex::new(&rule).context(
+        let mut exclude_list_vec: Vec<Regex> = Vec::new();
+        // TODO questa cosa va fixata perché serve non avere .bbup ma poi non va davvero salvato nel file
+        exclude_list_vec.push(Regex::new("\\.bbup/").unwrap());
+        for rule in &exclude_list_rules {
+            exclude_list_vec.push(Regex::new(&rule).context(
                 "could not generate regex from pattern from exclude_list in link config",
             )?);
         }
+
+        let exclude_list = hashtree::ExcludeList::from(&exclude_list_vec);
         fs::save(&cwd.join(".bbup").join("config.yaml"), &local_config)?;
-        let tree = hashtree::get_hash_tree(&cwd, &exclude_list_regex)?;
+        let tree = hashtree::generate_hash_tree(&cwd, &exclude_list)?;
         fs::save(&cwd.join(".bbup").join("old-hash-tree.json"), &tree)?;
         fs::save(
             &cwd.join(".bbup").join("last-known-commit.json"),
@@ -529,6 +607,8 @@ async fn main() -> Result<()> {
                     "could not generate regex from pattern from exclude_list in link config",
                 )?);
             }
+            // TODO eeeeeh non bellissimo sto modo di trattare le exclude list eh...
+            let exclude_list = ExcludeList::from(&exclude_list);
 
             let connection = Connection {
                 local_port: global_config.settings.local_port,

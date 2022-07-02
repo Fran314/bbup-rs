@@ -1,4 +1,4 @@
-use crate::structs;
+use crate::{path::AbstractPath, structs};
 
 use std::ffi::OsStr;
 use std::fs;
@@ -60,7 +60,7 @@ pub struct ClientConfig {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LinkConfig {
     pub link_type: structs::LinkType,
-    pub endpoint: PathBuf,
+    pub endpoint: AbstractPath,
     pub exclude_list: Vec<String>,
 }
 //--- ---//
