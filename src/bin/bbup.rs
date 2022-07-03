@@ -419,40 +419,54 @@ async fn process_link(config: ProcessConfig) -> Result<()> {
         .context("could not connect to server")?;
     let mut com = BbupCom::from_split(socket.into_split(), config.flags.progress);
 
-    // Await green light to procede
-    com.check_ok()
-        .await
-        .context("could not get green light from server to procede with conversation")?;
+    let conversation_result: Result<()> = {
+        // Await green light to procede
+        com.check_ok()
+            .await
+            .context("could not get green light from server to procede with conversation")?;
 
-    com.send_struct(&config.endpoint).await?;
+        com.send_struct(&config.endpoint).await?;
 
-    let mut state = ProcessState::new();
+        let mut state = ProcessState::new();
 
-    {
-        // GET DELTA
-        get_local_delta(&config, &mut state)?;
+        {
+            // GET DELTA
+            get_local_delta(&config, &mut state)?;
+        }
+
+        {
+            // PULL
+            com.send_struct(com::JobType::Pull).await?;
+            pull_update_delta(&config, &mut state, &mut com).await?;
+            check_for_conflicts(&mut state).await?;
+            download_update(&config, &mut state, &mut com).await?;
+            apply_update(&config, &mut state).await?;
+        }
+
+        {
+            // PUSH
+            com.send_struct(com::JobType::Push).await?;
+            upload_changes(&config, &mut state, &mut com).await?;
+        }
+
+        // Terminate conversation with server
+        com.send_struct(com::JobType::Quit).await?;
+
+        Ok(())
+    };
+
+    match conversation_result {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            match com.send_error(1, "error propagated from client").await {
+                Err(err) => {
+                    println!("Could not propagate error to server, because {:#?}", err)
+                }
+                _ => {}
+            }
+            Err(error)
+        }
     }
-
-    {
-        // PULL
-        com.send_struct(com::JobType::Pull).await?;
-        pull_update_delta(&config, &mut state, &mut com).await?;
-        check_for_conflicts(&mut state).await?;
-        download_update(&config, &mut state, &mut com).await?;
-        apply_update(&config, &mut state).await?;
-    }
-
-    {
-        // PUSH
-        com.send_struct(com::JobType::Push).await?;
-        upload_changes(&config, &mut state, &mut com).await?;
-    }
-
-    // Terminate conversation with server
-    com.send_struct(com::JobType::Quit).await?;
-
-    tunnel.termiate();
-    Ok(())
 }
 
 #[tokio::main]

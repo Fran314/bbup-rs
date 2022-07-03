@@ -294,170 +294,186 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>, progress: bo
             return Ok(());
         }
     };
-    // Reply with green light to conversation, send OK
-    com.send_ok()
-        .await
-        .context("could not send greenlight for conversation")?;
 
-    let endpoint: AbstractPath = com
-        .get_struct()
-        .await
-        .context("could not get backup endpoint")?;
+    let conversation_result: Result<()> = {
+        // Reply with green light to conversation, send OK
+        com.send_ok()
+            .await
+            .context("could not send greenlight for conversation")?;
 
-    loop {
-        let jt: com::JobType = com.get_struct().await.context("could not get job type")?;
-        match jt {
-            com::JobType::Quit => {
-                com.send_ok().await?;
-                break;
-            }
-            com::JobType::Pull => {
-                let last_known_commit: String =
-                    com.get_struct().await.context("could not get lkc")?;
+        let endpoint: AbstractPath = com
+            .get_struct()
+            .await
+            .context("could not get backup endpoint")?;
 
-                // calculate update for client
-                let delta = get_update_delta(&state.commit_list, &endpoint, last_known_commit);
-
-                // send update delta to client for pull
-                com.send_struct(structs::Commit {
-                    commit_id: state.commit_list[state.commit_list.len() - 1]
-                        .commit_id
-                        .clone(),
-                    delta,
-                })
-                .await
-                .context("could not send update delta")?;
-
-                // send all files requested by client
-                loop {
-                    let path: Option<AbstractPath> = com
-                        .get_struct()
-                        .await
-                        .context("could not get path for file to send")?;
-                    let path = match path {
-                        Some(val) => val,
-                        None => break,
-                    };
-
-                    let full_path = state
-                        .archive_root
-                        .join(&endpoint.to_path_buf())
-                        .join(&path.to_path_buf());
-
-                    com.send_file_from(&full_path)
-                        .await
-                        .context(format!("could not send file at path: {full_path:?}"))?;
+        loop {
+            let jt: com::JobType = com.get_struct().await.context("could not get job type")?;
+            match jt {
+                com::JobType::Quit => {
+                    com.send_ok().await?;
+                    break;
                 }
-            }
-            com::JobType::Push => {
-                std::fs::create_dir_all(state.archive_root.join(".bbup").join("temp"))?;
-                std::fs::remove_dir_all(state.archive_root.join(".bbup").join("temp"))?;
-                std::fs::create_dir(state.archive_root.join(".bbup").join("temp"))?;
+                com::JobType::Pull => {
+                    let last_known_commit: String =
+                        com.get_struct().await.context("could not get lkc")?;
 
-                // Reply with green light for push
-                com.send_ok()
+                    // calculate update for client
+                    let delta = get_update_delta(&state.commit_list, &endpoint, last_known_commit);
+
+                    // send update delta to client for pull
+                    com.send_struct(structs::Commit {
+                        commit_id: state.commit_list[state.commit_list.len() - 1]
+                            .commit_id
+                            .clone(),
+                        delta,
+                    })
                     .await
-                    .context("could not send greenlight for push")?;
+                    .context("could not send update delta")?;
 
-                // Get list of changes from client
-                let local_delta: structs::Delta = com
-                    .get_struct()
-                    .await
-                    .context("could not get delta from client")?;
+                    // send all files requested by client
+                    loop {
+                        let path: Option<AbstractPath> = com
+                            .get_struct()
+                            .await
+                            .context("could not get path for file to send")?;
+                        let path = match path {
+                            Some(val) => val,
+                            None => break,
+                        };
 
-                // Get all files that need to be uploaded from client
-                for change in &local_delta {
-                    match change.change_type {
-                        structs::ChangeType::Added(structs::Adding::FileType(_, _))
-                        | structs::ChangeType::Edited(_) => {
-                            com.send_struct(Some(change.path.clone()))
-                                .await
-                                .context(format!(
-                                    "could not send path for file to send at path: {:?}",
-                                    change.path.clone(),
-                                ))?;
+                        let full_path = state
+                            .archive_root
+                            .join(&endpoint.to_path_buf())
+                            .join(&path.to_path_buf());
 
-                            let full_path = state
-                                .archive_root
-                                .join(".bbup")
-                                .join("temp")
-                                .join(change.path.to_path_buf());
-                            com.get_file_to(&full_path)
-                                .await
-                                .context(format!("could not get file at path: {full_path:?}"))?;
-                        }
-                        _ => {}
-                    };
-                }
-                // send stop
-                com.send_struct(None::<PathBuf>)
-                    .await
-                    .context("could not send empty path to signal end of file transfer")?;
-
-                // TODO if fail, send error message to the server
-                let updated_archive_tree = state.archive_tree.try_apply_delta(&local_delta)?;
-
-                for change in &local_delta {
-                    let path = state
-                        .archive_root
-                        .join(&endpoint.to_path_buf())
-                        .join(&change.path.to_path_buf());
-                    let from_temp_path = state
-                        .archive_root
-                        .join(".bbup")
-                        .join("temp")
-                        .join(&change.path.to_path_buf());
-
-                    match change.change_type {
-                        structs::ChangeType::Added(structs::Adding::Dir) => {
-                            std::fs::create_dir(&path).context(format!(
-                                "could not create directory to apply update\npath: {:?}",
-                                path
-                            ))?
-                        }
-                        structs::ChangeType::Added(structs::Adding::FileType(_, _))
-                        | structs::ChangeType::Edited(_) => {
-                            std::fs::rename(&from_temp_path, &path).context(format!(
-                                "could not copy file from temp to apply update\npath: {:?}",
-                                path
-                            ))?;
-                        }
-                        structs::ChangeType::Removed(structs::Removing::Dir) => {
-                            std::fs::remove_dir(&path).context(format!(
-                                "could not remove directory to apply update\npath: {:?}",
-                                path
-                            ))?
-                        }
-                        structs::ChangeType::Removed(structs::Removing::FileType(_)) => {
-                            std::fs::remove_file(&path).context(format!(
-                                "could not remove file to apply update\npath: {:?}",
-                                path
-                            ))?
-                        }
+                        com.send_file_from(&full_path)
+                            .await
+                            .context(format!("could not send file at path: {full_path:?}"))?;
                     }
                 }
+                com::JobType::Push => {
+                    std::fs::create_dir_all(state.archive_root.join(".bbup").join("temp"))?;
+                    std::fs::remove_dir_all(state.archive_root.join(".bbup").join("temp"))?;
+                    std::fs::create_dir(state.archive_root.join(".bbup").join("temp"))?;
 
-                let local_delta: structs::Delta = local_delta
-                    .into_iter()
-                    .map(|change| structs::Change {
-                        path: endpoint.join(&change.path),
-                        ..change
-                    })
-                    .collect();
-                let commit_id = random::random_hex(64);
-                state.commit_list.push(structs::Commit {
-                    commit_id: commit_id.clone(),
-                    delta: local_delta.clone(),
-                });
-                state.archive_tree = updated_archive_tree;
-                state.save().context("could not save push update")?;
+                    // Reply with green light for push
+                    com.send_ok()
+                        .await
+                        .context("could not send greenlight for push")?;
 
-                com.send_struct(commit_id)
-                    .await
-                    .context("could not send commit id for the push")?;
+                    // Get list of changes from client
+                    let local_delta: structs::Delta = com
+                        .get_struct()
+                        .await
+                        .context("could not get delta from client")?;
+
+                    // Get all files that need to be uploaded from client
+                    for change in &local_delta {
+                        match change.change_type {
+                            structs::ChangeType::Added(structs::Adding::FileType(_, _))
+                            | structs::ChangeType::Edited(_) => {
+                                com.send_struct(Some(change.path.clone())).await.context(
+                                    format!(
+                                        "could not send path for file to send at path: {:?}",
+                                        change.path.clone(),
+                                    ),
+                                )?;
+
+                                let full_path = state
+                                    .archive_root
+                                    .join(".bbup")
+                                    .join("temp")
+                                    .join(change.path.to_path_buf());
+                                com.get_file_to(&full_path).await.context(format!(
+                                    "could not get file at path: {full_path:?}"
+                                ))?;
+                            }
+                            _ => {}
+                        };
+                    }
+                    // send stop
+                    com.send_struct(None::<PathBuf>)
+                        .await
+                        .context("could not send empty path to signal end of file transfer")?;
+
+                    // TODO if fail, send error message to the server
+                    let updated_archive_tree = state.archive_tree.try_apply_delta(&local_delta)?;
+
+                    for change in &local_delta {
+                        let path = state
+                            .archive_root
+                            .join(&endpoint.to_path_buf())
+                            .join(&change.path.to_path_buf());
+                        let from_temp_path = state
+                            .archive_root
+                            .join(".bbup")
+                            .join("temp")
+                            .join(&change.path.to_path_buf());
+
+                        match change.change_type {
+                            structs::ChangeType::Added(structs::Adding::Dir) => {
+                                std::fs::create_dir(&path).context(format!(
+                                    "could not create directory to apply update\npath: {:?}",
+                                    path
+                                ))?
+                            }
+                            structs::ChangeType::Added(structs::Adding::FileType(_, _))
+                            | structs::ChangeType::Edited(_) => {
+                                std::fs::rename(&from_temp_path, &path).context(format!(
+                                    "could not copy file from temp to apply update\npath: {:?}",
+                                    path
+                                ))?;
+                            }
+                            structs::ChangeType::Removed(structs::Removing::Dir) => {
+                                std::fs::remove_dir(&path).context(format!(
+                                    "could not remove directory to apply update\npath: {:?}",
+                                    path
+                                ))?
+                            }
+                            structs::ChangeType::Removed(structs::Removing::FileType(_)) => {
+                                std::fs::remove_file(&path).context(format!(
+                                    "could not remove file to apply update\npath: {:?}",
+                                    path
+                                ))?
+                            }
+                        }
+                    }
+
+                    let local_delta: structs::Delta = local_delta
+                        .into_iter()
+                        .map(|change| structs::Change {
+                            path: endpoint.join(&change.path),
+                            ..change
+                        })
+                        .collect();
+                    let commit_id = random::random_hex(64);
+                    state.commit_list.push(structs::Commit {
+                        commit_id: commit_id.clone(),
+                        delta: local_delta.clone(),
+                    });
+                    state.archive_tree = updated_archive_tree;
+                    state.save().context("could not save push update")?;
+
+                    com.send_struct(commit_id)
+                        .await
+                        .context("could not send commit id for the push")?;
+                }
             }
         }
-    }
 
-    Ok(())
+        Ok(())
+    };
+
+    match conversation_result {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            match com.send_error(1, "error propagated from server").await {
+                Err(err) => {
+                    println!("Could not propagate error to client, because {:#?}", err)
+                }
+                _ => {}
+            }
+            Err(error)
+        }
+    }
 }
