@@ -53,7 +53,7 @@ impl ExcludeList {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Tree {
     Node {
         hash: String,
@@ -381,12 +381,22 @@ impl Tree {
             children: HashMap::new(),
         }
     }
-    pub fn apply_delta(&mut self, delta: &Delta) -> Result<(), Error> {
-        for change in delta {
-            self.apply_change(change.clone())?
-        }
+    pub fn try_apply_delta(&self, delta: &Delta) -> Result<Tree, Error> {
+        let mut output = self.clone();
 
-        Ok(())
+        for change in delta {
+            match output.apply_change(change.clone()) {
+                Err(Error::ApplyChangeError { info }) => {
+                    return Err(Error::ApplyChangeError {
+                        info: format!(
+                            "failed to apply delta\nproblematic change: {change:?}\nreason: {info}",
+                        ),
+                    });
+                }
+                _ => {}
+            }
+        }
+        Ok(output)
     }
 
     fn apply_change(&mut self, mut change: Change) -> Result<(), Error> {

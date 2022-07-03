@@ -10,10 +10,10 @@ use tokio::{
 };
 
 struct ServerState {
-    // home_dir: PathBuf,
     archive_root: PathBuf,
     server_port: u16,
     commit_list: fs::CommitList,
+    archive_tree: hashtree::Tree,
 }
 
 impl ServerState {
@@ -32,29 +32,24 @@ impl ServerState {
         //	at a time and those who can't have it terminate)
         let commit_list: fs::CommitList =
             fs::load(&archive_root.join(".bbup").join("commit-list.json"))?;
+        let archive_tree: hashtree::Tree =
+            fs::load(&archive_root.join(".bbup").join("archive-tree.json"))?;
         Ok(ServerState {
-            // home_dir: home_dir,
             archive_root,
             server_port: config.server_port,
             commit_list,
+            archive_tree,
         })
     }
 
     pub fn save(&mut self) -> Result<()> {
-        // fs::save(
-        //     &self
-        //         .home_dir
-        //         .join(".config")
-        //         .join("bbup-server")
-        //         .join("config.yaml"),
-        //     &fs::ServerConfig {
-        //         server_port: self.server_port,
-        //         archive_root: self.archive_root.clone(),
-        //     },
-        // )?;
         fs::save(
             &self.archive_root.join(".bbup").join("commit-list.json"),
             &self.commit_list,
+        )?;
+        fs::save(
+            &self.archive_root.join(".bbup").join("archive-tree.json"),
+            &self.archive_tree,
         )?;
 
         Ok(())
@@ -399,6 +394,9 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>, progress: bo
                     .await
                     .context("could not send empty path to signal end of file transfer")?;
 
+                // TODO if fail, send error message to the server
+                let updated_archive_tree = state.archive_tree.try_apply_delta(&local_delta)?;
+
                 for change in &local_delta {
                     let path = state
                         .archive_root
@@ -449,8 +447,9 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>, progress: bo
                 let commit_id = random::random_hex(64);
                 state.commit_list.push(structs::Commit {
                     commit_id: commit_id.clone(),
-                    delta: local_delta,
+                    delta: local_delta.clone(),
                 });
+                state.archive_tree = updated_archive_tree;
                 state.save().context("could not save push update")?;
 
                 com.send_struct(commit_id)

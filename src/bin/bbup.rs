@@ -30,7 +30,7 @@ enum SubCommand {
 }
 
 #[derive(Parser, Debug)]
-#[clap(name = "bbup", version)]
+#[clap(version)]
 struct Args {
     /// Custom home directory for testing
     #[clap(long, value_parser)]
@@ -302,14 +302,10 @@ where
 }
 async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> Result<()> {
     match (&state.update, &mut state.old_tree) {
-        (
-            Some(structs::Commit {
-                commit_id,
-                delta: update_delta,
-            }),
-            Some(old_tree),
-        ) => {
-            for change in update_delta {
+        (Some(structs::Commit { commit_id, delta }), Some(old_tree)) => {
+            let updated_old_tree = old_tree.try_apply_delta(delta)?;
+
+            for change in delta {
                 let path = config.link_root.join(&change.path.to_path_buf());
                 let from_temp_path = config.local_temp_path().join(&change.path.to_path_buf());
                 match change.change_type {
@@ -339,7 +335,7 @@ async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> Resul
                     }
                 }
             }
-            old_tree.apply_delta(update_delta)?;
+            *old_tree = updated_old_tree;
             let new_tree = hashtree::generate_hash_tree(&config.link_root, &config.exclude_list)?;
             let local_delta = hashtree::delta(&old_tree, &new_tree);
 
