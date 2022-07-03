@@ -1,7 +1,6 @@
 pub mod com;
 pub mod fs;
-// pub mod hashtree;
-pub mod hashtree2;
+pub mod hashtree;
 pub mod io;
 pub mod path;
 pub mod random;

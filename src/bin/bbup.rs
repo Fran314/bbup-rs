@@ -1,11 +1,11 @@
-use bbup_rust::hashtree2::ExcludeList;
+use bbup_rust::hashtree::ExcludeList;
 use bbup_rust::path::AbstractPath;
 use std::path::PathBuf;
 use tokio::net::TcpStream;
 
 use bbup_rust::com::BbupCom;
 use bbup_rust::structs::PrettyPrint;
-use bbup_rust::{com, fs, hashtree2 as hashtree, io, ssh_tunnel, structs, utils};
+use bbup_rust::{com, fs, hashtree, io, ssh_tunnel, structs, utils};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};

@@ -1,7 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
 use bbup_rust::{com, fs, io, path::AbstractPath, random, structs};
-// use bbup_rust::comunications::{BbupRead, BbupWrite};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -174,49 +173,6 @@ fn merge_delta(main: &mut structs::Delta, prec: &structs::Delta) {
                         }
                     }
                 }
-                // match (prec_change.action, succ_change.action) {
-                //     // (structs::Action::Added, structs::Action::Added)
-                //     // | (structs::Action::Edited, structs::Action::Added)
-                // 	// | (structs::Action::Removed, structs::Action::Edited)
-                // 	// | (structs::Action::Removed, structs::Action::Removed)
-                // 	// 	=> unreachable!("case is unreachable as long as main and precedent commit are compatible and correct"),
-
-                //     // (structs::Action::Added, structs::Action::Edited)
-                // 	// 	// If object is added and later on edited, it's the same as adding it with the new content (succ hash)
-                // 	// 	=> main[pos] = structs::Change::new(
-                // 	// 		structs::Action::Added,
-                // 	// 		succ_change.object_type.clone(),
-                // 	// 		succ_change.path.clone(),
-                // 	// 		succ_change.hash.clone()
-                // 	// 	),
-                //     // (structs::Action::Added, structs::Action::Removed)
-                // 	// 	// If object is added and later on removed, it's the same as not mentioning it at all
-                // 	// 	=> { main.remove(pos); },
-                //     // (structs::Action::Edited, structs::Action::Edited)
-                // 	// 	// If object is edited twice, it's the same as editing it once with the new content (succ hash)
-                // 	// 	=> main[pos] = structs::Change::new(
-                // 	// 		structs::Action::Edited,
-                // 	// 		succ_change.object_type.clone(),
-                // 	// 		succ_change.path.clone(),
-                // 	// 		succ_change.hash.clone()
-                // 	// 	),
-                //     // (structs::Action::Edited, structs::Action::Removed)
-                // 	// 	// If object is edited and later on removed, it's the same as just removing it
-                // 	// 	=> main[pos] = structs::Change::new(
-                // 	// 		structs::Action::Removed,
-                // 	// 		succ_change.object_type.clone(),
-                // 	// 		succ_change.path.clone(),
-                // 	// 		None
-                // 	// 	),
-                //     (structs::Action::Removed, structs::Action::Added)
-                // 		// If object is removed and later on added, it's the same as editing it with the new content (succ hash)
-                // 		=> main[pos] = structs::Change::new(
-                // 			structs::Action::Edited,
-                // 			succ_change.object_type.clone(),
-                // 			succ_change.path.clone(),
-                // 			succ_change.hash.clone()
-                // 		),
-                // }
             }
         }
     }
@@ -498,30 +454,7 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>, progress: bo
                                 "could not remove file to apply update\npath: {:?}",
                                 path
                             ))?
-                        } // (structs::Action::Removed, structs::ObjectType::Dir) => {
-                          //     std::fs::remove_dir(&path).context(format!(
-                          //         "could not remove directory to apply update\npath: {:?}",
-                          //         path
-                          //     ))?
-                          // }
-                          // (structs::Action::Removed, _) => std::fs::remove_file(&path).context(
-                          //     format!("could not remove file to apply update\npath: {:?}", path),
-                          // )?,
-                          // (structs::Action::Added, structs::ObjectType::Dir) => {
-                          //     std::fs::create_dir(&path).context(format!(
-                          //         "could not create directory to apply update\npath: {:?}",
-                          //         path
-                          //     ))?
-                          // }
-                          // (structs::Action::Edited, structs::ObjectType::Dir) => {
-                          //     unreachable!("Dir cannot be edited: broken update delta")
-                          // }
-                          // (structs::Action::Added, _) | (structs::Action::Edited, _) => {
-                          //     std::fs::rename(&from_temp_path, &path).context(format!(
-                          //         "could not copy file from temp to apply update\npath: {:?}",
-                          //         path
-                          //     ))?;
-                          // }
+                        }
                     }
                 }
 

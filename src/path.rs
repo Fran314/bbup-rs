@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+// TODO add more specific errors to cover most cases
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(
@@ -118,9 +119,6 @@ impl AbstractPath {
             components: new_components,
         })
     }
-    // pub fn strip_prefix_abst_path(&self, prefix: &AbstractPath) -> Result<AbstractPath, Error> {
-    //     self.strip_prefix_vec(&prefix.to_vec())
-    // }
     pub fn to_vec(&self) -> Vec<String> {
         Vec::<String>::from(self.components.clone())
     }
