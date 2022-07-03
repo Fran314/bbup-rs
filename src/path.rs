@@ -3,9 +3,13 @@ use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-// TODO add more specific errors to cover most cases
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error(
+        "Trying to create an AbstractPath from an absolute path buf, which is not allowed\npath buf: {path:?}"
+    )]
+    FromAbsolutePath { path: std::path::PathBuf },
+
     #[error(
         "Trying to remove a prefix ({prefix:?}) that doesn't match on abstract path ({abst_path:?})"
     )]
@@ -38,12 +42,13 @@ impl AbstractPath {
             components: VecDeque::new(),
         }
     }
-    pub fn from(path: std::path::PathBuf) -> std::io::Result<AbstractPath> {
+    pub fn from(path: std::path::PathBuf) -> Result<AbstractPath, Error> {
         if path.is_absolute() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "cannot create abstract path from absolute path",
-            ));
+            return Err(Error::FromAbsolutePath { path });
+            // return Err(std::io::Error::new(
+            //     std::io::ErrorKind::Other,
+            //     "cannot create abstract path from absolute path",
+            // ));
         }
 
         let mut components: VecDeque<String> = VecDeque::new();

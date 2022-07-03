@@ -177,9 +177,6 @@ async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
         ) => {
             let mut conflicts: Vec<(String, String)> = Vec::new();
 
-            // TODO
-            // TODO
-            // TODO * 1000
             local_delta.into_iter().for_each(|local_change| {
                 update_delta.into_iter().for_each(|update_change| {
                     let is_conflict = {
@@ -231,10 +228,6 @@ async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
                                 || update_change.path.starts_with(&local_change.path)
                         }
                     };
-
-                    // local_change.path.starts_with(&update_change.path)
-                    //     || update_change.path.starts_with(&local_change.path);
-                    // if !is_conflict && local_change.path.eq(&update_change.path) {}
 
                     if is_conflict {
                         // TODO: make the conflic explanation a little bit better
@@ -295,15 +288,6 @@ where
                     _ => {}
                 };
             }
-            // for change in update_delta {
-            //     if change.action != structs::Action::Removed
-            //         && change.object_type != structs::ObjectType::Dir
-            //     {
-            //         com.send_struct(Some(change.path.clone())).await?;
-            //         com.get_file_to(&config.local_temp_path().join(change.path.clone()))
-            //             .await?;
-            //     }
-            // }
 
             com.send_struct(None::<PathBuf>).await?;
             Ok(())

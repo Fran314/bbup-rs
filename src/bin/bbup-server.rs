@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use bbup_rust::{com, fs, io, path::AbstractPath, random, structs};
+use bbup_rust::{com, fs, hashtree, io, path::AbstractPath, random, structs};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -10,7 +10,7 @@ use tokio::{
 };
 
 struct ServerState {
-    home_dir: PathBuf,
+    // home_dir: PathBuf,
     archive_root: PathBuf,
     server_port: u16,
     commit_list: fs::CommitList,
@@ -25,41 +25,35 @@ impl ServerState {
                 .join("config.yaml"),
         )?;
 
+        let archive_root = home_dir.join(config.archive_root);
+
         // Load server state, necessary for conversation and
         //	"shared" between tasks (though only one can use it
         //	at a time and those who can't have it terminate)
-        let commit_list: fs::CommitList = fs::load(
-            &home_dir
-                .join(".config")
-                .join("bbup-server")
-                .join("commit-list.json"),
-        )?;
+        let commit_list: fs::CommitList =
+            fs::load(&archive_root.join(".bbup").join("commit-list.json"))?;
         Ok(ServerState {
-            home_dir: home_dir,
-            archive_root: config.archive_root,
+            // home_dir: home_dir,
+            archive_root,
             server_port: config.server_port,
             commit_list,
         })
     }
 
     pub fn save(&mut self) -> Result<()> {
+        // fs::save(
+        //     &self
+        //         .home_dir
+        //         .join(".config")
+        //         .join("bbup-server")
+        //         .join("config.yaml"),
+        //     &fs::ServerConfig {
+        //         server_port: self.server_port,
+        //         archive_root: self.archive_root.clone(),
+        //     },
+        // )?;
         fs::save(
-            &self
-                .home_dir
-                .join(".config")
-                .join("bbup-server")
-                .join("config.yaml"),
-            &fs::ServerConfig {
-                server_port: self.server_port,
-                archive_root: self.archive_root.clone(),
-            },
-        )?;
-        fs::save(
-            &self
-                .home_dir
-                .join(".config")
-                .join("bbup-server")
-                .join("commit-list.json"),
+            &self.archive_root.join(".bbup").join("commit-list.json"),
             &self.commit_list,
         )?;
 
@@ -226,6 +220,16 @@ async fn main() -> Result<()> {
         std::fs::create_dir_all(home_dir.join(".config").join("bbup-server"))?;
         let server_port = io::get_input("enter server port (0-65535): ")?.parse::<u16>()?;
         let archive_root = PathBuf::from(io::get_input("enter archive root (relative to ~): ")?);
+        if !home_dir.join(&archive_root).exists() {
+            anyhow::bail!("specified archive root does not exist!");
+        }
+        if !home_dir.join(&archive_root).is_dir() {
+            anyhow::bail!("specified archive root is not a directory!");
+        }
+        if !home_dir.join(&archive_root).read_dir()?.next().is_none() {
+            anyhow::bail!("specified archive root is not empty!");
+        }
+
         fs::save(
             &home_dir
                 .join(".config")
@@ -237,20 +241,19 @@ async fn main() -> Result<()> {
             },
         )?;
 
-        let mut commit_list: fs::CommitList = Vec::new();
-        commit_list.push(structs::Commit {
-            commit_id: String::from("0").repeat(64),
-            delta: Vec::new(),
-        });
+        let archive_path = home_dir.join(archive_root);
+        std::fs::create_dir_all(archive_path.join(".bbup").join("temp"))?;
+
+        let commit_list: fs::CommitList = Vec::from([structs::Commit::base_commit()]);
         fs::save(
-            &home_dir
-                .join(".config")
-                .join("bbup-server")
-                .join("commit-list.json"),
+            &archive_path.join(".bbup").join("commit-list.json"),
             &commit_list,
         )?;
 
-        std::fs::create_dir_all(home_dir.join(&archive_root).join(".bbup").join("temp"))?;
+        fs::save(
+            &archive_path.join(".bbup").join("archive-tree.json"),
+            &hashtree::Tree::empty_node(),
+        )?;
 
         println!("bbup server set up correctly!");
 
@@ -342,8 +345,7 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>, progress: bo
                     };
 
                     let full_path = state
-                        .home_dir
-                        .join(&state.archive_root)
+                        .archive_root
                         .join(&endpoint.to_path_buf())
                         .join(&path.to_path_buf());
 
@@ -353,27 +355,9 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>, progress: bo
                 }
             }
             com::JobType::Push => {
-                std::fs::create_dir_all(
-                    state
-                        .home_dir
-                        .join(&state.archive_root)
-                        .join(".bbup")
-                        .join("temp"),
-                )?;
-                std::fs::remove_dir_all(
-                    state
-                        .home_dir
-                        .join(&state.archive_root)
-                        .join(".bbup")
-                        .join("temp"),
-                )?;
-                std::fs::create_dir(
-                    state
-                        .home_dir
-                        .join(&state.archive_root)
-                        .join(".bbup")
-                        .join("temp"),
-                )?;
+                std::fs::create_dir_all(state.archive_root.join(".bbup").join("temp"))?;
+                std::fs::remove_dir_all(state.archive_root.join(".bbup").join("temp"))?;
+                std::fs::create_dir(state.archive_root.join(".bbup").join("temp"))?;
 
                 // Reply with green light for push
                 com.send_ok()
@@ -399,8 +383,7 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>, progress: bo
                                 ))?;
 
                             let full_path = state
-                                .home_dir
-                                .join(&state.archive_root)
+                                .archive_root
                                 .join(".bbup")
                                 .join("temp")
                                 .join(change.path.to_path_buf());
@@ -418,13 +401,11 @@ async fn process(socket: TcpStream, state: Arc<Mutex<ServerState>>, progress: bo
 
                 for change in &local_delta {
                     let path = state
-                        .home_dir
-                        .join(&state.archive_root)
+                        .archive_root
                         .join(&endpoint.to_path_buf())
                         .join(&change.path.to_path_buf());
                     let from_temp_path = state
-                        .home_dir
-                        .join(&state.archive_root)
+                        .archive_root
                         .join(".bbup")
                         .join("temp")
                         .join(&change.path.to_path_buf());

@@ -82,6 +82,15 @@ pub struct Commit {
     pub commit_id: String,
     pub delta: Delta,
 }
+
+impl Commit {
+    pub fn base_commit() -> Commit {
+        Commit {
+            commit_id: String::from("0").repeat(64),
+            delta: Vec::new(),
+        }
+    }
+}
 //--- ---//
 
 //--- CLIENT STUFF ---//

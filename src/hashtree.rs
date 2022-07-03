@@ -1,6 +1,7 @@
-use crate::path::{AbstractPath, EntryType, FileType, ForceFilename, ForceToString, PathType};
+use crate::path::*;
 use crate::structs::{Adding, Change, ChangeType, Delta, Editing, Removing};
-use crate::utils;
+
+use thiserror::Error;
 
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +11,21 @@ use std::path::PathBuf;
 use base64ct::{Base64, Encoding};
 use regex::Regex;
 use sha2::{Digest, Sha256};
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Could not open path\npath: {path:?}\ninfo: {info}")]
+    FsError { path: PathBuf, info: String },
+
+    #[error("Could not copy writer into reader\ninfo: {info}")]
+    CopyError { info: String },
+
+    #[error("Trying to generate hash tree from a path corresponding to something that is not a directory. While technically possible, this is undesireable behaviour\npath: {path:?}")]
+    LeafOnlyTree { path: PathBuf },
+
+    #[error("Could not apply change to tree\ninfo: {info}")]
+    ApplyChangeError { info: String },
+}
 
 pub struct ExcludeList {
     list: Vec<Regex>,
@@ -64,9 +80,16 @@ fn hash_string<T: std::convert::AsRef<[u8]>>(s: T) -> String {
 
 /// Hash anything that can be streamed (usually files)
 /// and convert to base64
-fn hash_stream<T: std::io::Read>(mut stream: T) -> std::io::Result<String> {
+fn hash_stream<T: std::io::Read>(mut stream: T) -> Result<String, Error> {
     let mut hasher = Sha256::new();
-    std::io::copy(&mut stream, &mut hasher)?;
+    match std::io::copy(&mut stream, &mut hasher) {
+        Ok(_) => {}
+        Err(error) => {
+            return Err(Error::CopyError {
+                info: error.to_string(),
+            });
+        }
+    };
     let hash = hasher.finalize();
 
     Ok(Base64::encode_string(&hash))
@@ -86,23 +109,33 @@ fn hash_children(children: &HashMap<String, Tree>) -> String {
 }
 
 /// Hash the content of a file and convert to base64
-fn hash_file(path: &PathBuf) -> std::io::Result<String> {
-    hash_stream(std::fs::File::open(path)?)
+fn hash_file(path: &PathBuf) -> Result<String, Error> {
+    match std::fs::File::open(path) {
+        Ok(file) => hash_stream(file),
+        Err(error) => Err(Error::FsError {
+            path: path.clone(),
+            info: error.to_string(),
+        }),
+    }
 }
 
 /// Hash the link of a symlink and convert to base64
-fn hash_symlink(path: &PathBuf) -> std::io::Result<String> {
-    Ok(hash_string(
-        std::fs::read_link(path)?.as_os_str().force_to_string(),
-    ))
+fn hash_symlink(path: &PathBuf) -> Result<String, Error> {
+    match std::fs::read_link(path) {
+        Ok(link) => Ok(hash_string(link.as_os_str().force_to_string())),
+        Err(error) => Err(Error::FsError {
+            path: path.clone(),
+            info: error.to_string(),
+        }),
+    }
 }
 
 /// Generate a tree representation of the content of a path
 /// specified, saving the hashes at every node and leaf to
 /// be able to detect changes
-pub fn generate_hash_tree(root: &PathBuf, exclude_list: &ExcludeList) -> std::io::Result<Tree> {
+pub fn generate_hash_tree(root: &PathBuf, exclude_list: &ExcludeList) -> Result<Tree, Error> {
     if root.get_type() != EntryType::Dir {
-        return Err(utils::std_err("trying to generate hash tree from a path corresponding to something that is not a directory. While technically possible, this is undesireable behaviour"));
+        return Err(Error::LeafOnlyTree { path: root.clone() });
     }
     generate_hash_tree_rec(root, &AbstractPath::empty(), exclude_list)
 }
@@ -111,16 +144,34 @@ fn generate_hash_tree_rec(
     path: &PathBuf,
     rel_path: &AbstractPath,
     exclude_list: &ExcludeList,
-) -> std::io::Result<Tree> {
+) -> Result<Tree, Error> {
     let output: Tree;
 
     match path.get_type() {
         EntryType::Dir => {
             let mut children: HashMap<String, Tree> = HashMap::new();
-            for entry in std::fs::read_dir(&path)? {
-                let entry = entry?.path().to_path_buf();
-                let is_dir = entry.is_dir();
-                let file_name = entry.force_file_name();
+            let read_dir_instance = match std::fs::read_dir(&path) {
+                Ok(val) => val,
+                Err(error) => {
+                    return Err(Error::FsError {
+                        path: path.clone(),
+                        info: error.to_string(),
+                    });
+                }
+            };
+            for entry in read_dir_instance {
+                let entry = match entry {
+                    Ok(val) => val,
+                    Err(error) => {
+                        return Err(Error::FsError {
+                            path: path.clone(),
+                            info: error.to_string(),
+                        });
+                    }
+                };
+                let entry_path = entry.path().to_path_buf();
+                let is_dir = entry_path.is_dir();
+                let file_name = entry_path.force_file_name();
                 let rel_subpath = {
                     let mut temp = rel_path.clone();
                     temp.push_back(file_name.clone());
@@ -130,7 +181,7 @@ fn generate_hash_tree_rec(
                 if !exclude_list.should_exclude(&rel_subpath, is_dir) {
                     children.insert(
                         file_name,
-                        generate_hash_tree_rec(&entry, &rel_subpath, exclude_list)?,
+                        generate_hash_tree_rec(&entry_path, &rel_subpath, exclude_list)?,
                     );
                 }
             }
@@ -324,7 +375,13 @@ pub fn delta(old_tree: &Tree, new_tree: &Tree) -> Delta {
 }
 
 impl Tree {
-    pub fn apply_delta(&mut self, delta: &Delta) -> std::io::Result<()> {
+    pub fn empty_node() -> Tree {
+        Tree::Node {
+            hash: hash_string(""),
+            children: HashMap::new(),
+        }
+    }
+    pub fn apply_delta(&mut self, delta: &Delta) -> Result<(), Error> {
         for change in delta {
             self.apply_change(change.clone())?
         }
@@ -332,17 +389,19 @@ impl Tree {
         Ok(())
     }
 
-    fn apply_change(&mut self, mut change: Change) -> std::io::Result<()> {
+    fn apply_change(&mut self, mut change: Change) -> Result<(), Error> {
         match self {
             Tree::Leaf {
                 hash: _,
                 leaf_type: _,
-            } => Err(utils::std_err(
-                "cannot apply change on a root-only tree (leaf)",
-            )),
+            } => Err(Error::ApplyChangeError {
+                info: "cannot apply change on a root-only tree (leaf)".to_string(),
+            }),
             Tree::Node { hash: _, children } => {
                 if change.path.size() == 0 {
-                    return Err(utils::std_err("cannot apply change intended on root"));
+                    return Err(Error::ApplyChangeError {
+                        info: "cannot apply change intended on root".to_string(),
+                    });
                 } else if change.path.size() == 1 {
                     // Unwrap is ok because I know the length of path is at least 2
                     //	so pop_back will not fail
@@ -351,13 +410,7 @@ impl Tree {
                     match (change.change_type, child) {
                         // Adding a directory
                         (ChangeType::Added(Adding::Dir), None) => {
-                            children.insert(
-                                curr_component,
-                                Tree::Node {
-                                    hash: hash_string(""),
-                                    children: HashMap::new(),
-                                },
-                            );
+                            children.insert(curr_component, Tree::empty_node());
                         }
 
                         // Adding a filelike
@@ -406,9 +459,10 @@ impl Tree {
                         }
 
                         _ => {
-                            return Err(utils::std_err(
-                                "Cannot apply change, change inconsistent with tree",
-                            ));
+                            return Err(Error::ApplyChangeError {
+                                info: "Cannot apply change, change inconsistent with tree"
+                                    .to_string(),
+                            });
                         }
                     }
                 } else {
@@ -419,9 +473,10 @@ impl Tree {
                     match child {
                         Some(child) => child.apply_change(change)?,
                         None => {
-                            return Err(utils::std_err(
-                                "Cannot follow path to apply change: child doesn't exist",
-                            ))
+                            return Err(Error::ApplyChangeError {
+                                info: "Cannot follow path to apply change: child doesn't exist"
+                                    .to_string(),
+                            });
                         }
                     }
                 }

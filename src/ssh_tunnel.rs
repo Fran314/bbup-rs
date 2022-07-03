@@ -1,5 +1,7 @@
 use std::io::BufRead;
 
+// TODO add custom error handling
+
 pub struct SshTunnel {
     process: std::process::Child,
     ready: bool,
