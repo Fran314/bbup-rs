@@ -7,7 +7,7 @@ use std::{
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use thiserror::Error;
@@ -70,13 +70,6 @@ pub enum Error {
 
     #[error("Generic error {0:#?}")]
     GenericError(String),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub enum JobType {
-    Pull,
-    Push,
-    Quit,
 }
 
 fn pb_style_from(direction: &str, name: &str) -> ProgressStyle {

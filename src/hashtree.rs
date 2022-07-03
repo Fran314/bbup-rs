@@ -1,5 +1,5 @@
-use crate::path::*;
-use crate::structs::{Adding, Change, ChangeType, Delta, Editing, Removing};
+use crate::path::{AbstractPath, EntryType, FileType, ForceFilename, ForceToString, PathType};
+use crate::structs::{Adding, Change, ChangeType, Delta, Editing, ExcludeList, Removing};
 
 use thiserror::Error;
 
@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use base64ct::{Base64, Encoding};
-use regex::Regex;
 use sha2::{Digest, Sha256};
 
 #[derive(Error, Debug)]
@@ -25,32 +24,6 @@ pub enum Error {
 
     #[error("Could not apply change to tree\ninfo: {info}")]
     ApplyChangeError { info: String },
-}
-
-pub struct ExcludeList {
-    list: Vec<Regex>,
-}
-impl ExcludeList {
-    pub fn from(list: &Vec<Regex>) -> ExcludeList {
-        ExcludeList { list: list.clone() }
-    }
-    pub fn should_exclude(&self, path: &AbstractPath, is_dir: bool) -> bool {
-        let path_as_string = {
-            let mut tmp = path.to_string();
-            if is_dir {
-                tmp.push(std::path::MAIN_SEPARATOR);
-            }
-            tmp
-        };
-
-        for rule in &self.list {
-            if rule.is_match(path_as_string.as_str()) {
-                return true;
-            }
-        }
-
-        false
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

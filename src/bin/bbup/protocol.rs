@@ -1,94 +1,15 @@
-use bbup_rust::hashtree::ExcludeList;
 use bbup_rust::path::AbstractPath;
 use std::path::PathBuf;
-use tokio::net::TcpStream;
+
+use crate::{ProcessConfig, ProcessState};
 
 use bbup_rust::com::BbupCom;
 use bbup_rust::structs::PrettyPrint;
-use bbup_rust::{com, fs, hashtree, io, ssh_tunnel, structs, utils};
+use bbup_rust::{fs, hashtree, structs, utils};
 
-use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
-use regex::Regex;
+use anyhow::{Context, Result};
 
-#[derive(Subcommand, Debug, PartialEq)]
-enum SubCommand {
-    /// Pull updates from server and push local updates
-    Sync {
-        /// Increase verbosity
-        #[clap(short, long, value_parser)]
-        verbose: bool,
-
-        /// Show progress during file transfer
-        #[clap(short, long, value_parser)]
-        progress: bool,
-    },
-    /// Initialize link
-    Init,
-    /// Initialize bbup client
-    Setup,
-}
-
-#[derive(Parser, Debug)]
-#[clap(version)]
-struct Args {
-    /// Custom home directory for testing
-    #[clap(long, value_parser)]
-    home_dir: Option<PathBuf>,
-
-    #[clap(subcommand)]
-    cmd: SubCommand,
-}
-
-struct Flags {
-    verbose: bool,
-    progress: bool,
-}
-struct Connection {
-    local_port: u16,
-    server_port: u16,
-    host_name: String,
-    host_address: String,
-}
-struct ProcessConfig {
-    link_root: PathBuf,
-    exclude_list: hashtree::ExcludeList,
-    endpoint: AbstractPath,
-    connection: Connection,
-    flags: Flags,
-}
-impl ProcessConfig {
-    fn local_temp_path(&self) -> PathBuf {
-        self.link_root.join(".bbup").join("temp")
-    }
-    fn lkc_path(&self) -> PathBuf {
-        self.link_root.join(".bbup").join("last-known-commit.json")
-    }
-    fn old_tree_path(&self) -> PathBuf {
-        self.link_root.join(".bbup").join("old-hash-tree.json")
-    }
-}
-struct ProcessState {
-    last_known_commit: Option<String>,
-    old_tree: Option<hashtree::Tree>,
-    new_tree: Option<hashtree::Tree>,
-    local_delta: Option<structs::Delta>,
-    update: Option<structs::Commit>,
-}
-
-impl ProcessState {
-    fn new() -> ProcessState {
-        ProcessState {
-            last_known_commit: None,
-            old_tree: None,
-            new_tree: None,
-            local_delta: None,
-            update: None,
-        }
-    }
-}
-
-fn get_local_delta(config: &ProcessConfig, state: &mut ProcessState) -> Result<()> {
+pub fn get_local_delta(config: &ProcessConfig, state: &mut ProcessState) -> Result<()> {
     if config.flags.verbose {
         println!("calculating local delta...")
     }
@@ -112,7 +33,8 @@ fn get_local_delta(config: &ProcessConfig, state: &mut ProcessState) -> Result<(
     state.local_delta = Some(local_delta);
     Ok(())
 }
-async fn pull_update_delta<T, R>(
+
+pub async fn pull_update_delta<T, R>(
     config: &ProcessConfig,
     state: &mut ProcessState,
     com: &mut BbupCom<T, R>,
@@ -166,7 +88,8 @@ where
         }
     }
 }
-async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
+
+pub async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
     match (&state.local_delta, &state.update) {
         (
             Some(local_delta),
@@ -259,7 +182,7 @@ async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
     }
 }
 
-async fn download_update<T, R>(
+pub async fn download_update<T, R>(
     config: &ProcessConfig,
     state: &mut ProcessState,
     com: &mut BbupCom<T, R>,
@@ -300,7 +223,8 @@ where
         }
     }
 }
-async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> Result<()> {
+
+pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> Result<()> {
     match (&state.update, &mut state.old_tree) {
         (Some(structs::Commit { commit_id, delta }), Some(old_tree)) => {
             let updated_old_tree = old_tree.try_apply_delta(delta)?;
@@ -356,7 +280,8 @@ async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> Resul
         }
     }
 }
-async fn upload_changes<T, R>(
+
+pub async fn upload_changes<T, R>(
     config: &ProcessConfig,
     state: &mut ProcessState,
     com: &mut BbupCom<T, R>,
@@ -397,244 +322,4 @@ where
 			)
         }
     }
-}
-
-async fn process_link(config: ProcessConfig) -> Result<()> {
-    let mut tunnel = ssh_tunnel::SshTunnel::to(
-        config.connection.local_port,
-        config.connection.server_port,
-        config.connection.host_name.clone(),
-        config.connection.host_address.clone(),
-    )?;
-
-    if config.flags.verbose {
-        println!("ssh tunnel PID: {}", &tunnel.pid());
-    }
-
-    tunnel.wait_for_ready()?;
-
-    // Start connection
-    let socket = TcpStream::connect(format!("127.0.0.1:{}", config.connection.local_port))
-        .await
-        .context("could not connect to server")?;
-    let mut com = BbupCom::from_split(socket.into_split(), config.flags.progress);
-
-    let conversation_result: Result<()> = {
-        // Await green light to procede
-        com.check_ok()
-            .await
-            .context("could not get green light from server to procede with conversation")?;
-
-        com.send_struct(&config.endpoint).await?;
-
-        let mut state = ProcessState::new();
-
-        {
-            // GET DELTA
-            get_local_delta(&config, &mut state)?;
-        }
-
-        {
-            // PULL
-            com.send_struct(com::JobType::Pull).await?;
-            pull_update_delta(&config, &mut state, &mut com).await?;
-            check_for_conflicts(&mut state).await?;
-            download_update(&config, &mut state, &mut com).await?;
-            apply_update(&config, &mut state).await?;
-        }
-
-        {
-            // PUSH
-            com.send_struct(com::JobType::Push).await?;
-            upload_changes(&config, &mut state, &mut com).await?;
-        }
-
-        // Terminate conversation with server
-        com.send_struct(com::JobType::Quit).await?;
-
-        Ok(())
-    };
-
-    match conversation_result {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            match com.send_error(1, "error propagated from client").await {
-                Err(err) => {
-                    println!("Could not propagate error to server, because {:#?}", err)
-                }
-                _ => {}
-            }
-            Err(error)
-        }
-    }
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Parse command line arguments
-    let args = Args::parse();
-    let home_dir = match args.home_dir {
-        Some(val) => Some(val),
-        None => dirs::home_dir(),
-    }
-    .context("could not resolve home_dir path")?;
-    let cwd = std::env::current_dir()?;
-
-    if args.cmd == SubCommand::Setup {
-        if home_dir.join(".config").join("bbup-client").exists()
-            && home_dir
-                .join(".config")
-                .join("bbup-client")
-                .join("config.yaml")
-                .exists()
-        {
-            anyhow::bail!("bbup client is already setup");
-        }
-
-        let local_port = io::get_input("enter local port (0-65535): ")?.parse::<u16>()?;
-        let server_port = io::get_input("enter server port (0-65535): ")?.parse::<u16>()?;
-        let host_name = io::get_input("enter host name: ")?;
-        let host_address = io::get_input("enter host address: ")?;
-
-        std::fs::create_dir_all(home_dir.join(".config").join("bbup-client"))?;
-        let settings = structs::ClientSettings {
-            local_port,
-            server_port,
-            host_name,
-            host_address,
-        };
-        fs::save(
-            &home_dir
-                .join(".config")
-                .join("bbup-client")
-                .join("config.yaml"),
-            &fs::ClientConfig {
-                settings,
-                links: Vec::new(),
-            },
-        )?;
-
-        println!("bbup client set up correctly!");
-
-        return Ok(());
-    }
-
-    let global_config: fs::ClientConfig = fs::load(
-        &home_dir
-            .join(".config")
-            .join("bbup-client")
-            .join("config.yaml"),
-    )?;
-
-    if args.cmd == SubCommand::Init {
-        if cwd.join(".bbup").exists() && cwd.join(".bbup").join("config.yaml").exists() {
-            anyhow::bail!(
-                "Current directory [{:?}] is already initialized as a backup source",
-                cwd
-            )
-        }
-        if !cwd.join(".bbup").exists() {
-            std::fs::create_dir_all(cwd.join(".bbup"))?;
-        }
-        // TODO this should somehow convert to AbstractPath
-        let endpoint = PathBuf::from(io::get_input("set endpoint (relative to archive root): ")?);
-        let add_exclude_list = io::get_input("add exclude list [y/N]?: ")?;
-        let mut exclude_list_rules: Vec<String> = Vec::new();
-        if add_exclude_list.to_ascii_lowercase().eq("y")
-            || add_exclude_list.to_ascii_lowercase().eq("yes")
-        {
-            println!("add regex rules in string form. To stop, enter empty string");
-            loop {
-                let rule = io::get_input("rule: ")?;
-                if rule.eq("") {
-                    break;
-                }
-                exclude_list_rules.push(rule);
-            }
-        }
-        let local_config = fs::LinkConfig {
-            link_type: structs::LinkType::Bijection,
-            // TODO see above, where endpoint should be read as AbstractPath. This is a quickfix
-            endpoint: AbstractPath::from(endpoint)?,
-            exclude_list: exclude_list_rules.clone(),
-        };
-
-        let mut exclude_list_vec: Vec<Regex> = Vec::new();
-        // TODO questa cosa va fixata perché serve non avere .bbup ma poi non va davvero salvato nel file
-        exclude_list_vec.push(Regex::new("\\.bbup/").unwrap());
-        for rule in &exclude_list_rules {
-            exclude_list_vec.push(Regex::new(&rule).context(
-                "could not generate regex from pattern from exclude_list in link config",
-            )?);
-        }
-
-        let exclude_list = hashtree::ExcludeList::from(&exclude_list_vec);
-        fs::save(&cwd.join(".bbup").join("config.yaml"), &local_config)?;
-        let tree = hashtree::generate_hash_tree(&cwd, &exclude_list)?;
-        fs::save(&cwd.join(".bbup").join("old-hash-tree.json"), &tree)?;
-        fs::save(
-            &cwd.join(".bbup").join("last-known-commit.json"),
-            &String::from("0").repeat(64),
-        )?;
-
-        println!("backup source initialized correctly!");
-
-        return Ok(());
-    }
-
-    match args.cmd {
-        SubCommand::Sync { verbose, progress } => {
-            if !cwd.join(".bbup").exists() || !cwd.join(".bbup").join("config.yaml").exists() {
-                anyhow::bail!(
-                    "Current directory [{:?}] isn't initialized as a backup source",
-                    cwd
-                )
-            }
-
-            // Parse Link configs
-            let local_config: fs::LinkConfig = fs::load(&cwd.join(".bbup").join("config.yaml"))?;
-
-            let mut exclude_list: Vec<Regex> = Vec::new();
-            exclude_list.push(Regex::new("\\.bbup/").unwrap());
-            for rule in &local_config.exclude_list {
-                exclude_list.push(Regex::new(&rule).context(
-                    "could not generate regex from pattern from exclude_list in link config",
-                )?);
-            }
-            // TODO eeeeeh non bellissimo sto modo di trattare le exclude list eh...
-            let exclude_list = ExcludeList::from(&exclude_list);
-
-            let connection = Connection {
-                local_port: global_config.settings.local_port,
-                server_port: global_config.settings.server_port,
-                host_name: global_config.settings.host_name.clone(),
-                host_address: global_config.settings.host_address.clone(),
-            };
-            let flags = Flags { verbose, progress };
-            let config = ProcessConfig {
-                link_root: cwd.clone(),
-                exclude_list,
-                endpoint: local_config.endpoint,
-                connection,
-                flags,
-            };
-
-            if verbose {
-                println!("Syncing link: [{:?}]", cwd);
-            }
-            match process_link(config).await {
-                Ok(()) => {
-                    if verbose {
-                        println!("Link correctly synced: [{:?}] ", cwd);
-                    }
-                }
-                Err(err) => {
-                    bail!("Failed to sync link [{:?}]\n{:?}", cwd, err);
-                }
-            };
-        }
-        _ => { /* already handled */ }
-    }
-
-    Ok(())
 }

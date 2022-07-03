@@ -1,9 +1,7 @@
-use crate::{path::AbstractPath, structs};
-
 use std::ffi::OsStr;
 use std::fs;
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use std::path::PathBuf;
 
 use thiserror::Error;
@@ -41,29 +39,6 @@ pub enum Error {
         error: std::io::Error,
     },
 }
-
-//--- SERVER STUFF ---//
-pub type CommitList = Vec<structs::Commit>;
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServerConfig {
-    pub server_port: u16,
-    pub archive_root: PathBuf,
-}
-//--- ---//
-
-//--- CLIENT STUFF ---//
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ClientConfig {
-    pub settings: structs::ClientSettings,
-    pub links: Vec<String>,
-}
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct LinkConfig {
-    pub link_type: structs::LinkType,
-    pub endpoint: AbstractPath,
-    pub exclude_list: Vec<String>,
-}
-//--- ---//
 
 pub fn load<T: DeserializeOwned>(path: &PathBuf) -> std::result::Result<T, Error> {
     let serialized = fs::read_to_string(path).map_err(|error| Error::ReadError {
