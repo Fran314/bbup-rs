@@ -1,7 +1,7 @@
 use crate::{CommitList, ServerConfig};
 
 use bbup_rust::hashtree::Tree;
-use bbup_rust::structs::Commit;
+use bbup_rust::model::Commit;
 use bbup_rust::{fs, io};
 
 use std::path::PathBuf;

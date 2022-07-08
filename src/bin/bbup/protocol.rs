@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use crate::{ProcessConfig, ProcessState};
 
 use bbup_rust::com::BbupCom;
-use bbup_rust::structs::PrettyPrint;
-use bbup_rust::{fs, hashtree, structs, utils};
+use bbup_rust::model::{Adding, ChangeType, Commit, Editing, PrettyPrint, Removing};
+use bbup_rust::{fs, hashtree, utils};
 
 use anyhow::{Context, Result};
 
@@ -54,15 +54,14 @@ where
                 .context("could not send last known commit")?;
 
             // [PULL] Get delta from last_known_commit to server's most recent commit
-            let mut update: structs::Commit = com
+            let mut update: Commit = com
                 .get_struct()
                 .await
                 .context("could not get update-delta from server")?;
 
             // [PULL] Filter out updates that match the exclude_list
             update.delta.retain(|change| !match change.change_type {
-                structs::ChangeType::Added(structs::Adding::Dir)
-                | structs::ChangeType::Removed(structs::Removing::Dir) => {
+                ChangeType::Added(Adding::Dir) | ChangeType::Removed(Removing::Dir) => {
                     config.exclude_list.should_exclude(&change.path, true)
                 }
                 _ => config.exclude_list.should_exclude(&change.path, false),
@@ -93,7 +92,7 @@ pub async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
     match (&state.local_delta, &state.update) {
         (
             Some(local_delta),
-            Some(structs::Commit {
+            Some(Commit {
                 commit_id: _,
                 delta: update_delta,
             }),
@@ -106,42 +105,26 @@ pub async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
                         if local_change.path.eq(&update_change.path) {
                             match (&local_change.change_type, &update_change.change_type) {
                                 (
-                                    structs::ChangeType::Added(structs::Adding::Dir),
-                                    structs::ChangeType::Added(structs::Adding::Dir),
+                                    ChangeType::Added(Adding::Dir),
+                                    ChangeType::Added(Adding::Dir),
                                 )
                                 | (
-                                    structs::ChangeType::Removed(structs::Removing::Dir),
-                                    structs::ChangeType::Removed(structs::Removing::Dir),
+                                    ChangeType::Removed(Removing::Dir),
+                                    ChangeType::Removed(Removing::Dir),
                                 ) => false,
 
                                 (
-                                    structs::ChangeType::Added(structs::Adding::FileType(
-                                        type0,
-                                        hash0,
-                                    )),
-                                    structs::ChangeType::Added(structs::Adding::FileType(
-                                        type1,
-                                        hash1,
-                                    )),
+                                    ChangeType::Added(Adding::FileType(type0, hash0)),
+                                    ChangeType::Added(Adding::FileType(type1, hash1)),
                                 )
                                 | (
-                                    structs::ChangeType::Edited(structs::Editing::FileType(
-                                        type0,
-                                        hash0,
-                                    )),
-                                    structs::ChangeType::Edited(structs::Editing::FileType(
-                                        type1,
-                                        hash1,
-                                    )),
+                                    ChangeType::Edited(Editing::FileType(type0, hash0)),
+                                    ChangeType::Edited(Editing::FileType(type1, hash1)),
                                 ) if type0 == type1 && hash0 == hash1 => false,
 
                                 (
-                                    structs::ChangeType::Removed(structs::Removing::FileType(
-                                        type0,
-                                    )),
-                                    structs::ChangeType::Removed(structs::Removing::FileType(
-                                        type1,
-                                    )),
+                                    ChangeType::Removed(Removing::FileType(type0)),
+                                    ChangeType::Removed(Removing::FileType(type1)),
                                 ) if type0 == type1 => false,
 
                                 _ => true,
@@ -192,15 +175,14 @@ where
     R: tokio::io::AsyncRead + Unpin + Sync + Send,
 {
     match &state.update {
-        Some(structs::Commit {
+        Some(Commit {
             commit_id: _,
             delta: update_delta,
         }) => {
             // Get all files that need to be downloaded from server
             for change in update_delta {
                 match change.change_type {
-                    structs::ChangeType::Added(structs::Adding::FileType(_, _))
-                    | structs::ChangeType::Edited(_) => {
+                    ChangeType::Added(Adding::FileType(_, _)) | ChangeType::Edited(_) => {
                         com.send_struct(Some(change.path.clone())).await?;
 
                         let full_path = &config.local_temp_path().join(change.path.to_path_buf());
@@ -226,37 +208,36 @@ where
 
 pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> Result<()> {
     match (&state.update, &mut state.old_tree) {
-        (Some(structs::Commit { commit_id, delta }), Some(old_tree)) => {
+        (Some(Commit { commit_id, delta }), Some(old_tree)) => {
             let updated_old_tree = old_tree.try_apply_delta(delta)?;
 
             for change in delta {
                 let path = config.link_root.join(&change.path.to_path_buf());
                 let from_temp_path = config.local_temp_path().join(&change.path.to_path_buf());
                 match change.change_type {
-                    structs::ChangeType::Added(structs::Adding::Dir) => std::fs::create_dir(&path)
-                        .context(format!(
+                    ChangeType::Added(Adding::Dir) => {
+                        std::fs::create_dir(&path).context(format!(
                             "could not create directory to apply update\npath: {:?}",
                             path
-                        ))?,
-                    structs::ChangeType::Added(structs::Adding::FileType(_, _))
-                    | structs::ChangeType::Edited(_) => {
+                        ))?
+                    }
+                    ChangeType::Added(Adding::FileType(_, _)) | ChangeType::Edited(_) => {
                         std::fs::rename(&from_temp_path, &path).context(format!(
                             "could not copy file from temp to apply update\npath: {:?}",
                             path
                         ))?;
                     }
-                    structs::ChangeType::Removed(structs::Removing::Dir) => {
+                    ChangeType::Removed(Removing::Dir) => {
                         std::fs::remove_dir(&path).context(format!(
                             "could not remove directory to apply update\npath: {:?}",
                             path
                         ))?
                     }
-                    structs::ChangeType::Removed(structs::Removing::FileType(_)) => {
-                        std::fs::remove_file(&path).context(format!(
+                    ChangeType::Removed(Removing::FileType(_)) => std::fs::remove_file(&path)
+                        .context(format!(
                             "could not remove file to apply update\npath: {:?}",
                             path
-                        ))?
-                    }
+                        ))?,
                 }
             }
             *old_tree = updated_old_tree;
@@ -267,7 +248,7 @@ pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> R
             state.local_delta = Some(local_delta);
 
             fs::save(&config.old_tree_path(), &old_tree)?;
-            fs::save(&config.lkc_path(), commit_id)?;
+            fs::save(&config.lkc_path(), &commit_id)?;
 
             Ok(())
         }

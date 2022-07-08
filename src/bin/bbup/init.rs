@@ -1,6 +1,6 @@
 use crate::{LinkConfig, LinkType};
 
-use bbup_rust::{fs, hashtree, io, path::AbstractPath, structs::ExcludeList};
+use bbup_rust::{fs, hashtree, io, model::ExcludeList, path::AbstractPath};
 
 use std::path::PathBuf;
 

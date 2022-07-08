@@ -1,7 +1,7 @@
 use bbup_rust::fs;
 use bbup_rust::hashtree::Tree;
+use bbup_rust::model::{Change, Commit, Delta, DeltaExt};
 use bbup_rust::path::AbstractPath;
-use bbup_rust::structs::{Change, Commit, Delta, DeltaExt};
 
 use std::path::PathBuf;
 
@@ -40,6 +40,7 @@ pub struct ServerConfig {
     pub archive_root: PathBuf,
 }
 
+// TODO restructure ServerState in a similar way to how ClientState is structured
 pub struct ServerState {
     pub archive_root: PathBuf,
     pub server_port: u16,

@@ -13,6 +13,10 @@ use tokio::{net::TcpListener, sync::Mutex};
 enum SubCommand {
     /// Run the daemon
     Run {
+        /// Increase verbosity
+        #[clap(short, long, value_parser)]
+        verbose: bool,
+
         /// Show progress during file transfer
         #[clap(short, long)]
         progress: bool,
@@ -41,32 +45,36 @@ async fn main() -> Result<()> {
     }
     .context("could not resolve home_dir path")?;
 
-    if args.cmd == SubCommand::Setup {
-        return setup::setup(home_dir);
-    }
-
-    // Load server state, necessary for conversation and
-    //	"shared" between tasks (though only one can use it
-    //	at a time and those who can't have it terminate)
-    let state = ServerState::load(home_dir)?;
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", state.server_port)).await?;
-    let state = Arc::new(Mutex::new(state));
-
     match args.cmd {
-        SubCommand::Run { progress } => {
-            // Start TCP server and spawn a task for each connection
+        SubCommand::Setup => return setup::setup(home_dir),
+        SubCommand::Run { verbose, progress } => {
+            // Load server state, necessary for conversation and
+            //	"shared" between tasks (though only one can use it
+            //	at a time and those who can't have it terminate)
+            let state = ServerState::load(home_dir)?;
+
+            // Start TCP server
+            let listener = TcpListener::bind(format!("127.0.0.1:{}", state.server_port)).await?;
+
+            // Transform state into an ArcMutex of its origina
+            //	value to pass it around
+            let state = Arc::new(Mutex::new(state));
+
+            // Spawn a task for each connection
             loop {
                 let (socket, _) = listener.accept().await?;
                 let state = state.clone();
                 tokio::spawn(async move {
                     match process::process_connection(socket, state, progress).await {
-                        Ok(()) => println!("connection processed correctly"),
+                        Ok(()) => {
+                            if verbose {
+                                println!("connection processed correctly")
+                            }
+                        }
                         Err(err) => println!("Error: {err:?}"),
                     }
                 });
             }
         }
-        _ => { /* already handled */ }
     }
-    Ok(())
 }

@@ -2,9 +2,9 @@ use crate::{CommmitListExt, ServerState};
 
 use bbup_rust::{
     com::BbupCom,
+    model::{Adding, Change, ChangeType, Commit, Delta, JobType, Removing},
     path::AbstractPath,
     random,
-    structs::{Adding, Change, ChangeType, Commit, Delta, JobType, Removing},
 };
 
 use std::{path::PathBuf, sync::Arc};

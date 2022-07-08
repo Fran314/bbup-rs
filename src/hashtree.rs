@@ -1,5 +1,5 @@
+use crate::model::{Adding, Change, ChangeType, Delta, Editing, ExcludeList, Removing};
 use crate::path::{AbstractPath, EntryType, FileType, ForceFilename, ForceToString, PathType};
-use crate::structs::{Adding, Change, ChangeType, Delta, Editing, ExcludeList, Removing};
 
 use thiserror::Error;
 

@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use bbup_rust::{
     hashtree::Tree,
+    model::{Commit, Delta, ExcludeList},
     path::AbstractPath,
-    structs::{Commit, Delta, ExcludeList},
 };
 
 use std::path::PathBuf;

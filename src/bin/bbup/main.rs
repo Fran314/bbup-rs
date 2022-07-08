@@ -5,7 +5,7 @@ mod protocol;
 mod setup;
 mod sync;
 
-use bbup_rust::{fs, structs::ExcludeList};
+use bbup_rust::{fs, model::ExcludeList};
 
 use std::path::PathBuf;
 
@@ -52,54 +52,51 @@ async fn main() -> Result<()> {
     .context("could not resolve home_dir path")?;
     let cwd = std::env::current_dir()?;
 
-    if args.cmd == SubCommand::Setup {
-        return setup::setup(home_dir);
+    match args.cmd {
+        SubCommand::Setup => return setup::setup(home_dir),
+        SubCommand::Init => return init::init(cwd),
+        SubCommand::Sync { verbose, progress } 
+		// | SubCommand::OtherTypeOfSync when I'll have one
+		//	such as SubCommand::Pull
+		=> {
+            let global_config_path = home_dir
+                .join(".config")
+                .join("bbup-client")
+                .join("config.yaml");
+            if !global_config_path.exists() {
+                anyhow::bail!("Bbup client isn't setup. Try using 'bbup setup'")
+            }
+            let global_config: ClientConfig = fs::load(&global_config_path)?;
+
+            // Parse Link configs
+            let local_config_path = cwd.join(".bbup").join("config.yaml");
+            if !local_config_path.exists() {
+                anyhow::bail!(
+                    "Current directory [{:?}] isn't initialized as a backup source",
+                    cwd
+                )
+            }
+            let local_config: LinkConfig = fs::load(&local_config_path)?;
+
+            let exclude_list = ExcludeList::from(&local_config.exclude_list)?;
+
+            let connection = Connection {
+                local_port: global_config.settings.local_port,
+                server_port: global_config.settings.server_port,
+                host_name: global_config.settings.host_name.clone(),
+                host_address: global_config.settings.host_address.clone(),
+            };
+
+            let flags = Flags { verbose, progress };
+            let config = ProcessConfig {
+                link_root: cwd.clone(),
+                exclude_list,
+                endpoint: local_config.endpoint,
+                connection,
+                flags,
+            };
+
+            return sync::process_link(config).await;
+        }
     }
-
-    if args.cmd == SubCommand::Init {
-        return init::init(cwd);
-    }
-
-    let global_config_path = home_dir
-        .join(".config")
-        .join("bbup-client")
-        .join("config.yaml");
-    if !global_config_path.exists() {
-        anyhow::bail!("Bbup client isn't setup. Try using 'bbup setup'")
-    }
-    let global_config: ClientConfig = fs::load(&global_config_path)?;
-
-    // Parse Link configs
-    let local_config_path = cwd.join(".bbup").join("config.yaml");
-    if !local_config_path.exists() {
-        anyhow::bail!(
-            "Current directory [{:?}] isn't initialized as a backup source",
-            cwd
-        )
-    }
-    let local_config: LinkConfig = fs::load(&local_config_path)?;
-
-    let exclude_list = ExcludeList::from(&local_config.exclude_list)?;
-
-    let connection = Connection {
-        local_port: global_config.settings.local_port,
-        server_port: global_config.settings.server_port,
-        host_name: global_config.settings.host_name.clone(),
-        host_address: global_config.settings.host_address.clone(),
-    };
-
-    if let SubCommand::Sync { verbose, progress } = args.cmd {
-        let flags = Flags { verbose, progress };
-        let config = ProcessConfig {
-            link_root: cwd.clone(),
-            exclude_list,
-            endpoint: local_config.endpoint,
-            connection,
-            flags,
-        };
-
-        return sync::process_link(config).await;
-    }
-
-    Ok(())
 }
