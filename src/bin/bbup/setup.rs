@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{ClientConfig, ClientSettings};
 
-use bbup_rust::{fs, io};
+use bbup_rust::{fs, input};
 
 use anyhow::Result;
 
@@ -17,10 +17,10 @@ pub fn setup(home_dir: PathBuf) -> Result<()> {
         anyhow::bail!("bbup client is already setup");
     }
 
-    let local_port = io::get_input("enter local port (0-65535): ")?.parse::<u16>()?;
-    let server_port = io::get_input("enter server port (0-65535): ")?.parse::<u16>()?;
-    let host_name = io::get_input("enter host name: ")?;
-    let host_address = io::get_input("enter host address: ")?;
+    let local_port = input::get("enter local port (0-65535): ")?.parse::<u16>()?;
+    let server_port = input::get("enter server port (0-65535): ")?.parse::<u16>()?;
+    let host_name = input::get("enter host name: ")?;
+    let host_address = input::get("enter host address: ")?;
 
     fs::create_dir(&home_dir.join(".config").join("bbup-client"))?;
 

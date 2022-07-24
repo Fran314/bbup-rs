@@ -5,7 +5,7 @@ use crate::{ProcessConfig, ProcessState};
 
 use bbup_rust::com::BbupCom;
 use bbup_rust::model::{Commit, Query};
-use bbup_rust::{fs, fstree, utils};
+use bbup_rust::{fs, fstree};
 
 use anyhow::{Context, Result};
 
@@ -14,9 +14,14 @@ pub fn get_local_delta(config: &ProcessConfig, state: &mut ProcessState) -> Resu
         println!("calculating local delta...")
     }
 
-    state.last_known_commit = Some(fs::load(&config.lkc_path())?);
+    state.last_known_commit = Some(fs::load(
+        &config
+            .link_root
+            .join(".bbup")
+            .join("last-known-commit.json"),
+    )?);
 
-    let old_tree = fs::load(&config.old_tree_path())?;
+    let old_tree = fs::load(&config.link_root.join(".bbup").join("old-hash-tree.json"))?;
     let new_tree = fstree::generate_fstree(&config.link_root, &config.exclude_list)?;
     let local_delta = fstree::get_delta(&old_tree, &new_tree);
 
@@ -34,15 +39,11 @@ pub fn get_local_delta(config: &ProcessConfig, state: &mut ProcessState) -> Resu
     Ok(())
 }
 
-pub async fn pull_update_delta<T, R>(
+pub async fn pull_update_delta(
     config: &ProcessConfig,
     state: &mut ProcessState,
-    com: &mut BbupCom<T, R>,
-) -> Result<()>
-where
-    T: tokio::io::AsyncWrite + Unpin + Sync + Send,
-    R: tokio::io::AsyncRead + Unpin + Sync + Send,
-{
+    com: &mut BbupCom,
+) -> Result<()> {
     match &state.last_known_commit {
         Some(lkc) => {
             if config.flags.verbose {
@@ -92,59 +93,13 @@ pub async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
                 delta: update_delta,
             }),
         ) => {
-            // let mut conflicts: Vec<(String, String)> = Vec::new();
-            // local_delta.into_iter().for_each(|local_change| {
-            //     update_delta.into_iter().for_each(|update_change| {
-            //         let is_conflict = {
-            //             if local_change.path.eq(&update_change.path) {
-            //                 match (&local_change.change_type, &update_change.change_type) {
-            //                     (
-            //                         ChangeType::Added(Adding::Dir),
-            //                         ChangeType::Added(Adding::Dir),
-            //                     )
-            //                     | (
-            //                         ChangeType::Removed(Removing::Dir),
-            //                         ChangeType::Removed(Removing::Dir),
-            //                     ) => false,
-
-            //                     (
-            //                         ChangeType::Added(Adding::FileType(type0, hash0)),
-            //                         ChangeType::Added(Adding::FileType(type1, hash1)),
-            //                     )
-            //                     | (
-            //                         ChangeType::Edited(Editing::FileType(type0, hash0)),
-            //                         ChangeType::Edited(Editing::FileType(type1, hash1)),
-            //                     ) if type0 == type1 && hash0 == hash1 => false,
-
-            //                     (
-            //                         ChangeType::Removed(Removing::FileType(type0)),
-            //                         ChangeType::Removed(Removing::FileType(type1)),
-            //                     ) if type0 == type1 => false,
-
-            //                     _ => true,
-            //                 }
-            //             } else {
-            //                 local_change.path.starts_with(&update_change.path)
-            //                     || update_change.path.starts_with(&local_change.path)
-            //             }
-            //         };
-
-            //         if is_conflict {
-            //             // TODO: make the conflic explanation a little bit better
-            //             conflicts.push((
-            //                 format!("local_change:  {:?}", local_change.path),
-            //                 format!("update change: {:?}", update_change.path),
-            //             ));
-            //         }
-            //     })
-            // });
-
             let conflicts = fstree::check_for_conflicts(local_delta, update_delta);
             if let Some(conflicts) = conflicts {
                 println!("conflicts:\n{}", conflicts);
-                return Err(anyhow::Error::new(utils::std_err(
-                    "found conflicts between pulled update and local changes. Resolve manually",
-                )));
+
+                anyhow::bail!(
+                    "found conflicts between pulled update and local changes. Resolve manually"
+                )
             }
             Ok(())
         }
@@ -158,15 +113,11 @@ pub async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
     }
 }
 
-pub async fn download_update<T, R>(
+pub async fn download_update(
     config: &ProcessConfig,
     state: &mut ProcessState,
-    com: &mut BbupCom<T, R>,
-) -> Result<()>
-where
-    T: tokio::io::AsyncWrite + Unpin + Sync + Send,
-    R: tokio::io::AsyncRead + Unpin + Sync + Send,
-{
+    com: &mut BbupCom,
+) -> Result<()> {
     match &state.update {
         Some(Commit {
             commit_id: _,
@@ -174,14 +125,16 @@ where
         }) => {
             // Get all files that need to be downloaded from server
             for (path, change) in update_delta.flatten() {
-                let full_path = &config.local_temp_path().join(path.clone());
+                let full_path = &config
+                    .link_root
+                    .join(".bbup")
+                    .join("temp")
+                    .join(path.clone());
                 match change {
-                    Change::AddFile(_, _) | Change::EditFile(_, Some(_)) => {
-                        // com.send_struct(Some(path.clone())).await?;
-
+                    Change::AddFile(_, hash) | Change::EditFile(_, Some(hash)) => {
                         // TODO somehow use the hashes to check if the data arrived correctly
                         com.send_struct(Query::FileAt(path.clone())).await?;
-                        com.get_file_to(&full_path)
+                        com.get_file_to(&full_path, &hash)
                             .await
                             .context(format!("could not get file at path: {full_path:?}"))?;
                     }
@@ -193,21 +146,9 @@ where
                     }
                     _ => {}
                 }
-                // match change.change_type {
-                //     ChangeType::Added(Adding::FileType(_, _)) | ChangeType::Edited(_) => {
-                //         com.send_struct(Some(change.path.clone())).await?;
-
-                //         let full_path = &config.local_temp_path().join(change.path.to_path_buf());
-                //         com.get_file_to(&full_path)
-                //             .await
-                //             .context(format!("could not get file at path: {full_path:?}"))?;
-                //     }
-                //     _ => {}
-                // };
             }
 
             com.send_struct(Query::Stop).await?;
-            // com.send_struct(None::<PathBuf>).await?;
             Ok(())
         }
         _ => {
@@ -226,7 +167,7 @@ pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> R
 
             for (path, change) in delta.flatten() {
                 let to_path = config.link_root.join(&path);
-                let from_temp_path = config.local_temp_path().join(&path);
+                let from_temp_path = config.link_root.join(".bbup").join("temp").join(&path);
                 let errmsg = |msg: &str| -> String {
                     format!(
                         "could not {} to apply update\npath: {:?}",
@@ -241,13 +182,13 @@ pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> R
                             .context(errmsg("set metadata of added directory"))?;
                     }
                     Change::AddFile(metadata, _) => {
-                        fs::rename(from_temp_path, &to_path)
+                        fs::rename_file(from_temp_path, &to_path)
                             .context(errmsg("move added file from temp"))?;
                         fs::set_metadata(&to_path, &metadata)
                             .context(errmsg("set metadata of added file"))?;
                     }
                     Change::AddSymLink(_) => {
-                        fs::rename(from_temp_path, &to_path)
+                        fs::rename_symlink(from_temp_path, &to_path)
                             .context(errmsg("move added symlink from temp"))?;
                     }
                     Change::EditDir(metadata) => {
@@ -256,7 +197,7 @@ pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> R
                     }
                     Change::EditFile(optm, opth) => {
                         if let Some(_) = opth {
-                            fs::rename(from_temp_path, &to_path)
+                            fs::rename_file(from_temp_path, &to_path)
                                 .context(errmsg("move edited file from temp"))?;
                         }
                         if let Some(metadata) = optm {
@@ -265,7 +206,7 @@ pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> R
                         }
                     }
                     Change::EditSymLink(_) => {
-                        fs::rename(from_temp_path, &to_path)
+                        fs::rename_symlink(from_temp_path, &to_path)
                             .context(errmsg("move edited symlink from temp"))?;
                     }
                     Change::RemoveDir => {
@@ -296,8 +237,17 @@ pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> R
             state.new_tree = Some(new_tree);
             state.local_delta = Some(local_delta);
 
-            fs::save(&config.old_tree_path(), &old_tree)?;
-            fs::save(&config.lkc_path(), &commit_id)?;
+            fs::save(
+                &config.link_root.join(".bbup").join("old-hash-tree.json"),
+                &old_tree,
+            )?;
+            fs::save(
+                &config
+                    .link_root
+                    .join(".bbup")
+                    .join("last-known-commit.json"),
+                &commit_id,
+            )?;
 
             Ok(())
         }
@@ -311,15 +261,11 @@ pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> R
     }
 }
 
-pub async fn upload_changes<T, R>(
+pub async fn upload_changes(
     config: &ProcessConfig,
     state: &mut ProcessState,
-    com: &mut BbupCom<T, R>,
-) -> Result<()>
-where
-    T: tokio::io::AsyncWrite + Unpin + Sync + Send,
-    R: tokio::io::AsyncRead + Unpin + Sync + Send,
-{
+    com: &mut BbupCom,
+) -> Result<()> {
     match (&state.local_delta, &state.new_tree) {
         (Some(local_delta), Some(new_tree)) => {
             // Await green light to procede
@@ -329,14 +275,9 @@ where
 
             loop {
                 let query: Query = com.get_struct().await.context("could not get query")?;
-                // let path: Option<AbstractPath> = com
-                //     .get_struct()
-                //     .await
-                //     .context("could not get path for file to send")?;
                 match query {
                     Query::FileAt(path) => {
                         let full_path = config.link_root.join(&path);
-                        // let full_path = state.archive_root.join(&endpoint.to_path_buf()).join(&path);
 
                         com.send_file_from(&full_path)
                             .await
@@ -352,19 +293,21 @@ where
                     }
                     Query::Stop => break,
                 }
-                // let path: Option<AbstractPath> = com.get_struct().await?;
-                // let path = match path {
-                //     Some(val) => val,
-                //     None => break,
-                // };
-                // com.send_file_from(&config.link_root.join(path.to_path_buf()))
-                //     .await?;
             }
 
             let new_commit_id: String = com.get_struct().await?;
 
-            fs::save(&config.old_tree_path(), &new_tree)?;
-            fs::save(&config.lkc_path(), &new_commit_id)?;
+            fs::save(
+                &config.link_root.join(".bbup").join("old-hash-tree.json"),
+                &new_tree,
+            )?;
+            fs::save(
+                &config
+                    .link_root
+                    .join(".bbup")
+                    .join("last-known-commit.json"),
+                &new_commit_id,
+            )?;
 
             Ok(())
         }

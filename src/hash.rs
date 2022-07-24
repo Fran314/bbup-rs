@@ -40,7 +40,7 @@ impl std::fmt::Display for Hash {
     }
 }
 /// Convert the absurd output type of sha2's digest/finalize
-/// to a useful \[u8; 32\]
+/// to a useful Hash
 fn to_hash(
     hash: GenericArray<u8, UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>>,
 ) -> Hash {

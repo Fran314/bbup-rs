@@ -12,14 +12,14 @@ use std::path::{Path, PathBuf};
 #[derive(Error, Debug)]
 pub enum FSTreeError {
     #[error(
-        "File System Tree: could not generate fs-tree from specified path as it is not a directory\npath: {path:?}"
+        "File System Tree Error: could not generate fs-tree from specified path as it is not a directory\npath: {path:?}"
     )]
     NonDirEntryPoint { path: PathBuf },
 
-    #[error("File System Tree: inner error occurred\nSource: {src}\nError: {err}")]
+    #[error("File System Tree Error: inner error occurred\nSource: {src}\nError: {err}")]
     InnerError { src: String, err: String },
 
-    #[error("File System Tree: some error occurred.\nSource: {src}\nError: {err}")]
+    #[error("File System Tree Error: some error occurred.\nSource: {src}\nError: {err}")]
     GenericError { src: String, err: String },
 }
 

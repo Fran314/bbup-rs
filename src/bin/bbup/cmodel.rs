@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use bbup_rust::{
     fstree::{DeltaFSTree, FSTree},
     model::{Commit, ExcludeList},
-    // path::AbstractPath,
 };
 
 use std::path::PathBuf;
@@ -39,17 +38,6 @@ pub struct ProcessConfig {
     pub endpoint: Vec<String>,
     pub connection: Connection,
     pub flags: Flags,
-}
-impl ProcessConfig {
-    pub fn local_temp_path(&self) -> PathBuf {
-        self.link_root.join(".bbup").join("temp")
-    }
-    pub fn lkc_path(&self) -> PathBuf {
-        self.link_root.join(".bbup").join("last-known-commit.json")
-    }
-    pub fn old_tree_path(&self) -> PathBuf {
-        self.link_root.join(".bbup").join("old-hash-tree.json")
-    }
 }
 pub struct ProcessState {
     pub last_known_commit: Option<String>,

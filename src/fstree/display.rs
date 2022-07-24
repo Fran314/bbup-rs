@@ -183,13 +183,13 @@ impl std::fmt::Display for DeltaFSTree {
 fn format_leaf_state(val: &Option<FSNode>) -> String {
     match val {
         Some(FSNode::File(metadata, hash)) => {
-            format!("File [m:{} h:{}]", metadata.format(), hash.to_hex(6),)
+            format!("File [m:{} h:{}]", metadata, hash.to_hex(6),)
         }
         Some(FSNode::SymLink(hash)) => {
             format!("SymLink [h:{}]", hash.to_hex(6),)
         }
         Some(FSNode::Dir(metadata, hash, _)) => {
-            format!("Dir [m:{} h:{}]", metadata.format(), hash.to_hex(6),)
+            format!("Dir [m:{} h:{}]", metadata, hash.to_hex(6),)
         }
         None => String::from("None"),
     }
@@ -241,21 +241,13 @@ fn conflicts_to_stringtree<S: std::string::ToString>(
                 CN::Branch(ior) => match ior {
                     IOr::Left(((prem0, postm0), (prem1, postm1))) => StringTree::leaf(format!(
                         "{}/\n0: [{}] -> [{}]\n1: [{}] -> [{}]",
-                        name,
-                        prem0.format(),
-                        postm0.format(),
-                        prem1.format(),
-                        postm1.format()
+                        name, prem0, postm0, prem1, postm1
                     )),
                     IOr::Both(((prem0, postm0), (prem1, postm1)), subconflict) => {
                         conflicts_to_stringtree(
                             format!(
                                 "{}/\n0: [{}] -> [{}]\n1: [{}] -> [{}]",
-                                name,
-                                prem0.format(),
-                                postm0.format(),
-                                prem1.format(),
-                                postm1.format()
+                                name, prem0, postm0, prem1, postm1
                             ),
                             subconflict,
                         )

@@ -66,7 +66,6 @@ pub fn check_for_conflicts(delta0: &DeltaFSTree, delta1: &DeltaFSTree) -> Option
                 Some(CN::Leaf(left.clone(), right.clone()))
             }
             (DFS::Leaf(_, Some(Dir(_, _, subtree0))), DFS::Leaf(_, Some(Dir(_, _, subtree1)))) => {
-                //
                 if !compatilble_added_subtrees(subtree0, subtree1) {
                     Some(CN::Leaf(left.clone(), right.clone()))
                 } else {

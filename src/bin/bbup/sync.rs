@@ -31,7 +31,7 @@ pub async fn process_link(config: ProcessConfig) -> Result<()> {
         let socket = TcpStream::connect(format!("127.0.0.1:{}", config.connection.local_port))
             .await
             .context("could not connect to server")?;
-        let mut com = BbupCom::from_split(socket.into_split(), config.flags.progress);
+        let mut com = BbupCom::from(socket, config.flags.progress);
 
         let conversation_result: Result<()> = {
             // Await green light to procede

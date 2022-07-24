@@ -1,6 +1,6 @@
 use crate::{LinkConfig, LinkType};
 
-use bbup_rust::{fs, fstree, io, model::ExcludeList};
+use bbup_rust::{fs, fstree, input, model::ExcludeList};
 
 use std::path::PathBuf;
 
@@ -13,30 +13,24 @@ pub fn init(cwd: PathBuf) -> Result<()> {
             cwd
         )
     }
-    // TODO this if shouldn't be necessary I believe, but check
-    // if !cwd.join(".bbup").exists() {
-    //     std::fs::create_dir_all(cwd.join(".bbup"))?;
-    // }
 
-    fs::create_dir(cwd.join(".bbup"))?;
-    // TODO this should somehow convert to AbstractPath
     let endpoint: Vec<String> = loop {
-        let path = io::get_input("set endpoint (relative to archive root): ")?;
-        // Do all sorts of checks:
+        let path = input::get("set endpoint (relative to archive root): ")?;
+        // TOTO: do all sorts of checks:
         //	- make sure it's a relative path
         //	- check which separator is used
         //	- ask for confirmation
         break path.split("/").map(|s| s.to_string()).collect();
     };
-    // let endpoint = PathBuf::from(io::get_input("set endpoint (relative to archive root): ")?);
-    let add_exclude_list = io::get_input("add exclude list [y/N]?: ")?;
+
     let mut exclude_list: Vec<String> = Vec::new();
+    let add_exclude_list = input::get("add exclude list [y/N]?: ")?;
     if add_exclude_list.to_ascii_lowercase().eq("y")
         || add_exclude_list.to_ascii_lowercase().eq("yes")
     {
         println!("add regex rules in string form. To stop, enter empty string");
         loop {
-            let rule = io::get_input("rule: ")?;
+            let rule = input::get("rule: ")?;
             if rule.eq("") {
                 break;
             }
@@ -45,7 +39,6 @@ pub fn init(cwd: PathBuf) -> Result<()> {
     }
     let local_config = LinkConfig {
         link_type: LinkType::Bijection,
-        // TODO see above, where endpoint should be read as AbstractPath. This is a quickfix
         endpoint,
         exclude_list: exclude_list.clone(),
     };

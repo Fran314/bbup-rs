@@ -13,15 +13,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use anyhow::{Context, Result};
 use tokio::{net::TcpStream, sync::Mutex};
 
-async fn pull<T, R>(
-    com: &mut BbupCom<T, R>,
-    state: &ServerState,
-    endpoint: &Vec<String>,
-) -> Result<()>
-where
-    T: tokio::io::AsyncWrite + Unpin + Sync + Send,
-    R: tokio::io::AsyncRead + Unpin + Sync + Send,
-{
+async fn pull(com: &mut BbupCom, state: &ServerState, endpoint: &Vec<String>) -> Result<()> {
     let last_known_commit: String = com.get_struct().await.context("could not get lkc")?;
 
     // calculate update for client
@@ -44,16 +36,11 @@ where
     // send all files requested by client
     loop {
         let query: Query = com.get_struct().await.context("could not get query")?;
-        // let path: Option<AbstractPath> = com
-        //     .get_struct()
-        //     .await
-        //     .context("could not get path for file to send")?;
         match query {
             Query::FileAt(path) => {
                 let mut full_path = state.archive_root.clone();
                 endpoint.into_iter().for_each(|comp| full_path.push(comp));
                 full_path.push(&path);
-                // let full_path = state.archive_root.join(&endpoint.to_path_buf()).join(&path);
 
                 com.send_file_from(&full_path)
                     .await
@@ -71,33 +58,12 @@ where
             }
             Query::Stop => break,
         }
-        // let path = match path {
-        //     Some(val) => val,
-        //     None => break,
-        // };
-
-        // let full_path = state
-        //     .archive_root
-        //     .join(&endpoint.to_path_buf())
-        //     .join(&path.to_path_buf());
-
-        // com.send_file_from(&full_path)
-        //     .await
-        //     .context(format!("could not send file at path: {full_path:?}"))?;
     }
 
     Ok(())
 }
 
-async fn push<T, R>(
-    com: &mut BbupCom<T, R>,
-    state: &mut ServerState,
-    endpoint: &Vec<String>,
-) -> Result<()>
-where
-    T: tokio::io::AsyncWrite + Unpin + Sync + Send,
-    R: tokio::io::AsyncRead + Unpin + Sync + Send,
-{
+async fn push(com: &mut BbupCom, state: &mut ServerState, endpoint: &Vec<String>) -> Result<()> {
     fs::make_clean_dir(state.archive_root.join(".bbup").join("temp"))?;
 
     // Reply with green light for push
@@ -115,12 +81,12 @@ where
     for (path, change) in local_delta.flatten() {
         let full_path = state.archive_root.join(".bbup").join("temp").join(&path);
         match change {
-            Change::AddFile(_, _) | Change::EditFile(_, Some(_)) => {
+            Change::AddFile(_, hash) | Change::EditFile(_, Some(hash)) => {
                 // com.send_struct(Some(path.clone())).await?;
 
                 // TODO somehow use the hashes to check if the data arrived correctly
                 com.send_struct(Query::FileAt(path.clone())).await?;
-                com.get_file_to(&full_path)
+                com.get_file_to(&full_path, &hash)
                     .await
                     .context(format!("could not get file at path: {full_path:?}"))?;
             }
@@ -161,13 +127,13 @@ where
                     .context(errmsg("set metadata of added directory"))?;
             }
             Change::AddFile(metadata, _) => {
-                fs::rename(from_temp_path, &to_path)
+                fs::rename_file(from_temp_path, &to_path)
                     .context(errmsg("move added file from temp"))?;
                 fs::set_metadata(&to_path, &metadata)
                     .context(errmsg("set metadata of added file"))?;
             }
             Change::AddSymLink(_) => {
-                fs::rename(from_temp_path, &to_path)
+                fs::rename_symlink(from_temp_path, &to_path)
                     .context(errmsg("move added symlink from temp"))?;
             }
             Change::EditDir(metadata) => {
@@ -176,7 +142,7 @@ where
             }
             Change::EditFile(optm, opth) => {
                 if let Some(_) = opth {
-                    fs::rename(from_temp_path, &to_path)
+                    fs::rename_file(from_temp_path, &to_path)
                         .context(errmsg("move edited file from temp"))?;
                 }
                 if let Some(metadata) = optm {
@@ -185,7 +151,7 @@ where
                 }
             }
             Change::EditSymLink(_) => {
-                fs::rename(from_temp_path, &to_path)
+                fs::rename_symlink(from_temp_path, &to_path)
                     .context(errmsg("move edited symlink from temp"))?;
             }
             Change::RemoveDir => {
@@ -234,7 +200,7 @@ pub async fn process_connection(
     state: Arc<Mutex<ServerState>>,
     progress: bool,
 ) -> Result<()> {
-    let mut com = BbupCom::from_split(socket.into_split(), progress);
+    let mut com = BbupCom::from(socket, progress);
 
     // Try to lock state and get conversation privilege
     let mut state = match state.try_lock() {

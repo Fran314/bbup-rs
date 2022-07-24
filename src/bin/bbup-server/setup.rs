@@ -2,7 +2,7 @@ use crate::{CommitList, ServerConfig};
 
 use bbup_rust::fstree::FSTree;
 use bbup_rust::model::Commit;
-use bbup_rust::{fs, io};
+use bbup_rust::{fs, input};
 
 use std::path::PathBuf;
 
@@ -19,8 +19,8 @@ pub fn setup(home_dir: PathBuf) -> Result<()> {
         anyhow::bail!("bbup server is already setup");
     }
 
-    let server_port = io::get_input("enter server port (0-65535): ")?.parse::<u16>()?;
-    let archive_root = PathBuf::from(io::get_input("enter archive root (relative to ~): ")?);
+    let server_port = input::get("enter server port (0-65535): ")?.parse::<u16>()?;
+    let archive_root = PathBuf::from(input::get("enter archive root (relative to ~): ")?);
     if !home_dir.join(&archive_root).exists() {
         anyhow::bail!("specified archive root does not exist!");
     }

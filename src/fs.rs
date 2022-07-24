@@ -2,8 +2,6 @@ use std::ffi::OsStr;
 use std::os::unix::prelude::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use filetime::FileTime;
-
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use thiserror::Error;
@@ -11,16 +9,16 @@ use thiserror::Error;
 //--- ERRORS ---//
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Abstract File System: trying to read/write data to object with unknown extension.\nPath: {path:?}")]
+    #[error("Abstract File System Error: trying to read/write data to object with unknown extension.\nPath: {path:?}")]
     UnknownExtension { path: PathBuf },
 
-    #[error("Abstract File System: trying to perform operation on inadequate object.\nSource: {src}\nError: {err}")]
+    #[error("Abstract File System Error: trying to perform operation on inadequate object.\nSource: {src}\nError: {err}")]
     OperationOnWrongObject { src: String, err: String },
 
-    #[error("Abstract File System: inner error occurred.\nSource: {src}\n{err}")]
+    #[error("Abstract File System Error: inner error occurred.\nSource: {src}\n{err}")]
     InnerError { src: String, err: String },
 
-    #[error("Abstract File System: some error occurred.\nSource: {src}\nError: {err}")]
+    #[error("Abstract File System Error: some error occurred.\nSource: {src}\nError: {err}")]
     GenericError { src: String, err: String },
 }
 
@@ -38,14 +36,14 @@ fn wrgobj<S: std::string::ToString, E: std::string::ToString>(src: S, err: E) ->
 fn inerr<S: std::string::ToString, E: std::error::Error>(src: S) -> impl Fn(E) -> Error {
     move |err: E| -> Error {
         Error::InnerError {
-            src: (src).to_string().clone(),
+            src: src.to_string(),
             err: err.to_string(),
         }
     }
 }
 fn generr<S: std::string::ToString, T: std::string::ToString>(src: S, err: T) -> Error {
     Error::GenericError {
-        src: (src).to_string().clone(),
+        src: src.to_string(),
         err: err.to_string(),
     }
 }
@@ -115,7 +113,7 @@ impl PathExt for std::path::PathBuf {
 enum Ext {
     JSON,
     YAML,
-    // BIN,
+    BIN,
 }
 fn get_ext<P: AsRef<Path>>(path: P) -> Option<Ext> {
     let ext = match path.as_ref().extension().and_then(std::ffi::OsStr::to_str) {
@@ -125,6 +123,7 @@ fn get_ext<P: AsRef<Path>>(path: P) -> Option<Ext> {
     match ext.to_ascii_lowercase().as_str() {
         "json" => Some(Ext::JSON),
         "yaml" => Some(Ext::YAML),
+        "bin" => Some(Ext::BIN),
         _ => None,
     }
 }
@@ -134,15 +133,31 @@ fn get_ext<P: AsRef<Path>>(path: P) -> Option<Ext> {
 /// the content to the generic type T
 pub fn load<P: AsRef<Path>, T: DeserializeOwned>(path: P) -> Result<T, Error> {
     let errctx = error_context(format!("could not load file at path {:?}", path.as_ref()));
-    // TODO maybe check if path is actually a file?
-    let serialized =
-        std::fs::read_to_string(&path).map_err(inerr(errctx("read content to string")))?;
+    if !path.as_ref().exists() {
+        return Err(generr(errctx("open file"), "file doesn't exist"));
+    }
+    if path.as_ref().get_type() != ObjectType::File {
+        return Err(generr(errctx("open file"), "object at path is not a file"));
+    }
+
     match get_ext(&path) {
-        // TODO remove support for json and add support for bincode
-        Some(Ext::JSON) => serde_json::from_str(&serialized)
-            .map_err(inerr(errctx("deserialize content from json"))),
-        Some(Ext::YAML) => serde_yaml::from_str(&serialized)
-            .map_err(inerr(errctx("deserialize content from yaml"))),
+        Some(Ext::JSON) => {
+            let serialized =
+                std::fs::read_to_string(&path).map_err(inerr(errctx("read content to string")))?;
+            serde_json::from_str(&serialized)
+                .map_err(inerr(errctx("deserialize content from json")))
+        }
+        Some(Ext::YAML) => {
+            let serialized =
+                std::fs::read_to_string(&path).map_err(inerr(errctx("read content to string")))?;
+            serde_yaml::from_str(&serialized)
+                .map_err(inerr(errctx("deserialize content from yaml")))
+        }
+        Some(Ext::BIN) => {
+            let file = std::fs::File::open(&path).map_err(inerr(errctx("open file")))?;
+            bincode::deserialize_from(file)
+                .map_err(inerr(errctx("deserialize content from binary")))
+        }
         None => Err(unkext(&path)),
     }
 }
@@ -150,19 +165,28 @@ pub fn load<P: AsRef<Path>, T: DeserializeOwned>(path: P) -> Result<T, Error> {
 /// serialized data based on the extension of the file (see [`Ext`] for the possible
 /// extensions)
 pub fn save<P: AsRef<Path>, T: Serialize>(path: P, content: &T) -> Result<(), Error> {
-    // TODO maybe add an ensure_parent here
     let errctx = error_context(format!("could not save file at path {:?}", path.as_ref()));
-    let serialized = match get_ext(&path) {
-        // TODO remove support for json and add support for bincode
+    match get_ext(&path) {
         Some(Ext::JSON) => {
-            serde_json::to_string(content).map_err(inerr(errctx("serialize content to json")))
+            let serialized = serde_json::to_string(content)
+                .map_err(inerr(errctx("serialize content to json")))?;
+            ensure_parent(&path)?;
+            std::fs::write(&path, serialized).map_err(inerr(errctx("write content to file")))
         }
         Some(Ext::YAML) => {
-            serde_yaml::to_string(content).map_err(inerr(errctx("serialize content to yaml")))
+            let serialized = serde_yaml::to_string(content)
+                .map_err(inerr(errctx("serialize content to yaml")))?;
+            ensure_parent(&path)?;
+            std::fs::write(&path, serialized).map_err(inerr(errctx("write content to file")))
+        }
+        Some(Ext::BIN) => {
+            let serialized = bincode::serialize(content)
+                .map_err(inerr(errctx("serialize content to binary")))?;
+            ensure_parent(&path)?;
+            std::fs::write(&path, serialized).map_err(inerr(errctx("write content to file")))
         }
         None => Err(unkext(&path)),
-    }?;
-    std::fs::write(&path, serialized).map_err(inerr(errctx("write content to file")))
+    }
 }
 //--- ---//
 
@@ -345,19 +369,46 @@ pub fn remove_symlink<P: AsRef<Path>>(path: P) -> Result<(), Error> {
     std::fs::remove_file(&path).map_err(inerr(errctx("remove file")))
 }
 
-/// Attempts to move an object from a specified position to a specified position (does
+/// Attempts to move a file from a specified position to a specified position (does
 /// not copy, only attempts to move), creating the necessary subdirectories for the
-/// endpoint.<br>
-/// Note that this works as expected when acting on a symlink: it renames the symlink at
-/// the specified path, preserving the endpoint path (which might not work anymore if it
-/// was a relative path), and does NOT move the object pointed by the symlink at the
-/// specified path
-pub fn rename<P: AsRef<Path>, S: AsRef<Path>>(from: P, to: S) -> Result<(), Error> {
-    let errctx = error_context(format!(
+/// endpoint
+pub fn rename_file<P: AsRef<Path>, S: AsRef<Path>>(from: P, to: S) -> Result<(), Error> {
+    let errmsg = format!(
         "could not move object from path {:?}, to path {:?}",
         from.as_ref(),
         to.as_ref()
-    ));
+    );
+    let errctx = error_context(errmsg.clone());
+    if from.as_ref().get_type() != ObjectType::File {
+        return Err(wrgobj(
+            errmsg + "\nPath is not a file",
+            "object is not a file",
+        ));
+    }
+    ensure_parent(&to).map_err(inerr(errctx("ensure parent directory")))?;
+    std::fs::rename(&from, &to).map_err(inerr(errctx("rename object")))
+}
+
+/// Attempts to move a symlink from a specified position to a specified position (does
+/// not copy, only attempts to move), creating the necessary subdirectories if
+/// needed.<br>
+/// Note that this works as expected on the symlink's endpoint: it renames the symlink at
+/// the specified path, preserving the endpoint path (which might not work anymore if it
+/// was a relative path), and does NOT move the object pointed by the symlink at the
+/// specified path
+pub fn rename_symlink<P: AsRef<Path>, S: AsRef<Path>>(from: P, to: S) -> Result<(), Error> {
+    let errmsg = format!(
+        "could not move object from path {:?}, to path {:?}",
+        from.as_ref(),
+        to.as_ref()
+    );
+    let errctx = error_context(errmsg.clone());
+    if from.as_ref().get_type() != ObjectType::SymLink {
+        return Err(wrgobj(
+            errmsg + "\nPath is not a symlink",
+            "object is not a symlink",
+        ));
+    }
     ensure_parent(&to).map_err(inerr(errctx("ensure parent directory")))?;
     std::fs::rename(&from, &to).map_err(inerr(errctx("rename object")))
 }
@@ -401,28 +452,19 @@ impl Metadata {
 
         bytes
     }
+}
 
-    pub fn to_oct(&self) -> String {
-        let output = format!("{:o}", self.mode);
-        output[output.len() - 3..].to_string()
-    }
-
-    pub fn format(&self) -> String {
+impl std::fmt::Display for Metadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let perms = format!("{:o}", self.mode);
         let perms = perms[perms.len() - 3..].to_string();
-        format!(
+        write!(
+            f,
             "{} {}",
             perms,
             chrono::NaiveDateTime::from_timestamp(self.mtime.0, self.mtime.1)
         )
     }
-}
-
-fn time_to_pair(time: FileTime) -> (i64, u32) {
-    (time.unix_seconds(), time.nanoseconds())
-}
-fn pair_to_time((sec, nano): (i64, u32)) -> FileTime {
-    filetime::FileTime::from_unix_time(sec, nano)
 }
 
 /// Set metadata of an object (directory or file)
@@ -440,7 +482,7 @@ pub fn get_metadata<T: AsRef<Path>>(path: T) -> Result<Metadata, Error> {
     let mode = os_metadata.mode();
 
     Ok(Metadata {
-        mtime: time_to_pair(mtime),
+        mtime: (mtime.unix_seconds(), mtime.nanoseconds()),
         mode,
     })
 }
@@ -457,7 +499,7 @@ pub fn set_metadata<T: AsRef<Path>>(path: T, metadata: &Metadata) -> Result<(), 
         "could not set metadata from path {:?}",
         path.as_ref()
     ));
-    let mtime = pair_to_time(metadata.mtime);
+    let mtime = filetime::FileTime::from_unix_time(metadata.mtime.0, metadata.mtime.1);
     let mut perms = std::fs::metadata(&path)
         .map_err(inerr(errctx("retrieve old metadata of object")))?
         .permissions();

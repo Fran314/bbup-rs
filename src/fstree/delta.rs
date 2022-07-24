@@ -9,19 +9,19 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum DeltaError {
-    #[error("File System Tree Delta: unable to apply delta to tree")]
+    #[error("File System Tree Delta Error: unable to apply delta to tree")]
     InapplicableDelta,
 
-    #[error("File System Tree Delta: inner error occurred\nSource: {src}\nError: {err}")]
+    #[error("File System Tree Delta Error: inner error occurred\nSource: {src}\nError: {err}")]
     InnerError { src: String, err: String },
 
-    #[error("File System Tree Delta: some error occurred.\nSource: {src}\nError: {err}")]
+    #[error("File System Tree Delta Error: some error occurred.\nSource: {src}\nError: {err}")]
     GenericError { src: String, err: String },
 }
 
 #[derive(Error, Debug)]
 #[error(
-    "File System Tree Delta: unable to apply delta to tree.\nConflict at path: {0}\nError: {1}"
+    "File System Tree Delta Error: unable to apply delta to tree.\nConflict at path: {0}\nError: {1}"
 )]
 pub struct InapplicableDelta(String, String);
 fn inapperr<S: std::string::ToString, T: std::string::ToString>(
@@ -39,7 +39,7 @@ fn push_inapp<S: std::string::ToString>(
 }
 
 #[derive(Error, Debug)]
-#[error("File System Tree Delta: unable to merge deltas.\nConflict at path: {0}\nError: {1}")]
+#[error("File System Tree Delta Error: unable to merge deltas.\nConflict at path: {0}\nError: {1}")]
 pub struct UnmergeableDelta(String, String);
 fn unmergerr<S: std::string::ToString, T: std::string::ToString>(
     path: S,
