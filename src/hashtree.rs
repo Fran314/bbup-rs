@@ -1,3 +1,4 @@
+use crate::fs;
 use crate::model::{Adding, Change, ChangeType, Delta, Editing, ExcludeList, Removing};
 use crate::path::{AbstractPath, EntryType, FileType, ForceFilename, ForceToString, PathType};
 
@@ -83,7 +84,7 @@ fn hash_children(children: &HashMap<String, Tree>) -> String {
 
 /// Hash the content of a file and convert to base64
 fn hash_file(path: &PathBuf) -> Result<String, Error> {
-    match std::fs::File::open(path) {
+    match fs::read_file(path) {
         Ok(file) => hash_stream(file),
         Err(error) => Err(Error::FsError {
             path: path.clone(),
@@ -94,13 +95,15 @@ fn hash_file(path: &PathBuf) -> Result<String, Error> {
 
 /// Hash the link of a symlink and convert to base64
 fn hash_symlink(path: &PathBuf) -> Result<String, Error> {
-    match std::fs::read_link(path) {
-        Ok(link) => Ok(hash_string(link.as_os_str().force_to_string())),
-        Err(error) => Err(Error::FsError {
-            path: path.clone(),
-            info: error.to_string(),
-        }),
-    }
+    todo!();
+
+    // match fs::read_link(path) {
+    //     Ok(link) => Ok(hash_string(link.as_os_str().force_to_string())),
+    //     Err(error) => Err(Error::FsError {
+    //         path: path.clone(),
+    //         info: error.to_string(),
+    //     }),
+    // }
 }
 
 /// Generate a tree representation of the content of a path
@@ -123,7 +126,7 @@ fn generate_hash_tree_rec(
     match path.get_type() {
         EntryType::Dir => {
             let mut children: HashMap<String, Tree> = HashMap::new();
-            let read_dir_instance = match std::fs::read_dir(&path) {
+            let read_dir_instance = match fs::read_dir(&path) {
                 Ok(val) => val,
                 Err(error) => {
                     return Err(Error::FsError {

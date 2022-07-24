@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use bbup_rust::{
-    hashtree::Tree,
-    model::{Commit, Delta, ExcludeList},
-    path::AbstractPath,
+    fstree::{DeltaFSTree, FSTree},
+    model::{Commit, ExcludeList},
+    // path::AbstractPath,
 };
 
 use std::path::PathBuf;
@@ -36,7 +36,7 @@ pub struct Connection {
 pub struct ProcessConfig {
     pub link_root: PathBuf,
     pub exclude_list: ExcludeList,
-    pub endpoint: AbstractPath,
+    pub endpoint: Vec<String>,
     pub connection: Connection,
     pub flags: Flags,
 }
@@ -53,9 +53,9 @@ impl ProcessConfig {
 }
 pub struct ProcessState {
     pub last_known_commit: Option<String>,
-    pub old_tree: Option<Tree>,
-    pub new_tree: Option<Tree>,
-    pub local_delta: Option<Delta>,
+    pub old_tree: Option<FSTree>,
+    pub new_tree: Option<FSTree>,
+    pub local_delta: Option<DeltaFSTree>,
     pub update: Option<Commit>,
 }
 impl ProcessState {
@@ -78,6 +78,6 @@ pub struct ClientConfig {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LinkConfig {
     pub link_type: LinkType,
-    pub endpoint: AbstractPath,
+    pub endpoint: Vec<String>,
     pub exclude_list: Vec<String>,
 }

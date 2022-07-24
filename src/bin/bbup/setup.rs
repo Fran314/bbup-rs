@@ -22,7 +22,8 @@ pub fn setup(home_dir: PathBuf) -> Result<()> {
     let host_name = io::get_input("enter host name: ")?;
     let host_address = io::get_input("enter host address: ")?;
 
-    std::fs::create_dir_all(home_dir.join(".config").join("bbup-client"))?;
+    fs::create_dir(&home_dir.join(".config").join("bbup-client"))?;
+
     let settings = ClientSettings {
         local_port,
         server_port,

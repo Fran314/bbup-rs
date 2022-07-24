@@ -1,6 +1,6 @@
 use crate::{LinkConfig, LinkType};
 
-use bbup_rust::{fs, hashtree, io, model::ExcludeList, path::AbstractPath};
+use bbup_rust::{fs, fstree, io, model::ExcludeList};
 
 use std::path::PathBuf;
 
@@ -13,11 +13,22 @@ pub fn init(cwd: PathBuf) -> Result<()> {
             cwd
         )
     }
-    if !cwd.join(".bbup").exists() {
-        std::fs::create_dir_all(cwd.join(".bbup"))?;
-    }
+    // TODO this if shouldn't be necessary I believe, but check
+    // if !cwd.join(".bbup").exists() {
+    //     std::fs::create_dir_all(cwd.join(".bbup"))?;
+    // }
+
+    fs::create_dir(cwd.join(".bbup"))?;
     // TODO this should somehow convert to AbstractPath
-    let endpoint = PathBuf::from(io::get_input("set endpoint (relative to archive root): ")?);
+    let endpoint: Vec<String> = loop {
+        let path = io::get_input("set endpoint (relative to archive root): ")?;
+        // Do all sorts of checks:
+        //	- make sure it's a relative path
+        //	- check which separator is used
+        //	- ask for confirmation
+        break path.split("/").map(|s| s.to_string()).collect();
+    };
+    // let endpoint = PathBuf::from(io::get_input("set endpoint (relative to archive root): ")?);
     let add_exclude_list = io::get_input("add exclude list [y/N]?: ")?;
     let mut exclude_list: Vec<String> = Vec::new();
     if add_exclude_list.to_ascii_lowercase().eq("y")
@@ -35,12 +46,12 @@ pub fn init(cwd: PathBuf) -> Result<()> {
     let local_config = LinkConfig {
         link_type: LinkType::Bijection,
         // TODO see above, where endpoint should be read as AbstractPath. This is a quickfix
-        endpoint: AbstractPath::from(endpoint)?,
+        endpoint,
         exclude_list: exclude_list.clone(),
     };
 
     fs::save(&cwd.join(".bbup").join("config.yaml"), &local_config)?;
-    let tree = hashtree::generate_hash_tree(&cwd, &ExcludeList::from(&exclude_list)?)?;
+    let tree = fstree::generate_fstree(&cwd, &ExcludeList::from(&exclude_list)?)?;
     fs::save(&cwd.join(".bbup").join("old-hash-tree.json"), &tree)?;
     fs::save(
         &cwd.join(".bbup").join("last-known-commit.json"),

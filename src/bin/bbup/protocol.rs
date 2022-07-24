@@ -1,11 +1,11 @@
-use bbup_rust::path::AbstractPath;
+use bbup_rust::fstree::Change;
 use std::path::PathBuf;
 
 use crate::{ProcessConfig, ProcessState};
 
 use bbup_rust::com::BbupCom;
-use bbup_rust::model::{Adding, ChangeType, Commit, Editing, PrettyPrint, Removing};
-use bbup_rust::{fs, hashtree, utils};
+use bbup_rust::model::{Commit, Query};
+use bbup_rust::{fs, fstree, utils};
 
 use anyhow::{Context, Result};
 
@@ -17,14 +17,14 @@ pub fn get_local_delta(config: &ProcessConfig, state: &mut ProcessState) -> Resu
     state.last_known_commit = Some(fs::load(&config.lkc_path())?);
 
     let old_tree = fs::load(&config.old_tree_path())?;
-    let new_tree = hashtree::generate_hash_tree(&config.link_root, &config.exclude_list)?;
-    let local_delta = hashtree::delta(&old_tree, &new_tree);
+    let new_tree = fstree::generate_fstree(&config.link_root, &config.exclude_list)?;
+    let local_delta = fstree::get_delta(&old_tree, &new_tree);
 
     if config.flags.verbose {
-        if local_delta.len() == 0 {
+        if local_delta.is_empty() {
             println!("local delta: no local changes to push")
         } else {
-            println!("local delta:\n{}", local_delta.pretty_print(1))
+            println!("local delta:\n{}", local_delta)
         }
     }
 
@@ -60,18 +60,13 @@ where
                 .context("could not get update-delta from server")?;
 
             // [PULL] Filter out updates that match the exclude_list
-            update.delta.retain(|change| !match change.change_type {
-                ChangeType::Added(Adding::Dir) | ChangeType::Removed(Removing::Dir) => {
-                    config.exclude_list.should_exclude(&change.path, true)
-                }
-                _ => config.exclude_list.should_exclude(&change.path, false),
-            });
+            update.delta.filter_out(&config.exclude_list);
 
             if config.flags.verbose {
-                if update.delta.len() == 0 {
+                if update.delta.is_empty() {
                     println!("pull delta: no missed change to pull")
                 } else {
-                    println!("pull delta:\n{}", update.delta.pretty_print(1))
+                    println!("pull delta:\n{}", update.delta)
                 }
             }
 
@@ -97,58 +92,56 @@ pub async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
                 delta: update_delta,
             }),
         ) => {
-            let mut conflicts: Vec<(String, String)> = Vec::new();
+            // let mut conflicts: Vec<(String, String)> = Vec::new();
+            // local_delta.into_iter().for_each(|local_change| {
+            //     update_delta.into_iter().for_each(|update_change| {
+            //         let is_conflict = {
+            //             if local_change.path.eq(&update_change.path) {
+            //                 match (&local_change.change_type, &update_change.change_type) {
+            //                     (
+            //                         ChangeType::Added(Adding::Dir),
+            //                         ChangeType::Added(Adding::Dir),
+            //                     )
+            //                     | (
+            //                         ChangeType::Removed(Removing::Dir),
+            //                         ChangeType::Removed(Removing::Dir),
+            //                     ) => false,
 
-            local_delta.into_iter().for_each(|local_change| {
-                update_delta.into_iter().for_each(|update_change| {
-                    let is_conflict = {
-                        if local_change.path.eq(&update_change.path) {
-                            match (&local_change.change_type, &update_change.change_type) {
-                                (
-                                    ChangeType::Added(Adding::Dir),
-                                    ChangeType::Added(Adding::Dir),
-                                )
-                                | (
-                                    ChangeType::Removed(Removing::Dir),
-                                    ChangeType::Removed(Removing::Dir),
-                                ) => false,
+            //                     (
+            //                         ChangeType::Added(Adding::FileType(type0, hash0)),
+            //                         ChangeType::Added(Adding::FileType(type1, hash1)),
+            //                     )
+            //                     | (
+            //                         ChangeType::Edited(Editing::FileType(type0, hash0)),
+            //                         ChangeType::Edited(Editing::FileType(type1, hash1)),
+            //                     ) if type0 == type1 && hash0 == hash1 => false,
 
-                                (
-                                    ChangeType::Added(Adding::FileType(type0, hash0)),
-                                    ChangeType::Added(Adding::FileType(type1, hash1)),
-                                )
-                                | (
-                                    ChangeType::Edited(Editing::FileType(type0, hash0)),
-                                    ChangeType::Edited(Editing::FileType(type1, hash1)),
-                                ) if type0 == type1 && hash0 == hash1 => false,
+            //                     (
+            //                         ChangeType::Removed(Removing::FileType(type0)),
+            //                         ChangeType::Removed(Removing::FileType(type1)),
+            //                     ) if type0 == type1 => false,
 
-                                (
-                                    ChangeType::Removed(Removing::FileType(type0)),
-                                    ChangeType::Removed(Removing::FileType(type1)),
-                                ) if type0 == type1 => false,
+            //                     _ => true,
+            //                 }
+            //             } else {
+            //                 local_change.path.starts_with(&update_change.path)
+            //                     || update_change.path.starts_with(&local_change.path)
+            //             }
+            //         };
 
-                                _ => true,
-                            }
-                        } else {
-                            local_change.path.starts_with(&update_change.path)
-                                || update_change.path.starts_with(&local_change.path)
-                        }
-                    };
+            //         if is_conflict {
+            //             // TODO: make the conflic explanation a little bit better
+            //             conflicts.push((
+            //                 format!("local_change:  {:?}", local_change.path),
+            //                 format!("update change: {:?}", update_change.path),
+            //             ));
+            //         }
+            //     })
+            // });
 
-                    if is_conflict {
-                        // TODO: make the conflic explanation a little bit better
-                        conflicts.push((
-                            format!("local_change:  {:?}", local_change.path),
-                            format!("update change: {:?}", update_change.path),
-                        ));
-                    }
-                })
-            });
-            if conflicts.len() > 0 {
-                println!("conflicts:");
-                conflicts
-                    .into_iter()
-                    .for_each(|s| println!("\t!!! {}\n\t    {}", s.0, s.1));
+            let conflicts = fstree::check_for_conflicts(local_delta, update_delta);
+            if let Some(conflicts) = conflicts {
+                println!("conflicts:\n{}", conflicts);
                 return Err(anyhow::Error::new(utils::std_err(
                     "found conflicts between pulled update and local changes. Resolve manually",
                 )));
@@ -180,21 +173,41 @@ where
             delta: update_delta,
         }) => {
             // Get all files that need to be downloaded from server
-            for change in update_delta {
-                match change.change_type {
-                    ChangeType::Added(Adding::FileType(_, _)) | ChangeType::Edited(_) => {
-                        com.send_struct(Some(change.path.clone())).await?;
+            for (path, change) in update_delta.flatten() {
+                let full_path = &config.local_temp_path().join(path.clone());
+                match change {
+                    Change::AddFile(_, _) | Change::EditFile(_, Some(_)) => {
+                        // com.send_struct(Some(path.clone())).await?;
 
-                        let full_path = &config.local_temp_path().join(change.path.to_path_buf());
+                        // TODO somehow use the hashes to check if the data arrived correctly
+                        com.send_struct(Query::FileAt(path.clone())).await?;
                         com.get_file_to(&full_path)
                             .await
                             .context(format!("could not get file at path: {full_path:?}"))?;
                     }
+                    Change::AddSymLink(_) | Change::EditSymLink(_) => {
+                        // TODO somehow use the hashes to check if the data arrived correctly
+                        com.send_struct(Query::SymLinkAt(path.clone())).await?;
+                        let endpoint: PathBuf = com.get_struct().await?;
+                        fs::create_symlink(full_path, endpoint)?;
+                    }
                     _ => {}
-                };
+                }
+                // match change.change_type {
+                //     ChangeType::Added(Adding::FileType(_, _)) | ChangeType::Edited(_) => {
+                //         com.send_struct(Some(change.path.clone())).await?;
+
+                //         let full_path = &config.local_temp_path().join(change.path.to_path_buf());
+                //         com.get_file_to(&full_path)
+                //             .await
+                //             .context(format!("could not get file at path: {full_path:?}"))?;
+                //     }
+                //     _ => {}
+                // };
             }
 
-            com.send_struct(None::<PathBuf>).await?;
+            com.send_struct(Query::Stop).await?;
+            // com.send_struct(None::<PathBuf>).await?;
             Ok(())
         }
         _ => {
@@ -211,38 +224,74 @@ pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> R
         (Some(Commit { commit_id, delta }), Some(old_tree)) => {
             let updated_old_tree = old_tree.try_apply_delta(delta)?;
 
-            for change in delta {
-                let path = config.link_root.join(&change.path.to_path_buf());
-                let from_temp_path = config.local_temp_path().join(&change.path.to_path_buf());
-                match change.change_type {
-                    ChangeType::Added(Adding::Dir) => {
-                        std::fs::create_dir(&path).context(format!(
-                            "could not create directory to apply update\npath: {:?}",
-                            path
-                        ))?
+            for (path, change) in delta.flatten() {
+                let to_path = config.link_root.join(&path);
+                let from_temp_path = config.local_temp_path().join(&path);
+                let errmsg = |msg: &str| -> String {
+                    format!(
+                        "could not {} to apply update\npath: {:?}",
+                        msg,
+                        to_path.clone()
+                    )
+                };
+                match change {
+                    Change::AddDir(metadata) => {
+                        fs::create_dir(&to_path).context(errmsg("create added directory"))?;
+                        fs::set_metadata(&to_path, &metadata)
+                            .context(errmsg("set metadata of added directory"))?;
                     }
-                    ChangeType::Added(Adding::FileType(_, _)) | ChangeType::Edited(_) => {
-                        std::fs::rename(&from_temp_path, &path).context(format!(
-                            "could not copy file from temp to apply update\npath: {:?}",
-                            path
-                        ))?;
+                    Change::AddFile(metadata, _) => {
+                        fs::rename(from_temp_path, &to_path)
+                            .context(errmsg("move added file from temp"))?;
+                        fs::set_metadata(&to_path, &metadata)
+                            .context(errmsg("set metadata of added file"))?;
                     }
-                    ChangeType::Removed(Removing::Dir) => {
-                        std::fs::remove_dir(&path).context(format!(
-                            "could not remove directory to apply update\npath: {:?}",
-                            path
-                        ))?
+                    Change::AddSymLink(_) => {
+                        fs::rename(from_temp_path, &to_path)
+                            .context(errmsg("move added symlink from temp"))?;
                     }
-                    ChangeType::Removed(Removing::FileType(_)) => std::fs::remove_file(&path)
-                        .context(format!(
-                            "could not remove file to apply update\npath: {:?}",
-                            path
-                        ))?,
+                    Change::EditDir(metadata) => {
+                        fs::set_metadata(&to_path, &metadata)
+                            .context(errmsg("set metadata of edited directory"))?;
+                    }
+                    Change::EditFile(optm, opth) => {
+                        if let Some(_) = opth {
+                            fs::rename(from_temp_path, &to_path)
+                                .context(errmsg("move edited file from temp"))?;
+                        }
+                        if let Some(metadata) = optm {
+                            fs::set_metadata(&to_path, &metadata)
+                                .context(errmsg("set metadata of edited file"))?;
+                        }
+                    }
+                    Change::EditSymLink(_) => {
+                        fs::rename(from_temp_path, &to_path)
+                            .context(errmsg("move edited symlink from temp"))?;
+                    }
+                    Change::RemoveDir => {
+                        // Why remove_dir_all instead of just remove_dir here?
+                        // One would think that, because the delta.flatten() flattens a
+                        //	removed directory by recursively adding a removefile/
+                        //	removesymlink/removedir for all the nested childs, once we get
+                        //	at a removedir we can be sure that the directory is actually
+                        //	empty.
+                        // This is not true because the directory could contain some
+                        //	ignored object, which wouldn't appear as a remove*** and
+                        //	wouldn't be removed, so we have to forcefully remove it
+                        //	together with the directory itself
+                        fs::remove_dir_all(&to_path).context(errmsg("remove deleted dir"))?;
+                    }
+                    Change::RemoveFile => {
+                        fs::remove_file(&to_path).context(errmsg("remove deleted file"))?;
+                    }
+                    Change::RemoveSymLink => {
+                        fs::remove_symlink(&to_path).context(errmsg("remove deleted symlink"))?;
+                    }
                 }
             }
             *old_tree = updated_old_tree;
-            let new_tree = hashtree::generate_hash_tree(&config.link_root, &config.exclude_list)?;
-            let local_delta = hashtree::delta(&old_tree, &new_tree);
+            let new_tree = fstree::generate_fstree(&config.link_root, &config.exclude_list)?;
+            let local_delta = fstree::get_delta(&old_tree, &new_tree);
 
             state.new_tree = Some(new_tree);
             state.local_delta = Some(local_delta);
@@ -279,13 +328,37 @@ where
             com.send_struct(local_delta).await?;
 
             loop {
-                let path: Option<AbstractPath> = com.get_struct().await?;
-                let path = match path {
-                    Some(val) => val,
-                    None => break,
-                };
-                com.send_file_from(&config.link_root.join(path.to_path_buf()))
-                    .await?;
+                let query: Query = com.get_struct().await.context("could not get query")?;
+                // let path: Option<AbstractPath> = com
+                //     .get_struct()
+                //     .await
+                //     .context("could not get path for file to send")?;
+                match query {
+                    Query::FileAt(path) => {
+                        let full_path = config.link_root.join(&path);
+                        // let full_path = state.archive_root.join(&endpoint.to_path_buf()).join(&path);
+
+                        com.send_file_from(&full_path)
+                            .await
+                            .context(format!("could not send file at path: {full_path:?}"))?;
+                    }
+                    Query::SymLinkAt(path) => {
+                        let full_path = config.link_root.join(&path);
+
+                        let symlink_endpoint = fs::read_link(&full_path)?;
+                        com.send_struct(symlink_endpoint).await.context(format!(
+                            "could not send symlink endpoint at path: {full_path:?}"
+                        ))?;
+                    }
+                    Query::Stop => break,
+                }
+                // let path: Option<AbstractPath> = com.get_struct().await?;
+                // let path = match path {
+                //     Some(val) => val,
+                //     None => break,
+                // };
+                // com.send_file_from(&config.link_root.join(path.to_path_buf()))
+                //     .await?;
             }
 
             let new_commit_id: String = com.get_struct().await?;

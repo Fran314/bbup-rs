@@ -1,7 +1,6 @@
 use bbup_rust::fs;
-use bbup_rust::hashtree::Tree;
-use bbup_rust::model::{Change, Commit, Delta, DeltaExt};
-use bbup_rust::path::AbstractPath;
+use bbup_rust::fstree::{DeltaFSTree, FSTree};
+use bbup_rust::model::Commit;
 
 use std::path::PathBuf;
 
@@ -11,27 +10,20 @@ use anyhow::Result;
 
 pub type CommitList = Vec<Commit>;
 pub trait CommmitListExt {
-    fn get_update_delta(&self, endpoint: &AbstractPath, lkc: String) -> Delta;
+    fn get_update_delta(&self, endpoint: &Vec<String>, lkc: String) -> Result<DeltaFSTree>;
 }
 impl CommmitListExt for CommitList {
-    fn get_update_delta(&self, endpoint: &AbstractPath, lkc: String) -> Delta {
-        let mut output: Delta = Vec::new();
+    fn get_update_delta(&self, endpoint: &Vec<String>, lkc: String) -> Result<DeltaFSTree> {
+        let mut output: DeltaFSTree = DeltaFSTree::empty();
         for commit in self.into_iter().rev() {
             if commit.commit_id.eq(&lkc) {
                 break;
             }
-            output.merge_delta(&commit.delta);
+            if let Some(delta_at_endpoint) = commit.delta.get_subdelta_tree_copy(endpoint) {
+                output.merge_prec(&delta_at_endpoint)?;
+            }
         }
-        output
-            .iter()
-            .filter_map(|change| match change.path.strip_prefix(endpoint) {
-                Ok(val) => Some(Change {
-                    path: val,
-                    change_type: change.change_type.clone(),
-                }),
-                Err(_) => None,
-            })
-            .collect()
+        Ok(output)
     }
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -45,7 +37,7 @@ pub struct ServerState {
     pub archive_root: PathBuf,
     pub server_port: u16,
     pub commit_list: CommitList,
-    pub archive_tree: Tree,
+    pub archive_tree: FSTree,
 }
 
 impl ServerState {
@@ -64,7 +56,7 @@ impl ServerState {
         //	at a time and those who can't have it terminate)
         let commit_list: CommitList =
             fs::load(&archive_root.join(".bbup").join("commit-list.json"))?;
-        let archive_tree: Tree = fs::load(&archive_root.join(".bbup").join("archive-tree.json"))?;
+        let archive_tree: FSTree = fs::load(&archive_root.join(".bbup").join("archive-tree.json"))?;
         Ok(ServerState {
             archive_root,
             server_port: config.server_port,

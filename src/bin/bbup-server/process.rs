@@ -2,12 +2,13 @@ use crate::{CommmitListExt, ServerState};
 
 use bbup_rust::{
     com::BbupCom,
-    model::{Adding, Change, ChangeType, Commit, Delta, JobType, Removing},
-    path::AbstractPath,
+    fs,
+    fstree::{Change, DeltaFSNode, DeltaFSTree},
+    model::{Commit, JobType, Query},
     random,
 };
 
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use tokio::{net::TcpStream, sync::Mutex};
@@ -15,7 +16,7 @@ use tokio::{net::TcpStream, sync::Mutex};
 async fn pull<T, R>(
     com: &mut BbupCom<T, R>,
     state: &ServerState,
-    endpoint: &AbstractPath,
+    endpoint: &Vec<String>,
 ) -> Result<()>
 where
     T: tokio::io::AsyncWrite + Unpin + Sync + Send,
@@ -24,9 +25,11 @@ where
     let last_known_commit: String = com.get_struct().await.context("could not get lkc")?;
 
     // calculate update for client
+    // TODO maybe this should panic because it means a broken server state
     let delta = state
         .commit_list
-        .get_update_delta(&endpoint, last_known_commit);
+        .get_update_delta(&endpoint, last_known_commit)
+        .context("could not get update delta")?;
 
     // send update delta to client for pull
     com.send_struct(Commit {
@@ -40,23 +43,47 @@ where
 
     // send all files requested by client
     loop {
-        let path: Option<AbstractPath> = com
-            .get_struct()
-            .await
-            .context("could not get path for file to send")?;
-        let path = match path {
-            Some(val) => val,
-            None => break,
-        };
+        let query: Query = com.get_struct().await.context("could not get query")?;
+        // let path: Option<AbstractPath> = com
+        //     .get_struct()
+        //     .await
+        //     .context("could not get path for file to send")?;
+        match query {
+            Query::FileAt(path) => {
+                let mut full_path = state.archive_root.clone();
+                endpoint.into_iter().for_each(|comp| full_path.push(comp));
+                full_path.push(&path);
+                // let full_path = state.archive_root.join(&endpoint.to_path_buf()).join(&path);
 
-        let full_path = state
-            .archive_root
-            .join(&endpoint.to_path_buf())
-            .join(&path.to_path_buf());
+                com.send_file_from(&full_path)
+                    .await
+                    .context(format!("could not send file at path: {full_path:?}"))?;
+            }
+            Query::SymLinkAt(path) => {
+                let mut full_path = state.archive_root.clone();
+                endpoint.into_iter().for_each(|comp| full_path.push(comp));
+                full_path.push(&path);
 
-        com.send_file_from(&full_path)
-            .await
-            .context(format!("could not send file at path: {full_path:?}"))?;
+                let symlink_endpoint = fs::read_link(&full_path)?;
+                com.send_struct(symlink_endpoint).await.context(format!(
+                    "could not send symlink endpoint at path: {full_path:?}"
+                ))?;
+            }
+            Query::Stop => break,
+        }
+        // let path = match path {
+        //     Some(val) => val,
+        //     None => break,
+        // };
+
+        // let full_path = state
+        //     .archive_root
+        //     .join(&endpoint.to_path_buf())
+        //     .join(&path.to_path_buf());
+
+        // com.send_file_from(&full_path)
+        //     .await
+        //     .context(format!("could not send file at path: {full_path:?}"))?;
     }
 
     Ok(())
@@ -65,15 +92,13 @@ where
 async fn push<T, R>(
     com: &mut BbupCom<T, R>,
     state: &mut ServerState,
-    endpoint: &AbstractPath,
+    endpoint: &Vec<String>,
 ) -> Result<()>
 where
     T: tokio::io::AsyncWrite + Unpin + Sync + Send,
     R: tokio::io::AsyncRead + Unpin + Sync + Send,
 {
-    std::fs::create_dir_all(state.archive_root.join(".bbup").join("temp"))?;
-    std::fs::remove_dir_all(state.archive_root.join(".bbup").join("temp"))?;
-    std::fs::create_dir(state.archive_root.join(".bbup").join("temp"))?;
+    fs::make_clean_dir(state.archive_root.join(".bbup").join("temp"))?;
 
     // Reply with green light for push
     com.send_ok()
@@ -81,81 +106,115 @@ where
         .context("could not send greenlight for push")?;
 
     // Get list of changes from client
-    let local_delta: Delta = com
+    let mut local_delta: DeltaFSTree = com
         .get_struct()
         .await
         .context("could not get delta from client")?;
 
     // Get all files that need to be uploaded from client
-    for change in &local_delta {
-        match change.change_type {
-            ChangeType::Added(Adding::FileType(_, _)) | ChangeType::Edited(_) => {
-                com.send_struct(Some(change.path.clone()))
-                    .await
-                    .context(format!(
-                        "could not send path for file to send at path: {:?}",
-                        change.path.clone(),
-                    ))?;
+    for (path, change) in local_delta.flatten() {
+        let full_path = state.archive_root.join(".bbup").join("temp").join(&path);
+        match change {
+            Change::AddFile(_, _) | Change::EditFile(_, Some(_)) => {
+                // com.send_struct(Some(path.clone())).await?;
 
-                let full_path = state
-                    .archive_root
-                    .join(".bbup")
-                    .join("temp")
-                    .join(change.path.to_path_buf());
+                // TODO somehow use the hashes to check if the data arrived correctly
+                com.send_struct(Query::FileAt(path.clone())).await?;
                 com.get_file_to(&full_path)
                     .await
                     .context(format!("could not get file at path: {full_path:?}"))?;
             }
+            Change::AddSymLink(_) | Change::EditSymLink(_) => {
+                // TODO somehow use the hashes to check if the data arrived correctly
+                com.send_struct(Query::SymLinkAt(path.clone())).await?;
+                let endpoint: PathBuf = com.get_struct().await?;
+                fs::create_symlink(full_path, endpoint)?;
+            }
             _ => {}
-        };
+        }
     }
     // send stop
-    com.send_struct(None::<PathBuf>)
+    com.send_struct(Query::Stop)
         .await
-        .context("could not send empty path to signal end of file transfer")?;
+        .context("could not send query stop to signal end of file transfer")?;
 
     // TODO if fail, send error message to the server
     let updated_archive_tree = state.archive_tree.try_apply_delta(&local_delta)?;
 
-    for change in &local_delta {
-        let path = state
-            .archive_root
-            .join(&endpoint.to_path_buf())
-            .join(&change.path.to_path_buf());
-        let from_temp_path = state
-            .archive_root
-            .join(".bbup")
-            .join("temp")
-            .join(&change.path.to_path_buf());
+    for (path, change) in local_delta.flatten() {
+        let mut to_path = state.archive_root.clone();
+        endpoint.into_iter().for_each(|comp| to_path.push(comp));
+        to_path.push(&path);
+        let from_temp_path = state.archive_root.join(".bbup").join("temp").join(&path);
 
-        match change.change_type {
-            ChangeType::Added(Adding::Dir) => std::fs::create_dir(&path).context(format!(
-                "could not create directory to apply update\npath: {:?}",
-                path
-            ))?,
-            ChangeType::Added(Adding::FileType(_, _)) | ChangeType::Edited(_) => {
-                std::fs::rename(&from_temp_path, &path).context(format!(
-                    "could not copy file from temp to apply update\npath: {:?}",
-                    path
-                ))?;
+        let errmsg = |msg: &str| -> String {
+            format!(
+                "could not {} to apply new commit\npath: {:?}",
+                msg,
+                to_path.clone()
+            )
+        };
+        match change {
+            Change::AddDir(metadata) => {
+                fs::create_dir(&to_path).context(errmsg("create added directory"))?;
+                fs::set_metadata(&to_path, &metadata)
+                    .context(errmsg("set metadata of added directory"))?;
             }
-            ChangeType::Removed(Removing::Dir) => std::fs::remove_dir(&path).context(format!(
-                "could not remove directory to apply update\npath: {:?}",
-                path
-            ))?,
-            ChangeType::Removed(Removing::FileType(_)) => std::fs::remove_file(&path).context(
-                format!("could not remove file to apply update\npath: {:?}", path),
-            )?,
+            Change::AddFile(metadata, _) => {
+                fs::rename(from_temp_path, &to_path)
+                    .context(errmsg("move added file from temp"))?;
+                fs::set_metadata(&to_path, &metadata)
+                    .context(errmsg("set metadata of added file"))?;
+            }
+            Change::AddSymLink(_) => {
+                fs::rename(from_temp_path, &to_path)
+                    .context(errmsg("move added symlink from temp"))?;
+            }
+            Change::EditDir(metadata) => {
+                fs::set_metadata(&to_path, &metadata)
+                    .context(errmsg("set metadata of edited directory"))?;
+            }
+            Change::EditFile(optm, opth) => {
+                if let Some(_) = opth {
+                    fs::rename(from_temp_path, &to_path)
+                        .context(errmsg("move edited file from temp"))?;
+                }
+                if let Some(metadata) = optm {
+                    fs::set_metadata(&to_path, &metadata)
+                        .context(errmsg("set metadata of edited file"))?;
+                }
+            }
+            Change::EditSymLink(_) => {
+                fs::rename(from_temp_path, &to_path)
+                    .context(errmsg("move edited symlink from temp"))?;
+            }
+            Change::RemoveDir => {
+                // Why remove_dir_all instead of just remove_dir here?
+                // One would think that, because the delta.flatten() flattens a
+                //	removed directory by recursively adding a removefile/
+                //	removesymlink/removedir for all the nested childs, once we get
+                //	at a removedir we can be sure that the directory is actually
+                //	empty.
+                // This is not true because the directory could contain some
+                //	ignored object, which wouldn't appear as a remove*** and
+                //	wouldn't be removed, so we have to forcefully remove it
+                //	together with the directory itself
+                fs::remove_dir_all(&to_path).context(errmsg("remove deleted dir"))?;
+            }
+            Change::RemoveFile => {
+                fs::remove_file(&to_path).context(errmsg("remove deleted file"))?;
+            }
+            Change::RemoveSymLink => {
+                fs::remove_symlink(&to_path).context(errmsg("remove deleted symlink"))?;
+            }
         }
     }
 
-    let local_delta: Delta = local_delta
-        .into_iter()
-        .map(|change| Change {
-            path: endpoint.join(&change.path),
-            ..change
-        })
-        .collect();
+    endpoint.into_iter().rev().for_each(|comp| {
+        let node = DeltaFSNode::Branch(None, local_delta.clone());
+        let tree = HashMap::from([(comp.clone(), node)]);
+        local_delta = DeltaFSTree(tree)
+    });
     let commit_id = random::random_hex(64);
     state.commit_list.push(Commit {
         commit_id: commit_id.clone(),
@@ -194,7 +253,7 @@ pub async fn process_connection(
             .await
             .context("could not send greenlight for conversation")?;
 
-        let endpoint: AbstractPath = com
+        let endpoint: Vec<String> = com
             .get_struct()
             .await
             .context("could not get backup endpoint")?;

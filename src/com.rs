@@ -1,7 +1,9 @@
-use crate::path::ForceFilename;
+use crate::fs::OsStrExt;
+
+use crate::fs;
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
 };
@@ -11,6 +13,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use thiserror::Error;
+// TODO review these errors, there are too many errors
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Serialization error: could not serialize content\n\terror: {error:?}")]
@@ -70,6 +73,16 @@ pub enum Error {
 
     #[error("Generic error {0:#?}")]
     GenericError(String),
+
+    #[error("Comunications: inner error occurred.\n{err}")]
+    InnerError { src: String, err: String },
+}
+
+fn inerr<S: std::string::ToString, E: std::string::ToString>(src: S, err: E) -> Error {
+    Error::InnerError {
+        src: src.to_string(),
+        err: err.to_string(),
+    }
 }
 
 fn pb_style_from(direction: &str, name: &str) -> ProgressStyle {
@@ -268,13 +281,11 @@ impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> Bb
         Ok(())
     }
 
-    pub async fn send_file_from(&mut self, path: &PathBuf) -> Result<(), Error> {
-        let mut file = tokio::fs::File::open(path)
+    pub async fn send_file_from<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Error> {
+        let path = path.as_ref().to_path_buf();
+        let mut file = fs::async_read_file(&path)
             .await
-            .map_err(|error| Error::OpenFileError {
-                path: path.clone(),
-                error,
-            })?;
+            .map_err(|err| inerr(format!("failed to send file from path {:?}", path), err))?;
 
         self.send_ok().await?;
 
@@ -295,7 +306,11 @@ impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> Bb
             })?;
 
         if self.progress {
-            let mut pw = ProgressWriter::new(&mut self.tx, len, &path.force_file_name());
+            let name = match path.file_name() {
+                Some(val) => val.force_to_string(),
+                None => String::from("[invalid filename]"),
+            };
+            let mut pw = ProgressWriter::new(&mut self.tx, len, &name);
             tokio::io::copy(&mut file, &mut pw)
                 .await
                 .map_err(|error| Error::BufferCopyError { error })?;
@@ -355,19 +370,24 @@ impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> Bb
             .map_err(|error| Error::DeserializationError { error })?)
     }
 
-    pub async fn get_file_to(&mut self, path: &PathBuf) -> Result<(), Error> {
+    pub async fn get_file_to<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Error> {
+        let path = path.as_ref().to_path_buf();
         self.check_ok().await?;
-        std::fs::create_dir_all(path.parent().ok_or(Error::GenericError(
+        let parent_dir = path.parent().ok_or(Error::GenericError(
             "unable to get parent of file".to_string(),
-        ))?)
-        .map_err(|_| Error::GenericError("unable to create all dirs to file".to_string()))?;
-        let mut file =
-            tokio::fs::File::create(path)
-                .await
-                .map_err(|error| Error::OpenFileError {
-                    path: path.clone(),
-                    error,
-                })?;
+        ))?;
+        fs::create_dir(parent_dir).map_err(|err| {
+            inerr(
+                format!(
+                    "couldn't get file to path {:?}\nFailed to create parent dir",
+                    path
+                ),
+                err,
+            )
+        })?;
+        let mut file = fs::async_create_file(&path)
+            .await
+            .map_err(|err| inerr(format!("failed to get file to path {:?}", path), err))?;
         let len = self
             .rx
             .read_u64()
@@ -378,7 +398,11 @@ impl<T: AsyncWrite + Unpin + Sync + Send, R: AsyncRead + Unpin + Sync + Send> Bb
             })?;
 
         if self.progress {
-            let pw = ProgressReader::new(&mut self.rx, len, &path.force_file_name());
+            let name = match path.file_name() {
+                Some(val) => val.force_to_string(),
+                None => String::from("[invalid filename]"),
+            };
+            let pw = ProgressReader::new(&mut self.rx, len, &name);
             let mut handle = pw.take(len);
             tokio::io::copy(&mut handle, &mut file)
                 .await

@@ -7,8 +7,6 @@ mod sync;
 
 use bbup_rust::{fs, model::ExcludeList};
 
-use std::path::PathBuf;
-
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
@@ -33,10 +31,6 @@ enum SubCommand {
 #[derive(Parser, Debug)]
 #[clap(version)]
 struct Args {
-    /// Custom home directory for testing
-    #[clap(long, value_parser)]
-    home_dir: Option<PathBuf>,
-
     #[clap(subcommand)]
     cmd: SubCommand,
 }
@@ -45,12 +39,8 @@ struct Args {
 async fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
-    let home_dir = match args.home_dir {
-        Some(val) => Some(val),
-        None => dirs::home_dir(),
-    }
-    .context("could not resolve home_dir path")?;
-    let cwd = std::env::current_dir()?;
+    let home_dir = fs::home_dir().context("could not resolve home_dir path")?;
+    let cwd = fs::cwd().context("could not resolve current working directory")?;
 
     match args.cmd {
         SubCommand::Setup => return setup::setup(home_dir),

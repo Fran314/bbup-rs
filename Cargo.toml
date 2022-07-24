@@ -19,4 +19,7 @@ rand = { version = "0.8.5", features = ["small_rng"] } # random
 anyhow = "1.0"
 thiserror = "1.0"
 bincode = "1.3.3"
-indicatif = "0.16.2"
+indicatif = "0.16.2" # progress bar
+filetime = "0.2" # to set file times on different OSs
+colored = "2" # For colored strings in output (it's Rust after all!)
+chrono = "0.4" # For timestamp formatting
