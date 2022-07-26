@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 pub type CommitList = Vec<Commit>;
 pub trait CommmitListExt {
@@ -20,7 +20,10 @@ impl CommmitListExt for CommitList {
                 break;
             }
             if let Some(delta_at_endpoint) = commit.delta.get_subdelta_tree_copy(endpoint) {
-                output.merge_prec(&delta_at_endpoint)?;
+                output.merge_prec(&delta_at_endpoint).context(format!(
+                    "failed to merge commit {} with successive commits",
+                    commit.commit_id
+                ))?;
             }
         }
         Ok(output)
@@ -31,49 +34,78 @@ pub struct ServerConfig {
     pub server_port: u16,
     pub archive_root: PathBuf,
 }
+impl ServerConfig {
+    fn path(home_dir: &PathBuf) -> PathBuf {
+        home_dir
+            .join(".config")
+            .join("bbup-server")
+            .join("config.toml")
+    }
+    pub fn from(server_port: u16, archive_root: PathBuf) -> ServerConfig {
+        ServerConfig {
+            server_port,
+            archive_root,
+        }
+    }
+    pub fn exists(home_dir: &PathBuf) -> bool {
+        ServerConfig::path(home_dir).exists()
+    }
+    pub fn load(home_dir: &PathBuf) -> Result<ServerConfig> {
+        let path = ServerConfig::path(home_dir);
+        if !path.exists() {
+            anyhow::bail!("Bbup server isn't set up. Try using 'bbup-server setup'")
+        }
+        let server_config: ServerConfig =
+            fs::load(&path).context("failed to load server config")?;
+        Ok(server_config)
+    }
+    pub fn save(&self, home_dir: &PathBuf) -> Result<()> {
+        fs::save(ServerConfig::path(home_dir), self).context("failed to save server config")?;
+        Ok(())
+    }
+}
 
-// TODO restructure ServerState in a similar way to how ClientState is structured
-pub struct ServerState {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ArchiveConfig {
     pub archive_root: PathBuf,
-    pub server_port: u16,
+}
+
+#[derive(Debug)]
+pub struct ArchiveState {
     pub commit_list: CommitList,
     pub archive_tree: FSTree,
 }
+impl ArchiveState {
+    fn cl_path(archive_root: &PathBuf) -> PathBuf {
+        archive_root.join(".bbup").join("commit-list.bin")
+    }
+    fn at_path(archive_root: &PathBuf) -> PathBuf {
+        archive_root.join(".bbup").join("archive-tree.bin")
+    }
+    pub fn from(commit_list: CommitList, archive_tree: FSTree) -> ArchiveState {
+        ArchiveState {
+            commit_list,
+            archive_tree,
+        }
+    }
+    pub fn load(archive_root: &PathBuf) -> Result<ArchiveState> {
+        let commit_list: CommitList = fs::load(&ArchiveState::cl_path(archive_root))
+            .context("failed to load archive's commit list")?;
 
-impl ServerState {
-    pub fn load(home_dir: PathBuf) -> Result<ServerState> {
-        let config: ServerConfig = fs::load(
-            &home_dir
-                .join(".config")
-                .join("bbup-server")
-                .join("config.yaml"),
-        )?;
+        let archive_tree: FSTree = fs::load(&ArchiveState::at_path(archive_root))
+            .context("failed to load archive's tree")?;
 
-        let archive_root = home_dir.join(config.archive_root);
-
-        // Load server state, necessary for conversation and
-        //	"shared" between tasks (though only one can use it
-        //	at a time and those who can't have it terminate)
-        let commit_list: CommitList =
-            fs::load(&archive_root.join(".bbup").join("commit-list.json"))?;
-        let archive_tree: FSTree = fs::load(&archive_root.join(".bbup").join("archive-tree.json"))?;
-        Ok(ServerState {
-            archive_root,
-            server_port: config.server_port,
+        Ok(ArchiveState {
             commit_list,
             archive_tree,
         })
     }
+    pub fn save(&self, archive_root: &PathBuf) -> Result<()> {
+        fs::save(&ArchiveState::cl_path(archive_root), &self.commit_list)
+            .context("failed to save archive's commit list")?;
 
-    pub fn save(&mut self) -> Result<()> {
-        fs::save(
-            &self.archive_root.join(".bbup").join("commit-list.json"),
-            &self.commit_list,
-        )?;
-        fs::save(
-            &self.archive_root.join(".bbup").join("archive-tree.json"),
-            &self.archive_tree,
-        )?;
+        fs::save(&ArchiveState::at_path(archive_root), &self.archive_tree)
+            .context("failed to save archive's tree")?;
 
         Ok(())
     }

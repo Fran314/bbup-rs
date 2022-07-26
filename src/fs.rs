@@ -111,9 +111,10 @@ impl PathExt for std::path::PathBuf {
 
 //--- SAVE & LOAD SERIALIZED DATA ---//
 enum Ext {
-    JSON,
-    YAML,
+    // JSON,
+    // YAML,
     BIN,
+    TOML,
 }
 fn get_ext<P: AsRef<Path>>(path: P) -> Option<Ext> {
     let ext = match path.as_ref().extension().and_then(std::ffi::OsStr::to_str) {
@@ -121,9 +122,10 @@ fn get_ext<P: AsRef<Path>>(path: P) -> Option<Ext> {
         None => return None,
     };
     match ext.to_ascii_lowercase().as_str() {
-        "json" => Some(Ext::JSON),
-        "yaml" => Some(Ext::YAML),
+        // "json" => Some(Ext::JSON),
+        // "yaml" => Some(Ext::YAML),
         "bin" => Some(Ext::BIN),
+        "toml" => Some(Ext::TOML),
         _ => None,
     }
 }
@@ -141,17 +143,22 @@ pub fn load<P: AsRef<Path>, T: DeserializeOwned>(path: P) -> Result<T, Error> {
     }
 
     match get_ext(&path) {
-        Some(Ext::JSON) => {
+        // Some(Ext::JSON) => {
+        //     let serialized =
+        //         std::fs::read_to_string(&path).map_err(inerr(errctx("read content to string")))?;
+        //     serde_json::from_str(&serialized)
+        //         .map_err(inerr(errctx("deserialize content from json")))
+        // }
+        // Some(Ext::YAML) => {
+        //     let serialized =
+        //         std::fs::read_to_string(&path).map_err(inerr(errctx("read content to string")))?;
+        //     serde_yaml::from_str(&serialized)
+        //         .map_err(inerr(errctx("deserialize content from yaml")))
+        // }
+        Some(Ext::TOML) => {
             let serialized =
                 std::fs::read_to_string(&path).map_err(inerr(errctx("read content to string")))?;
-            serde_json::from_str(&serialized)
-                .map_err(inerr(errctx("deserialize content from json")))
-        }
-        Some(Ext::YAML) => {
-            let serialized =
-                std::fs::read_to_string(&path).map_err(inerr(errctx("read content to string")))?;
-            serde_yaml::from_str(&serialized)
-                .map_err(inerr(errctx("deserialize content from yaml")))
+            toml::from_str(&serialized).map_err(inerr(errctx("deserialize content from toml")))
         }
         Some(Ext::BIN) => {
             let file = std::fs::File::open(&path).map_err(inerr(errctx("open file")))?;
@@ -167,15 +174,21 @@ pub fn load<P: AsRef<Path>, T: DeserializeOwned>(path: P) -> Result<T, Error> {
 pub fn save<P: AsRef<Path>, T: Serialize>(path: P, content: &T) -> Result<(), Error> {
     let errctx = error_context(format!("could not save file at path {:?}", path.as_ref()));
     match get_ext(&path) {
-        Some(Ext::JSON) => {
-            let serialized = serde_json::to_string(content)
-                .map_err(inerr(errctx("serialize content to json")))?;
-            ensure_parent(&path)?;
-            std::fs::write(&path, serialized).map_err(inerr(errctx("write content to file")))
-        }
-        Some(Ext::YAML) => {
-            let serialized = serde_yaml::to_string(content)
-                .map_err(inerr(errctx("serialize content to yaml")))?;
+        // Some(Ext::JSON) => {
+        //     let serialized = serde_json::to_string(content)
+        //         .map_err(inerr(errctx("serialize content to json")))?;
+        //     ensure_parent(&path)?;
+        //     std::fs::write(&path, serialized).map_err(inerr(errctx("write content to file")))
+        // }
+        // Some(Ext::YAML) => {
+        //     let serialized = serde_yaml::to_string(content)
+        //         .map_err(inerr(errctx("serialize content to yaml")))?;
+        //     ensure_parent(&path)?;
+        //     std::fs::write(&path, serialized).map_err(inerr(errctx("write content to file")))
+        // }
+        Some(Ext::TOML) => {
+            let serialized =
+                toml::to_string(content).map_err(inerr(errctx("serialize content to toml")))?;
             ensure_parent(&path)?;
             std::fs::write(&path, serialized).map_err(inerr(errctx("write content to file")))
         }

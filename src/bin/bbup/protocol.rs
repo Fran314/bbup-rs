@@ -3,8 +3,9 @@ use std::path::PathBuf;
 
 use crate::{ProcessConfig, ProcessState};
 
-use bbup_rust::com::BbupCom;
-use bbup_rust::model::{Commit, Query};
+use bbup_rust::com::{BbupCom, Querable};
+use bbup_rust::hash::Hash;
+use bbup_rust::model::Commit;
 use bbup_rust::{fs, fstree};
 
 use anyhow::{Context, Result};
@@ -14,16 +15,8 @@ pub fn get_local_delta(config: &ProcessConfig, state: &mut ProcessState) -> Resu
         println!("calculating local delta...")
     }
 
-    state.last_known_commit = Some(fs::load(
-        &config
-            .link_root
-            .join(".bbup")
-            .join("last-known-commit.json"),
-    )?);
-
-    let old_tree = fs::load(&config.link_root.join(".bbup").join("old-hash-tree.json"))?;
     let new_tree = fstree::generate_fstree(&config.link_root, &config.exclude_list)?;
-    let local_delta = fstree::get_delta(&old_tree, &new_tree);
+    let local_delta = fstree::get_delta(&state.last_known_fstree, &new_tree);
 
     if config.flags.verbose {
         if local_delta.is_empty() {
@@ -33,7 +26,6 @@ pub fn get_local_delta(config: &ProcessConfig, state: &mut ProcessState) -> Resu
         }
     }
 
-    state.old_tree = Some(old_tree);
     state.new_tree = Some(new_tree);
     state.local_delta = Some(local_delta);
     Ok(())
@@ -44,44 +36,34 @@ pub async fn pull_update_delta(
     state: &mut ProcessState,
     com: &mut BbupCom,
 ) -> Result<()> {
-    match &state.last_known_commit {
-        Some(lkc) => {
-            if config.flags.verbose {
-                println!("pulling from server...")
-            }
-            // [PULL] Send last known commit to pull updates in case of any
-            com.send_struct(lkc)
-                .await
-                .context("could not send last known commit")?;
+    if config.flags.verbose {
+        println!("pulling from server...")
+    }
+    // [PULL] Send last known commit to pull updates in case of any
+    com.send_struct(&state.last_known_commit)
+        .await
+        .context("could not send last known commit")?;
 
-            // [PULL] Get delta from last_known_commit to server's most recent commit
-            let mut update: Commit = com
-                .get_struct()
-                .await
-                .context("could not get update-delta from server")?;
+    // [PULL] Get delta from last_known_commit to server's most recent commit
+    let mut update: Commit = com
+        .get_struct()
+        .await
+        .context("could not get update-delta from server")?;
 
-            // [PULL] Filter out updates that match the exclude_list
-            update.delta.filter_out(&config.exclude_list);
+    // [PULL] Filter out updates that match the exclude_list
+    update.delta.filter_out(&config.exclude_list);
 
-            if config.flags.verbose {
-                if update.delta.is_empty() {
-                    println!("pull delta: no missed change to pull")
-                } else {
-                    println!("pull delta:\n{}", update.delta)
-                }
-            }
-
-            state.update = Some(update);
-
-            Ok(())
-        }
-        _ => {
-            anyhow::bail!(
-                "Some part of the state was required for pull-update-delta but is missing\nstate.last_known_commit: {}",
-                &state.last_known_commit.is_some()
-            )
+    if config.flags.verbose {
+        if update.delta.is_empty() {
+            println!("pull delta: no missed change to pull")
+        } else {
+            println!("pull delta:\n{}", update.delta)
         }
     }
+
+    state.update = Some(update);
+
+    Ok(())
 }
 
 pub async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
@@ -124,31 +106,24 @@ pub async fn download_update(
             delta: update_delta,
         }) => {
             // Get all files that need to be downloaded from server
-            for (path, change) in update_delta.flatten() {
-                let full_path = &config
-                    .link_root
-                    .join(".bbup")
-                    .join("temp")
-                    .join(path.clone());
-                match change {
+            let queries: Vec<(Querable, PathBuf, Hash)> = update_delta
+                .flatten()
+                .into_iter()
+                .flat_map(|(path, change)| match change {
                     Change::AddFile(_, hash) | Change::EditFile(_, Some(hash)) => {
-                        // TODO somehow use the hashes to check if the data arrived correctly
-                        com.send_struct(Query::FileAt(path.clone())).await?;
-                        com.get_file_to(&full_path, &hash)
-                            .await
-                            .context(format!("could not get file at path: {full_path:?}"))?;
+                        vec![(Querable::File, path, hash)]
                     }
-                    Change::AddSymLink(_) | Change::EditSymLink(_) => {
-                        // TODO somehow use the hashes to check if the data arrived correctly
-                        com.send_struct(Query::SymLinkAt(path.clone())).await?;
-                        let endpoint: PathBuf = com.get_struct().await?;
-                        fs::create_symlink(full_path, endpoint)?;
+                    Change::AddSymLink(hash) | Change::EditSymLink(hash) => {
+                        vec![(Querable::SymLink, path, hash)]
                     }
-                    _ => {}
-                }
-            }
+                    _ => vec![],
+                })
+                .collect();
 
-            com.send_struct(Query::Stop).await?;
+            com.query_files(queries, &config.link_root.join(".bbup").join("temp"))
+                .await
+                .context("could not query files and symlinks to apply update")?;
+
             Ok(())
         }
         _ => {
@@ -161,9 +136,9 @@ pub async fn download_update(
 }
 
 pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> Result<()> {
-    match (&state.update, &mut state.old_tree) {
-        (Some(Commit { commit_id, delta }), Some(old_tree)) => {
-            let updated_old_tree = old_tree.try_apply_delta(delta)?;
+    match &state.update {
+        Some(Commit { commit_id, delta }) => {
+            let updated_fstree = state.last_known_fstree.try_apply_delta(delta)?;
 
             for (path, change) in delta.flatten() {
                 let to_path = config.link_root.join(&path);
@@ -230,32 +205,22 @@ pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> R
                     }
                 }
             }
-            *old_tree = updated_old_tree;
+            state.last_known_commit = commit_id.clone();
+            state.last_known_fstree = updated_fstree;
+            state.save(&config.link_root)?;
+
             let new_tree = fstree::generate_fstree(&config.link_root, &config.exclude_list)?;
-            let local_delta = fstree::get_delta(&old_tree, &new_tree);
+            let local_delta = fstree::get_delta(&state.last_known_fstree, &new_tree);
 
             state.new_tree = Some(new_tree);
             state.local_delta = Some(local_delta);
-
-            fs::save(
-                &config.link_root.join(".bbup").join("old-hash-tree.json"),
-                &old_tree,
-            )?;
-            fs::save(
-                &config
-                    .link_root
-                    .join(".bbup")
-                    .join("last-known-commit.json"),
-                &commit_id,
-            )?;
 
             Ok(())
         }
         _ => {
             anyhow::bail!(
-				"Some part of the state was required for apply-update but is missing\nstate.update: {}\nstate.old_tree: {}",
+				"Some part of the state was required for apply-update but is missing\nstate.update: {}",
 				state.update.is_some(),
-				state.old_tree.is_some(),
 			)
         }
     }
@@ -273,41 +238,26 @@ pub async fn upload_changes(
 
             com.send_struct(local_delta).await?;
 
-            loop {
-                let query: Query = com.get_struct().await.context("could not get query")?;
-                match query {
-                    Query::FileAt(path) => {
-                        let full_path = config.link_root.join(&path);
+            let querable: Vec<PathBuf> = local_delta
+                .flatten()
+                .into_iter()
+                .filter(|(_, change)| match change {
+                    Change::AddFile(_, _)
+                    | Change::AddSymLink(_)
+                    | Change::EditFile(_, _)
+                    | Change::EditSymLink(_) => true,
+                    _ => false,
+                })
+                .map(|(path, _)| path)
+                .collect();
 
-                        com.send_file_from(&full_path)
-                            .await
-                            .context(format!("could not send file at path: {full_path:?}"))?;
-                    }
-                    Query::SymLinkAt(path) => {
-                        let full_path = config.link_root.join(&path);
+            com.supply_files(&querable, &config.link_root)
+                .await
+                .context("could not supply files and symlinks to upload push")?;
 
-                        let symlink_endpoint = fs::read_link(&full_path)?;
-                        com.send_struct(symlink_endpoint).await.context(format!(
-                            "could not send symlink endpoint at path: {full_path:?}"
-                        ))?;
-                    }
-                    Query::Stop => break,
-                }
-            }
-
-            let new_commit_id: String = com.get_struct().await?;
-
-            fs::save(
-                &config.link_root.join(".bbup").join("old-hash-tree.json"),
-                &new_tree,
-            )?;
-            fs::save(
-                &config
-                    .link_root
-                    .join(".bbup")
-                    .join("last-known-commit.json"),
-                &new_commit_id,
-            )?;
+            state.last_known_commit = com.get_struct().await?;
+            state.last_known_fstree = new_tree.clone();
+            state.save(&&config.link_root)?;
 
             Ok(())
         }

@@ -1,4 +1,6 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
+
+use bbup_rust::fs;
 
 mod smodel;
 use smodel::*;
@@ -27,10 +29,6 @@ enum SubCommand {
 
 #[derive(Parser, Debug)]
 struct Args {
-    /// Custom home directory for testing
-    #[clap(long, value_parser)]
-    home_dir: Option<PathBuf>,
-
     #[clap(subcommand)]
     cmd: SubCommand,
 }
@@ -39,33 +37,31 @@ struct Args {
 async fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
-    let home_dir = match args.home_dir {
-        Some(val) => Some(val),
-        None => dirs::home_dir(),
-    }
-    .context("could not resolve home_dir path")?;
+    let home_dir = fs::home_dir().context("could not resolve home_dir path")?;
 
     match args.cmd {
         SubCommand::Setup => return setup::setup(home_dir),
         SubCommand::Run { verbose, progress } => {
-            // Load server state, necessary for conversation and
-            //	"shared" between tasks (though only one can use it
-            //	at a time and those who can't have it terminate)
-            let state = ServerState::load(home_dir)?;
+            let server_config = ServerConfig::load(&home_dir)?;
+            let archive_root = home_dir.join(&server_config.archive_root);
+
+            let archive_state =
+                ArchiveState::load(&archive_root).context("failed to load aarchive's state")?;
+            let archive_config = ArchiveConfig { archive_root };
+            let state = Arc::new(Mutex::new(archive_state));
 
             // Start TCP server
-            let listener = TcpListener::bind(format!("127.0.0.1:{}", state.server_port)).await?;
-
-            // Transform state into an ArcMutex of its origina
-            //	value to pass it around
-            let state = Arc::new(Mutex::new(state));
+            let listener =
+                TcpListener::bind(format!("127.0.0.1:{}", server_config.server_port)).await?;
 
             // Spawn a task for each connection
             loop {
                 let (socket, _) = listener.accept().await?;
                 let state = state.clone();
+                let config = archive_config.clone();
                 tokio::spawn(async move {
-                    match process::process_connection(socket, state, progress).await {
+                    let result = process::process_connection(config, socket, state, progress).await;
+                    match result {
                         Ok(()) => {
                             if verbose {
                                 println!("connection processed correctly")

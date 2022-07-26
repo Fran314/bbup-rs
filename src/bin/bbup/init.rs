@@ -1,13 +1,13 @@
-use crate::{LinkConfig, LinkType};
+use crate::{cmodel::ProcessState, LinkConfig, LinkType};
 
-use bbup_rust::{fs, fstree, input, model::ExcludeList};
+use bbup_rust::{fstree, input, model::Commit};
 
 use std::path::PathBuf;
 
 use anyhow::Result;
 
 pub fn init(cwd: PathBuf) -> Result<()> {
-    if cwd.join(".bbup").exists() && cwd.join(".bbup").join("config.yaml").exists() {
+    if LinkConfig::exists(&cwd) {
         anyhow::bail!(
             "Current directory [{:?}] is already initialized as a backup source",
             cwd
@@ -16,7 +16,7 @@ pub fn init(cwd: PathBuf) -> Result<()> {
 
     let endpoint: Vec<String> = loop {
         let path = input::get("set endpoint (relative to archive root): ")?;
-        // TOTO: do all sorts of checks:
+        // TODO: do all sorts of checks:
         //	- make sure it's a relative path
         //	- check which separator is used
         //	- ask for confirmation
@@ -25,9 +25,7 @@ pub fn init(cwd: PathBuf) -> Result<()> {
 
     let mut exclude_list: Vec<String> = Vec::new();
     let add_exclude_list = input::get("add exclude list [y/N]?: ")?;
-    if add_exclude_list.to_ascii_lowercase().eq("y")
-        || add_exclude_list.to_ascii_lowercase().eq("yes")
-    {
+    if add_exclude_list.to_ascii_lowercase().eq("y") {
         println!("add regex rules in string form. To stop, enter empty string");
         loop {
             let rule = input::get("rule: ")?;
@@ -37,21 +35,13 @@ pub fn init(cwd: PathBuf) -> Result<()> {
             exclude_list.push(rule);
         }
     }
-    let local_config = LinkConfig {
-        link_type: LinkType::Bijection,
-        endpoint,
-        exclude_list: exclude_list.clone(),
-    };
-
-    fs::save(&cwd.join(".bbup").join("config.yaml"), &local_config)?;
-    let tree = fstree::generate_fstree(&cwd, &ExcludeList::from(&exclude_list)?)?;
-    fs::save(&cwd.join(".bbup").join("old-hash-tree.json"), &tree)?;
-    fs::save(
-        &cwd.join(".bbup").join("last-known-commit.json"),
-        &String::from("0").repeat(64),
-    )?;
+    LinkConfig::from(LinkType::Bijection, endpoint, exclude_list).save(&cwd)?;
+    ProcessState::from(Commit::base_commit().commit_id, fstree::FSTree::empty()).save(&cwd)?;
 
     println!("backup source initialized correctly!");
+    println!("");
+    println!("run 'bbup sync -pv' to download the curent state of the endpoint");
+    println!("");
 
     Ok(())
 }

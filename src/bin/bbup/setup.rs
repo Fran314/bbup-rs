@@ -2,18 +2,12 @@ use std::path::PathBuf;
 
 use crate::{ClientConfig, ClientSettings};
 
-use bbup_rust::{fs, input};
+use bbup_rust::input;
 
 use anyhow::Result;
 
 pub fn setup(home_dir: PathBuf) -> Result<()> {
-    if home_dir.join(".config").join("bbup-client").exists()
-        && home_dir
-            .join(".config")
-            .join("bbup-client")
-            .join("config.yaml")
-            .exists()
-    {
+    if ClientConfig::exists(&home_dir) {
         anyhow::bail!("bbup client is already setup");
     }
 
@@ -22,24 +16,13 @@ pub fn setup(home_dir: PathBuf) -> Result<()> {
     let host_name = input::get("enter host name: ")?;
     let host_address = input::get("enter host address: ")?;
 
-    fs::create_dir(&home_dir.join(".config").join("bbup-client"))?;
-
     let settings = ClientSettings {
         local_port,
         server_port,
         host_name,
         host_address,
     };
-    fs::save(
-        &home_dir
-            .join(".config")
-            .join("bbup-client")
-            .join("config.yaml"),
-        &ClientConfig {
-            settings,
-            links: Vec::new(),
-        },
-    )?;
+    ClientConfig::from(settings, Vec::new()).save(&home_dir)?;
 
     println!("bbup client set up correctly!");
 

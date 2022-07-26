@@ -296,11 +296,11 @@ impl DeltaFSTree {
     }
 }
 
-pub fn get_delta(FSTree(old_tree): &FSTree, FSTree(new_tree): &FSTree) -> DeltaFSTree {
+pub fn get_delta(FSTree(last_known_fstree): &FSTree, FSTree(new_tree): &FSTree) -> DeltaFSTree {
     use FSNode::*;
     let mut delta: HashMap<String, DeltaFSNode> = HashMap::new();
 
-    for (key, ior) in union(old_tree, new_tree) {
+    for (key, ior) in union(last_known_fstree, new_tree) {
         match ior {
             IOr::Left(child0) => {
                 delta.insert(key, DeltaFSNode::remove(child0));

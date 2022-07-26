@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::fs::PathExt;
 use crate::fstree::DeltaFSTree;
 
@@ -72,18 +70,4 @@ impl ExcludeList {
 
         false
     }
-}
-
-// TODO maybe this shouldn't be in model but in its own file
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub enum JobType {
-    Pull,
-    Push,
-    Quit,
-}
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub enum Query {
-    FileAt(PathBuf),
-    SymLinkAt(PathBuf),
-    Stop,
 }

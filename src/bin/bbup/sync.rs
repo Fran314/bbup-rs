@@ -3,8 +3,8 @@ use crate::{ProcessConfig, ProcessState};
 
 use tokio::net::TcpStream;
 
-use bbup_rust::com::BbupCom;
-use bbup_rust::{model::JobType, ssh_tunnel::SshTunnel};
+use bbup_rust::com::{BbupCom, JobType};
+use bbup_rust::ssh_tunnel::SshTunnel;
 
 use anyhow::{bail, Context, Result};
 
@@ -41,7 +41,7 @@ pub async fn process_link(config: ProcessConfig) -> Result<()> {
 
             com.send_struct(&config.endpoint).await?;
 
-            let mut state = ProcessState::new();
+            let mut state = ProcessState::load(&config.link_root)?;
 
             {
                 // GET DELTA

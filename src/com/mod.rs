@@ -1,4 +1,6 @@
 mod bbupcom;
+mod get;
 mod progress;
-pub use bbupcom::BbupCom;
+mod send;
+pub use bbupcom::{BbupCom, JobType, Querable};
 use progress::{ProgressReader, ProgressWriter};

@@ -49,39 +49,20 @@ async fn main() -> Result<()> {
 		// | SubCommand::OtherTypeOfSync when I'll have one
 		//	such as SubCommand::Pull
 		=> {
-            let global_config_path = home_dir
-                .join(".config")
-                .join("bbup-client")
-                .join("config.yaml");
-            if !global_config_path.exists() {
-                anyhow::bail!("Bbup client isn't setup. Try using 'bbup setup'")
-            }
-            let global_config: ClientConfig = fs::load(&global_config_path)?;
-
-            // Parse Link configs
-            let local_config_path = cwd.join(".bbup").join("config.yaml");
-            if !local_config_path.exists() {
-                anyhow::bail!(
-                    "Current directory [{:?}] isn't initialized as a backup source",
-                    cwd
-                )
-            }
-            let local_config: LinkConfig = fs::load(&local_config_path)?;
-
-            let exclude_list = ExcludeList::from(&local_config.exclude_list)?;
+			let client_config = ClientConfig::load(&home_dir)?;
+			let link_config = LinkConfig::load(&cwd)?;
 
             let connection = Connection {
-                local_port: global_config.settings.local_port,
-                server_port: global_config.settings.server_port,
-                host_name: global_config.settings.host_name.clone(),
-                host_address: global_config.settings.host_address.clone(),
+                local_port: client_config.settings.local_port,
+                server_port: client_config.settings.server_port,
+                host_name: client_config.settings.host_name.clone(),
+                host_address: client_config.settings.host_address.clone(),
             };
-
             let flags = Flags { verbose, progress };
             let config = ProcessConfig {
                 link_root: cwd.clone(),
-                exclude_list,
-                endpoint: local_config.endpoint,
+                exclude_list: ExcludeList::from(&link_config.exclude_list)?,
+                endpoint: link_config.endpoint,
                 connection,
                 flags,
             };

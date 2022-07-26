@@ -1,10 +1,11 @@
-use crate::{CommmitListExt, ServerState};
+use crate::{ArchiveConfig, ArchiveState, CommmitListExt};
 
 use bbup_rust::{
-    com::BbupCom,
+    com::{BbupCom, JobType, Querable},
     fs,
     fstree::{Change, DeltaFSNode, DeltaFSTree},
-    model::{Commit, JobType, Query},
+    hash::Hash,
+    model::Commit,
     random,
 };
 
@@ -13,7 +14,12 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use anyhow::{Context, Result};
 use tokio::{net::TcpStream, sync::Mutex};
 
-async fn pull(com: &mut BbupCom, state: &ServerState, endpoint: &Vec<String>) -> Result<()> {
+async fn pull(
+    config: &ArchiveConfig,
+    state: &ArchiveState,
+    com: &mut BbupCom,
+    endpoint: &Vec<String>,
+) -> Result<()> {
     let last_known_commit: String = com.get_struct().await.context("could not get lkc")?;
 
     // calculate update for client
@@ -22,6 +28,19 @@ async fn pull(com: &mut BbupCom, state: &ServerState, endpoint: &Vec<String>) ->
         .commit_list
         .get_update_delta(&endpoint, last_known_commit)
         .context("could not get update delta")?;
+
+    let querable: Vec<PathBuf> = delta
+        .flatten()
+        .into_iter()
+        .filter(|(_, change)| match change {
+            Change::AddFile(_, _)
+            | Change::AddSymLink(_)
+            | Change::EditFile(_, _)
+            | Change::EditSymLink(_) => true,
+            _ => false,
+        })
+        .map(|(path, _)| path)
+        .collect();
 
     // send update delta to client for pull
     com.send_struct(Commit {
@@ -34,37 +53,25 @@ async fn pull(com: &mut BbupCom, state: &ServerState, endpoint: &Vec<String>) ->
     .context("could not send update delta")?;
 
     // send all files requested by client
-    loop {
-        let query: Query = com.get_struct().await.context("could not get query")?;
-        match query {
-            Query::FileAt(path) => {
-                let mut full_path = state.archive_root.clone();
-                endpoint.into_iter().for_each(|comp| full_path.push(comp));
-                full_path.push(&path);
-
-                com.send_file_from(&full_path)
-                    .await
-                    .context(format!("could not send file at path: {full_path:?}"))?;
-            }
-            Query::SymLinkAt(path) => {
-                let mut full_path = state.archive_root.clone();
-                endpoint.into_iter().for_each(|comp| full_path.push(comp));
-                full_path.push(&path);
-
-                let symlink_endpoint = fs::read_link(&full_path)?;
-                com.send_struct(symlink_endpoint).await.context(format!(
-                    "could not send symlink endpoint at path: {full_path:?}"
-                ))?;
-            }
-            Query::Stop => break,
-        }
-    }
+    let source = {
+        let mut path = config.archive_root.clone();
+        endpoint.into_iter().for_each(|comp| path.push(comp));
+        path
+    };
+    com.supply_files(&querable, &source)
+        .await
+        .context("could not supply files to download update")?;
 
     Ok(())
 }
 
-async fn push(com: &mut BbupCom, state: &mut ServerState, endpoint: &Vec<String>) -> Result<()> {
-    fs::make_clean_dir(state.archive_root.join(".bbup").join("temp"))?;
+async fn push(
+    config: &ArchiveConfig,
+    state: &mut ArchiveState,
+    com: &mut BbupCom,
+    endpoint: &Vec<String>,
+) -> Result<()> {
+    fs::make_clean_dir(config.archive_root.join(".bbup").join("temp"))?;
 
     // Reply with green light for push
     com.send_ok()
@@ -78,40 +85,31 @@ async fn push(com: &mut BbupCom, state: &mut ServerState, endpoint: &Vec<String>
         .context("could not get delta from client")?;
 
     // Get all files that need to be uploaded from client
-    for (path, change) in local_delta.flatten() {
-        let full_path = state.archive_root.join(".bbup").join("temp").join(&path);
-        match change {
+    let queries: Vec<(Querable, PathBuf, Hash)> = local_delta
+        .flatten()
+        .into_iter()
+        .flat_map(|(path, change)| match change {
             Change::AddFile(_, hash) | Change::EditFile(_, Some(hash)) => {
-                // com.send_struct(Some(path.clone())).await?;
-
-                // TODO somehow use the hashes to check if the data arrived correctly
-                com.send_struct(Query::FileAt(path.clone())).await?;
-                com.get_file_to(&full_path, &hash)
-                    .await
-                    .context(format!("could not get file at path: {full_path:?}"))?;
+                vec![(Querable::File, path, hash)]
             }
-            Change::AddSymLink(_) | Change::EditSymLink(_) => {
-                // TODO somehow use the hashes to check if the data arrived correctly
-                com.send_struct(Query::SymLinkAt(path.clone())).await?;
-                let endpoint: PathBuf = com.get_struct().await?;
-                fs::create_symlink(full_path, endpoint)?;
+            Change::AddSymLink(hash) | Change::EditSymLink(hash) => {
+                vec![(Querable::SymLink, path, hash)]
             }
-            _ => {}
-        }
-    }
-    // send stop
-    com.send_struct(Query::Stop)
+            _ => vec![],
+        })
+        .collect();
+    com.query_files(queries, &config.archive_root.join(".bbup").join("temp"))
         .await
-        .context("could not send query stop to signal end of file transfer")?;
+        .context("could not query files to apply push")?;
 
     // TODO if fail, send error message to the server
     let updated_archive_tree = state.archive_tree.try_apply_delta(&local_delta)?;
 
     for (path, change) in local_delta.flatten() {
-        let mut to_path = state.archive_root.clone();
+        let mut to_path = config.archive_root.clone();
         endpoint.into_iter().for_each(|comp| to_path.push(comp));
         to_path.push(&path);
-        let from_temp_path = state.archive_root.join(".bbup").join("temp").join(&path);
+        let from_temp_path = config.archive_root.join(".bbup").join("temp").join(&path);
 
         let errmsg = |msg: &str| -> String {
             format!(
@@ -187,7 +185,9 @@ async fn push(com: &mut BbupCom, state: &mut ServerState, endpoint: &Vec<String>
         delta: local_delta.clone(),
     });
     state.archive_tree = updated_archive_tree;
-    state.save().context("could not save push update")?;
+    state
+        .save(&config.archive_root)
+        .context("could not save push update")?;
 
     com.send_struct(commit_id)
         .await
@@ -196,8 +196,9 @@ async fn push(com: &mut BbupCom, state: &mut ServerState, endpoint: &Vec<String>
 }
 
 pub async fn process_connection(
+    config: ArchiveConfig,
     socket: TcpStream,
-    state: Arc<Mutex<ServerState>>,
+    state: Arc<Mutex<ArchiveState>>,
     progress: bool,
 ) -> Result<()> {
     let mut com = BbupCom::from(socket, progress);
@@ -232,10 +233,10 @@ pub async fn process_connection(
                     break;
                 }
                 JobType::Pull => {
-                    pull(&mut com, &state, &endpoint).await?;
+                    pull(&config, &state, &mut com, &endpoint).await?;
                 }
                 JobType::Push => {
-                    push(&mut com, &mut state, &endpoint).await?;
+                    push(&config, &mut state, &mut com, &endpoint).await?;
                 }
             }
         }
