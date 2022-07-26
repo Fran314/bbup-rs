@@ -1,5 +1,5 @@
 use bbup_rust::fs;
-use bbup_rust::fstree::{DeltaFSTree, FSTree};
+use bbup_rust::fstree::{Delta, FSTree};
 use bbup_rust::model::Commit;
 
 use std::path::PathBuf;
@@ -10,11 +10,11 @@ use anyhow::{Context, Result};
 
 pub type CommitList = Vec<Commit>;
 pub trait CommmitListExt {
-    fn get_update_delta(&self, endpoint: &Vec<String>, lkc: String) -> Result<DeltaFSTree>;
+    fn get_update_delta(&self, endpoint: &Vec<String>, lkc: String) -> Result<Delta>;
 }
 impl CommmitListExt for CommitList {
-    fn get_update_delta(&self, endpoint: &Vec<String>, lkc: String) -> Result<DeltaFSTree> {
-        let mut output: DeltaFSTree = DeltaFSTree::empty();
+    fn get_update_delta(&self, endpoint: &Vec<String>, lkc: String) -> Result<Delta> {
+        let mut output: Delta = Delta::empty();
         for commit in self.into_iter().rev() {
             if commit.commit_id.eq(&lkc) {
                 break;

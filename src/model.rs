@@ -1,5 +1,5 @@
 use crate::fs::PathExt;
-use crate::fstree::DeltaFSTree;
+use crate::fstree::Delta;
 
 use serde::{Deserialize, Serialize};
 
@@ -9,13 +9,13 @@ use thiserror::Error;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Commit {
     pub commit_id: String,
-    pub delta: DeltaFSTree,
+    pub delta: Delta,
 }
 impl Commit {
     pub fn base_commit() -> Commit {
         Commit {
             commit_id: String::from("0").repeat(64),
-            delta: DeltaFSTree::empty(),
+            delta: Delta::empty(),
         }
     }
 }

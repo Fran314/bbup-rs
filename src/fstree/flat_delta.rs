@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{fs::Metadata, hash::Hash};
 
-use super::{DeltaFSNode, DeltaFSTree, FSNode, FSTree};
+use super::{Delta, DeltaNode, FSNode, FSTree};
 
 pub enum Change {
     AddDir(Metadata),
@@ -50,8 +50,8 @@ fn flatten_remove_tree_rec(FSTree(tree): &FSTree, rel_path: PathBuf) -> Vec<(Pat
     }
     flat_delta
 }
-fn flatten_rec(DeltaFSTree(tree): &DeltaFSTree, rel_path: PathBuf) -> Vec<(PathBuf, Change)> {
-    use DeltaFSNode as DN;
+fn flatten_rec(Delta(tree): &Delta, rel_path: PathBuf) -> Vec<(PathBuf, Change)> {
+    use DeltaNode as DN;
     use FSNode as FN;
     let mut flat_delta: Vec<(PathBuf, Change)> = Vec::new();
     for (name, child) in tree {
@@ -128,7 +128,7 @@ fn flatten_rec(DeltaFSTree(tree): &DeltaFSTree, rel_path: PathBuf) -> Vec<(PathB
     }
     flat_delta
 }
-impl DeltaFSTree {
+impl Delta {
     pub fn flatten(&self) -> Vec<(PathBuf, Change)> {
         flatten_rec(self, PathBuf::from(""))
     }

@@ -56,66 +56,66 @@ fn push_unmerg<S: std::string::ToString>(
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub enum DeltaFSNode {
+pub enum DeltaNode {
     Leaf(Option<FSNode>, Option<FSNode>),
-    Branch(Option<(Metadata, Metadata)>, DeltaFSTree),
+    Branch(Option<(Metadata, Metadata)>, Delta),
 }
-impl DeltaFSNode {
-    fn remove(pre: &FSNode) -> DeltaFSNode {
-        DeltaFSNode::Leaf(Some(pre.clone()), None)
+impl DeltaNode {
+    fn remove(pre: &FSNode) -> DeltaNode {
+        DeltaNode::Leaf(Some(pre.clone()), None)
     }
-    fn add(post: &FSNode) -> DeltaFSNode {
-        DeltaFSNode::Leaf(None, Some(post.clone()))
+    fn add(post: &FSNode) -> DeltaNode {
+        DeltaNode::Leaf(None, Some(post.clone()))
     }
-    fn edit(pre: &FSNode, post: &FSNode) -> Option<DeltaFSNode> {
+    fn edit(pre: &FSNode, post: &FSNode) -> Option<DeltaNode> {
         if pre != post {
-            Some(DeltaFSNode::Leaf(Some(pre.clone()), Some(post.clone())))
+            Some(DeltaNode::Leaf(Some(pre.clone()), Some(post.clone())))
         } else {
             None
         }
     }
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct DeltaFSTree(pub HashMap<String, DeltaFSNode>);
-impl DeltaFSTree {
-    pub fn empty() -> DeltaFSTree {
-        DeltaFSTree(HashMap::new())
+pub struct Delta(pub HashMap<String, DeltaNode>);
+impl Delta {
+    pub fn empty() -> Delta {
+        Delta(HashMap::new())
     }
     pub fn is_empty(&self) -> bool {
-        let DeltaFSTree(hashmap) = self;
+        let Delta(hashmap) = self;
         hashmap.len() == 0
     }
-    pub fn get_subdelta_tree_copy(&self, path: &Vec<String>) -> Option<DeltaFSTree> {
-        let DeltaFSTree(tree) = self;
+    pub fn get_subdelta_tree_copy(&self, path: &Vec<String>) -> Option<Delta> {
+        let Delta(tree) = self;
         if path.len() == 0 {
             return Some(self.clone());
         }
         match tree.get(&path[0]) {
             None => None,
-            Some(DeltaFSNode::Branch(_, subdelta)) => {
+            Some(DeltaNode::Branch(_, subdelta)) => {
                 subdelta.get_subdelta_tree_copy(&path[1..].to_vec())
             }
-            Some(DeltaFSNode::Leaf(None, Some(FSNode::Dir(_, _, FSTree(subtree))))) => {
-                let mut subdelta: HashMap<String, DeltaFSNode> = HashMap::new();
+            Some(DeltaNode::Leaf(None, Some(FSNode::Dir(_, _, FSTree(subtree))))) => {
+                let mut subdelta: HashMap<String, DeltaNode> = HashMap::new();
                 for (node, child) in subtree {
-                    subdelta.insert(node.clone(), DeltaFSNode::Leaf(None, Some(child.clone())));
+                    subdelta.insert(node.clone(), DeltaNode::Leaf(None, Some(child.clone())));
                 }
-                DeltaFSTree(subdelta).get_subdelta_tree_copy(&path[1..].to_vec())
+                Delta(subdelta).get_subdelta_tree_copy(&path[1..].to_vec())
             }
-            Some(DeltaFSNode::Leaf(Some(FSNode::Dir(_, _, FSTree(subtree))), None)) => {
-                let mut subdelta: HashMap<String, DeltaFSNode> = HashMap::new();
+            Some(DeltaNode::Leaf(Some(FSNode::Dir(_, _, FSTree(subtree))), None)) => {
+                let mut subdelta: HashMap<String, DeltaNode> = HashMap::new();
                 for (node, child) in subtree {
-                    subdelta.insert(node.clone(), DeltaFSNode::Leaf(Some(child.clone()), None));
+                    subdelta.insert(node.clone(), DeltaNode::Leaf(Some(child.clone()), None));
                 }
-                DeltaFSTree(subdelta).get_subdelta_tree_copy(&path[1..].to_vec())
+                Delta(subdelta).get_subdelta_tree_copy(&path[1..].to_vec())
             }
-            Some(DeltaFSNode::Leaf(_, _)) => None,
+            Some(DeltaNode::Leaf(_, _)) => None,
         }
     }
     pub fn shake(&mut self) {
-        use DeltaFSNode::*;
+        use DeltaNode::*;
 
-        let DeltaFSTree(tree) = self;
+        let Delta(tree) = self;
 
         for entry in tree.values_mut() {
             match entry {
@@ -143,9 +143,9 @@ impl DeltaFSTree {
         });
     }
     pub fn is_shaken(&self) -> bool {
-        use DeltaFSNode::*;
+        use DeltaNode::*;
 
-        let DeltaFSTree(tree) = self;
+        let Delta(tree) = self;
 
         for entry in tree.values() {
             match entry {
@@ -172,10 +172,10 @@ impl DeltaFSTree {
         self.filter_out_rec(&PathBuf::from("."), exclude_list);
     }
     fn filter_out_rec(&mut self, rel_path: &PathBuf, exclude_list: &ExcludeList) {
-        let DeltaFSTree(tree) = self;
+        let Delta(tree) = self;
         for (name, child) in tree {
             match child {
-                DeltaFSNode::Leaf(pre, post) => {
+                DeltaNode::Leaf(pre, post) => {
                     //--- PRE ---//
                     // TODO change this when let statement aren't unstable anymore
                     //	outside of if
@@ -204,10 +204,10 @@ impl DeltaFSTree {
                     }
                     //--- ---//
                 }
-                DeltaFSNode::Branch(optm, subdelta) => {
+                DeltaNode::Branch(optm, subdelta) => {
                     if exclude_list.should_exclude(rel_path.join(name), true) {
                         *optm = None;
-                        *subdelta = DeltaFSTree::empty();
+                        *subdelta = Delta::empty();
                     } else {
                         subdelta.filter_out_rec(&rel_path.join(name), exclude_list);
                     }
@@ -217,11 +217,11 @@ impl DeltaFSTree {
         self.shake();
     }
 
-    pub fn merge_prec(&mut self, DeltaFSTree(prec): &DeltaFSTree) -> Result<(), UnmergeableDelta> {
+    pub fn merge_prec(&mut self, Delta(prec): &Delta) -> Result<(), UnmergeableDelta> {
         use std::collections::hash_map::Entry::*;
-        use DeltaFSNode::*;
+        use DeltaNode::*;
 
-        let DeltaFSTree(succ) = self;
+        let Delta(succ) = self;
         for (name, child_prec) in prec {
             match succ.entry(name.clone()) {
                 Vacant(entry) => {
@@ -296,17 +296,17 @@ impl DeltaFSTree {
     }
 }
 
-pub fn get_delta(FSTree(last_known_fstree): &FSTree, FSTree(new_tree): &FSTree) -> DeltaFSTree {
+pub fn get_delta(FSTree(last_known_fstree): &FSTree, FSTree(new_tree): &FSTree) -> Delta {
     use FSNode::*;
-    let mut delta: HashMap<String, DeltaFSNode> = HashMap::new();
+    let mut delta: HashMap<String, DeltaNode> = HashMap::new();
 
     for (key, ior) in union(last_known_fstree, new_tree) {
         match ior {
             IOr::Left(child0) => {
-                delta.insert(key, DeltaFSNode::remove(child0));
+                delta.insert(key, DeltaNode::remove(child0));
             }
             IOr::Right(child1) => {
-                delta.insert(key, DeltaFSNode::add(child1));
+                delta.insert(key, DeltaNode::add(child1));
             }
             IOr::Both(child0, child1) => {
                 if let (Dir(m0, h0, subtree0), Dir(m1, h1, subtree1)) = (child0, child1) {
@@ -317,12 +317,12 @@ pub fn get_delta(FSTree(last_known_fstree): &FSTree, FSTree(new_tree): &FSTree) 
                         };
                         let delta_subtree = match h0.ne(h1) {
                             true => get_delta(subtree0, subtree1),
-                            false => DeltaFSTree::empty(),
+                            false => Delta::empty(),
                         };
-                        delta.insert(key, DeltaFSNode::Branch(delta_metadata, delta_subtree));
+                        delta.insert(key, DeltaNode::Branch(delta_metadata, delta_subtree));
                     }
                 } else {
-                    if let Some(node) = DeltaFSNode::edit(child0, child1) {
+                    if let Some(node) = DeltaNode::edit(child0, child1) {
                         delta.insert(key, node);
                     }
                 }
@@ -330,16 +330,13 @@ pub fn get_delta(FSTree(last_known_fstree): &FSTree, FSTree(new_tree): &FSTree) 
         }
     }
 
-    DeltaFSTree(delta)
+    Delta(delta)
 }
 
 impl FSTree {
-    pub fn try_apply_delta(
-        &self,
-        DeltaFSTree(deltatree): &DeltaFSTree,
-    ) -> Result<FSTree, InapplicableDelta> {
+    pub fn try_apply_delta(&self, Delta(deltatree): &Delta) -> Result<FSTree, InapplicableDelta> {
         use std::collections::hash_map::Entry::*;
-        use DeltaFSNode::*;
+        use DeltaNode::*;
         let FSTree(mut fstree) = self.clone();
         for (name, child) in deltatree {
             match child {
@@ -461,12 +458,9 @@ impl FSTree {
         Ok(FSTree(fstree))
     }
 
-    pub fn try_undo_delta(
-        &self,
-        DeltaFSTree(deltatree): &DeltaFSTree,
-    ) -> Result<FSTree, InapplicableDelta> {
+    pub fn try_undo_delta(&self, Delta(deltatree): &Delta) -> Result<FSTree, InapplicableDelta> {
         use std::collections::hash_map::Entry::*;
-        use DeltaFSNode::*;
+        use DeltaNode::*;
         let FSTree(mut fstree) = self.clone();
         for (name, child) in deltatree {
             match child {

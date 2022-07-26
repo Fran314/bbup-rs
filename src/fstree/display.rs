@@ -1,4 +1,4 @@
-use super::{ConflictNode, ConflictTree, DeltaFSNode, DeltaFSTree, FSNode, FSTree, IOr};
+use super::{ConflictNode, Conflicts, Delta, DeltaNode, FSNode, FSTree, IOr};
 
 use colored::Color;
 use colored::Colorize;
@@ -99,13 +99,10 @@ impl std::fmt::Display for FSTree {
     }
 }
 
-fn deltafstree_to_stringtree<S: std::string::ToString>(
-    text: S,
-    DeltaFSTree(tree): &DeltaFSTree,
-) -> StringTree {
-    use DeltaFSNode::*;
+fn deltafstree_to_stringtree<S: std::string::ToString>(text: S, Delta(tree): &Delta) -> StringTree {
+    use DeltaNode::*;
     use FSNode::*;
-    let mut children = tree.into_iter().collect::<Vec<(&String, &DeltaFSNode)>>();
+    let mut children = tree.into_iter().collect::<Vec<(&String, &DeltaNode)>>();
     children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
 
     StringTree {
@@ -118,7 +115,7 @@ fn deltafstree_to_stringtree<S: std::string::ToString>(
                         Some(_) => "yellow",
                         None => "",
                     };
-                    let DeltaFSTree(subtree) = subdelta;
+                    let Delta(subtree) = subdelta;
                     if subtree.len() > 0 {
                         vec![deltafstree_to_stringtree(
                             typed("d", styled_dir(name, color)),
@@ -174,7 +171,7 @@ fn deltafstree_to_stringtree<S: std::string::ToString>(
     }
 }
 
-impl std::fmt::Display for DeltaFSTree {
+impl std::fmt::Display for Delta {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", deltafstree_to_stringtree(".", self))
     }
@@ -194,24 +191,24 @@ fn format_leaf_state(val: &Option<FSNode>) -> String {
         None => String::from("None"),
     }
 }
-fn format_delta_leaf(val: &DeltaFSNode) -> String {
+fn format_delta_leaf(val: &DeltaNode) -> String {
     match val {
-        DeltaFSNode::Leaf(pre0, post0) => {
+        DeltaNode::Leaf(pre0, post0) => {
             format!(
                 "{} -> {}",
                 format_leaf_state(pre0),
                 format_leaf_state(post0)
             )
         }
-        DeltaFSNode::Branch(_, _) => String::from("Dir [inner modification]"),
+        DeltaNode::Branch(_, _) => String::from("Dir [inner modification]"),
     }
 }
 fn conflicts_to_stringtree<S: std::string::ToString>(
     text: S,
-    ConflictTree(tree): &ConflictTree,
+    Conflicts(tree): &Conflicts,
 ) -> StringTree {
     use ConflictNode as CN;
-    use DeltaFSNode as DN;
+    use DeltaNode as DN;
     use FSNode as FN;
 
     let mut children = tree.into_iter().collect::<Vec<(&String, &ConflictNode)>>();
@@ -261,7 +258,7 @@ fn conflicts_to_stringtree<S: std::string::ToString>(
     }
 }
 
-impl std::fmt::Display for ConflictTree {
+impl std::fmt::Display for Conflicts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", conflicts_to_stringtree(".", self))
     }

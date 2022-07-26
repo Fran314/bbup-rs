@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use bbup_rust::{
     fs,
-    fstree::{DeltaFSTree, FSTree},
+    fstree::{Delta, FSTree},
     model::{Commit, ExcludeList},
 };
 
@@ -46,7 +46,7 @@ pub struct ProcessState {
     pub last_known_commit: String,
     pub last_known_fstree: FSTree,
     pub new_tree: Option<FSTree>,
-    pub local_delta: Option<DeltaFSTree>,
+    pub local_delta: Option<Delta>,
     pub update: Option<Commit>,
 }
 impl ProcessState {

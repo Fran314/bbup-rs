@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use crate::fs::Metadata;
 
-use super::{intersect, DeltaFSNode, DeltaFSTree, FSNode, FSTree, IOr};
+use super::{intersect, Delta, DeltaNode, FSNode, FSTree, IOr};
 
 pub enum ConflictNode {
-    Leaf(DeltaFSNode, DeltaFSNode),
-    Branch(IOr<((Metadata, Metadata), (Metadata, Metadata)), ConflictTree>),
+    Leaf(DeltaNode, DeltaNode),
+    Branch(IOr<((Metadata, Metadata), (Metadata, Metadata)), Conflicts>),
 }
-pub struct ConflictTree(pub HashMap<String, ConflictNode>);
+pub struct Conflicts(pub HashMap<String, ConflictNode>);
 
 fn compatilble_added_subtrees(FSTree(subtree0): &FSTree, FSTree(subtree1): &FSTree) -> bool {
     for (_, (left, right)) in intersect(subtree0, subtree1) {
@@ -28,9 +28,9 @@ fn compatilble_added_subtrees(FSTree(subtree0): &FSTree, FSTree(subtree1): &FSTr
     true
 }
 
-pub fn check_for_conflicts(delta0: &DeltaFSTree, delta1: &DeltaFSTree) -> Option<ConflictTree> {
+pub fn check_for_conflicts(delta0: &Delta, delta1: &Delta) -> Option<Conflicts> {
     use ConflictNode as CN;
-    use DeltaFSNode as DFS;
+    use DeltaNode as DN;
     use FSNode::*;
 
     // // TODO eeeeeeeeeeeeeh I'm not really a big fan of having to do these checks
@@ -43,13 +43,13 @@ pub fn check_for_conflicts(delta0: &DeltaFSTree, delta1: &DeltaFSTree) -> Option
     //     panic!("Second argument was not shaken");
     // }
 
-    let DeltaFSTree(tree0) = delta0;
-    let DeltaFSTree(tree1) = delta1;
+    let Delta(tree0) = delta0;
+    let Delta(tree1) = delta1;
     let mut conflicts: HashMap<String, ConflictNode> = HashMap::new();
     for (name, (left, right)) in intersect(tree0, tree1) {
         let conflict: Option<ConflictNode> = match (left, right) {
             (left, right) if left == right => None,
-            (DFS::Branch(optm0, subdelta0), DFS::Branch(optm1, subdelta1)) => {
+            (DN::Branch(optm0, subdelta0), DN::Branch(optm1, subdelta1)) => {
                 let subconflicts = check_for_conflicts(subdelta0, subdelta1);
                 let mconflict = match (optm0, optm1) {
                     (Some(m0), Some(m1)) if m0 != m1 => Some((m0.clone(), m1.clone())),
@@ -62,10 +62,10 @@ pub fn check_for_conflicts(delta0: &DeltaFSTree, delta1: &DeltaFSTree) -> Option
                     None
                 }
             }
-            (DFS::Leaf(pre0, _), DFS::Leaf(pre1, _)) if pre0 != pre1 => {
+            (DN::Leaf(pre0, _), DN::Leaf(pre1, _)) if pre0 != pre1 => {
                 Some(CN::Leaf(left.clone(), right.clone()))
             }
-            (DFS::Leaf(_, Some(Dir(_, _, subtree0))), DFS::Leaf(_, Some(Dir(_, _, subtree1)))) => {
+            (DN::Leaf(_, Some(Dir(_, _, subtree0))), DN::Leaf(_, Some(Dir(_, _, subtree1)))) => {
                 if !compatilble_added_subtrees(subtree0, subtree1) {
                     Some(CN::Leaf(left.clone(), right.clone()))
                 } else {
@@ -103,7 +103,7 @@ pub fn check_for_conflicts(delta0: &DeltaFSTree, delta1: &DeltaFSTree) -> Option
     }
 
     if conflicts.len() > 0 {
-        Some(ConflictTree(conflicts))
+        Some(Conflicts(conflicts))
     } else {
         None
     }

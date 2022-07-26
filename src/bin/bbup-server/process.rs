@@ -3,7 +3,7 @@ use crate::{ArchiveConfig, ArchiveState, CommmitListExt};
 use bbup_rust::{
     com::{BbupCom, JobType, Querable},
     fs,
-    fstree::{Change, DeltaFSNode, DeltaFSTree},
+    fstree::{Change, Delta, DeltaNode},
     hash::Hash,
     model::Commit,
     random,
@@ -79,7 +79,7 @@ async fn push(
         .context("could not send greenlight for push")?;
 
     // Get list of changes from client
-    let mut local_delta: DeltaFSTree = com
+    let mut local_delta: Delta = com
         .get_struct()
         .await
         .context("could not get delta from client")?;
@@ -175,9 +175,9 @@ async fn push(
     }
 
     endpoint.into_iter().rev().for_each(|comp| {
-        let node = DeltaFSNode::Branch(None, local_delta.clone());
+        let node = DeltaNode::Branch(None, local_delta.clone());
         let tree = HashMap::from([(comp.clone(), node)]);
-        local_delta = DeltaFSTree(tree)
+        local_delta = Delta(tree)
     });
     let commit_id = random::random_hex(64);
     state.commit_list.push(Commit {
