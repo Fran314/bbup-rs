@@ -42,7 +42,7 @@ checksum = "dea908e7347a8c64e378c17e30ef880ad73e3b4498346b055c2c00ea342f3179"
 
 [[package]]
 name = "bbup-rust"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64ct",
