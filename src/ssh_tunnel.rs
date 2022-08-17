@@ -1,5 +1,10 @@
 use std::io::BufRead;
 
+// TODO add custom error handling
+
+// TODO redo connection: probably -N -v instead of -tt
+//	and find a way to check if connected
+
 pub struct SshTunnel {
     process: std::process::Child,
     ready: bool,

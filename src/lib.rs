@@ -1,8 +1,9 @@
 pub mod com;
 pub mod fs;
-pub mod hashtree;
-pub mod io;
+pub mod fstree;
+pub mod hash;
+pub mod input;
+pub mod ior;
+pub mod model;
 pub mod random;
 pub mod ssh_tunnel;
-pub mod structs;
-pub mod utils;
