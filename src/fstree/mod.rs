@@ -1,12 +1,10 @@
-mod conflicts;
+mod actions;
 mod delta;
 mod display;
-mod flat_delta;
-mod ior;
 mod tree;
-pub use conflicts::{check_for_conflicts, ConflictNode, Conflicts};
+pub use actions::{
+    get_actions_or_conflicts, Action, Actions, ConflictNode, Conflicts, Queries, Query,
+};
 pub use delta::{get_delta, Delta, DeltaError, DeltaNode};
-pub use flat_delta::Change;
-pub use ior::{intersect, union, IOr};
 use tree::hash_tree;
 pub use tree::{generate_fstree, FSNode, FSTree, FSTreeError};

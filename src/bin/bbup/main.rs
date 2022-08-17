@@ -43,8 +43,8 @@ async fn main() -> Result<()> {
     let cwd = fs::cwd().context("could not resolve current working directory")?;
 
     match args.cmd {
-        SubCommand::Setup => return setup::setup(home_dir),
-        SubCommand::Init => return init::init(cwd),
+        SubCommand::Setup => setup::setup(&home_dir),
+        SubCommand::Init => init::init(&cwd),
         SubCommand::Sync { verbose, progress } 
 		// | SubCommand::OtherTypeOfSync when I'll have one
 		//	such as SubCommand::Pull
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
                 flags,
             };
 
-            return sync::process_link(config).await;
+            sync::process_link(config).await
         }
     }
 }

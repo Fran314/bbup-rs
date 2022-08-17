@@ -1,13 +1,11 @@
-use std::path::{Path, PathBuf};
-
 use serde::Serialize;
 
 use super::{
-    bbupcom::{error_context, generr, inerr, Error, Querable, Query},
+    bbupcom::{error_context, generr, inerr, Error, Query, Queryable},
     BbupCom, ProgressWriter,
 };
 
-use crate::fs::{self, OsStrExt};
+use crate::fs::{self, AbstPath};
 
 use tokio::io::AsyncWriteExt;
 
@@ -82,10 +80,9 @@ impl BbupCom {
         Ok(())
     }
 
-    pub async fn send_file_from<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Error> {
-        let path = path.as_ref().to_path_buf();
-        let errctx = error_context(format!("could not send file at path {:?}", path));
-        let mut file = fs::async_read_file(&path)
+    pub async fn send_file_from(&mut self, path: &AbstPath) -> Result<(), Error> {
+        let errctx = error_context(format!("could not send file at path {path}"));
+        let mut file = fs::async_read_file(path)
             .await
             .map_err(inerr(errctx("async read the file")))?;
 
@@ -103,7 +100,7 @@ impl BbupCom {
 
         if self.progress {
             let name = match path.file_name() {
-                Some(val) => val.force_to_string(),
+                Some(val) => val,
                 None => String::from("[invalid filename]"),
             };
             let mut pw = ProgressWriter::new(&mut self.tx, len, &name);
@@ -123,8 +120,8 @@ impl BbupCom {
 
     pub async fn supply_files(
         &mut self,
-        querable: &Vec<PathBuf>,
-        source: &PathBuf,
+        queryable: &[AbstPath],
+        source: &AbstPath,
     ) -> Result<(), Error> {
         let errmsg = String::from("could not supply files and symlinks");
         let errctx = error_context(errmsg.clone());
@@ -135,38 +132,38 @@ impl BbupCom {
                 .map_err(inerr(errctx("get query".to_string())))?;
             match query {
                 Query::Object(qb, rel_path) => {
-                    if !querable.into_iter().any(|qp| qp.eq(&rel_path)) {
+                    if !queryable.iter().any(|qp| qp.eq(&rel_path)) {
                         self.send_error(1, "quered file at path not allowed")
                             .await
                             .map_err(inerr(errctx(format!(
-                                "propagate not allowed path at {rel_path:?}"
+                                "propagate not allowed path at {rel_path}"
                             ))))?;
                         return Err(generr(
                             errmsg,
                             format!(
-                                "other party tried to query a non querable path at {rel_path:?}"
+                                "other party tried to query a non queryable path at {rel_path}"
                             ),
                         ));
                     }
 
                     match qb {
-                        Querable::File => {
-                            let path = source.join(&rel_path);
+                        Queryable::File => {
+                            let path = source.append(&rel_path);
                             self.send_file_from(&path)
                                 .await
                                 .map_err(inerr(errctx(format!(
-                                    "send quered file at path {path:?}"
+                                    "send quered file at path {path}"
                                 ))))?;
                         }
-                        Querable::SymLink => {
-                            let path = source.join(&rel_path);
+                        Queryable::SymLink => {
+                            let path = source.append(&rel_path);
                             let symlink_endpoint = fs::read_link(&path).map_err(inerr(errctx(
-                                format!("get endpoint of quered symlink at path {path:?}"),
+                                format!("get endpoint of quered symlink at path {path}"),
                             )))?;
                             self.send_struct(symlink_endpoint)
                                 .await
                                 .map_err(inerr(errctx(format!(
-                                    "send endpoint of quered symlink at path {path:?}"
+                                    "send endpoint of quered symlink at path {path}"
                                 ))))?;
                         }
                     }

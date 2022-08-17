@@ -28,7 +28,7 @@ pub struct ProgressWriter<'a, W: AsyncWrite + Unpin + Sync + Send> {
     pub writer: &'a mut W,
 }
 impl<'a, W: AsyncWrite + Unpin + Sync + Send> ProgressWriter<'a, W> {
-    pub fn new(writer: &'a mut W, len: u64, name: &String) -> ProgressWriter<'a, W> {
+    pub fn new(writer: &'a mut W, len: u64, name: &str) -> ProgressWriter<'a, W> {
         let pb = ProgressBar::new(len);
         pb.set_style(pb_style_from("upload", name));
 
@@ -88,7 +88,7 @@ pub struct ProgressReader<'a, W: AsyncRead + Unpin + Sync + Send> {
     pub reader: &'a mut W,
 }
 impl<'a, R: AsyncRead + Unpin + Sync + Send> ProgressReader<'a, R> {
-    pub fn new(reader: &'a mut R, len: u64, name: &String) -> ProgressReader<'a, R> {
+    pub fn new(reader: &'a mut R, len: u64, name: &str) -> ProgressReader<'a, R> {
         let pb = ProgressBar::new(len);
         pb.set_style(pb_style_from("download", name));
 

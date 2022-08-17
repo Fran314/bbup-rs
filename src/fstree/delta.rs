@@ -1,17 +1,15 @@
-use super::{hash_tree, union, FSNode, FSTree, IOr};
+use super::{hash_tree, FSNode, FSTree};
+use crate::fs::AbstPath;
+use crate::ior::{union, IOr};
 
-use crate::{fs::Metadata, model::ExcludeList};
+use crate::{fs::Mtime, model::ExcludeList};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum DeltaError {
-    #[error("File System Tree Delta Error: unable to apply delta to tree")]
-    InapplicableDelta,
-
     #[error("File System Tree Delta Error: inner error occurred\nSource: {src}\nError: {err}")]
     InnerError { src: String, err: String },
 
@@ -58,7 +56,7 @@ fn push_unmerg<S: std::string::ToString>(
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum DeltaNode {
     Leaf(Option<FSNode>, Option<FSNode>),
-    Branch(Option<(Metadata, Metadata)>, Delta),
+    Branch(Option<(Mtime, Mtime)>, Delta),
 }
 impl DeltaNode {
     fn remove(pre: &FSNode) -> DeltaNode {
@@ -67,12 +65,8 @@ impl DeltaNode {
     fn add(post: &FSNode) -> DeltaNode {
         DeltaNode::Leaf(None, Some(post.clone()))
     }
-    fn edit(pre: &FSNode, post: &FSNode) -> Option<DeltaNode> {
-        if pre != post {
-            Some(DeltaNode::Leaf(Some(pre.clone()), Some(post.clone())))
-        } else {
-            None
-        }
+    fn edit(pre: &FSNode, post: &FSNode) -> DeltaNode {
+        DeltaNode::Leaf(Some(pre.clone()), Some(post.clone()))
     }
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -85,31 +79,52 @@ impl Delta {
         let Delta(hashmap) = self;
         hashmap.len() == 0
     }
-    pub fn get_subdelta_tree_copy(&self, path: &Vec<String>) -> Option<Delta> {
-        let Delta(tree) = self;
-        if path.len() == 0 {
-            return Some(self.clone());
-        }
-        match tree.get(&path[0]) {
-            None => None,
-            Some(DeltaNode::Branch(_, subdelta)) => {
-                subdelta.get_subdelta_tree_copy(&path[1..].to_vec())
-            }
-            Some(DeltaNode::Leaf(None, Some(FSNode::Dir(_, _, FSTree(subtree))))) => {
-                let mut subdelta: HashMap<String, DeltaNode> = HashMap::new();
-                for (node, child) in subtree {
-                    subdelta.insert(node.clone(), DeltaNode::Leaf(None, Some(child.clone())));
+
+    /// Given a delta (self) and a path of a possible subtree, tries to get what
+    /// the delta changed on the subtree at the specified path, assuming that
+    /// the specified path is an actual subtree and not just a leaf.
+    ///
+    /// This results in:
+    /// - the total delta, if the path is empty (hence the "subtree" was the
+    ///     whole tree)
+    /// - nothing, if the subtree was untouched by the delta (ie if the
+    ///     subdelta for the specified subtree doesn't exist)
+    /// - nothing, if the specified subtree was actually a leaf
+    /// - the subdelta, translated in a subdeltatree if it was a subdeltaleaf
+    ///
+    /// This function assumes that the given delta is shaken, and will not work
+    /// as expected otherwise
+    pub fn get_subdelta_tree_copy(&self, path: &AbstPath) -> Option<Delta> {
+        match path.get(0) {
+            None => Some(self.clone()),
+            Some(name) => {
+                let Delta(tree) = self;
+                match tree.get(name) {
+                    None => None,
+                    Some(DeltaNode::Branch(_, subdelta)) => {
+                        subdelta.get_subdelta_tree_copy(&path.strip_first())
+                    }
+                    Some(DeltaNode::Leaf(None, Some(FSNode::Dir(_, _, FSTree(subtree))))) => {
+                        let mut subdelta: HashMap<String, DeltaNode> = HashMap::new();
+                        for (node, child) in subtree {
+                            subdelta
+                                .insert(node.clone(), DeltaNode::Leaf(None, Some(child.clone())));
+                        }
+                        Delta(subdelta).get_subdelta_tree_copy(&path.strip_first())
+                    }
+                    Some(DeltaNode::Leaf(Some(FSNode::Dir(_, _, FSTree(subtree))), None)) => {
+                        let mut subdelta: HashMap<String, DeltaNode> = HashMap::new();
+                        for (node, child) in subtree {
+                            subdelta
+                                .insert(node.clone(), DeltaNode::Leaf(Some(child.clone()), None));
+                        }
+                        Delta(subdelta).get_subdelta_tree_copy(&path.strip_first())
+                    }
+
+                    // I think this assumes that the delta is shaken
+                    Some(DeltaNode::Leaf(_, _)) => None,
                 }
-                Delta(subdelta).get_subdelta_tree_copy(&path[1..].to_vec())
             }
-            Some(DeltaNode::Leaf(Some(FSNode::Dir(_, _, FSTree(subtree))), None)) => {
-                let mut subdelta: HashMap<String, DeltaNode> = HashMap::new();
-                for (node, child) in subtree {
-                    subdelta.insert(node.clone(), DeltaNode::Leaf(Some(child.clone()), None));
-                }
-                Delta(subdelta).get_subdelta_tree_copy(&path[1..].to_vec())
-            }
-            Some(DeltaNode::Leaf(_, _)) => None,
         }
     }
     pub fn shake(&mut self) {
@@ -120,26 +135,19 @@ impl Delta {
         for entry in tree.values_mut() {
             match entry {
                 Leaf(Some(FSNode::Dir(m0, _, subtree0)), Some(FSNode::Dir(m1, _, subtree1))) => {
-                    let optm = match m0.ne(&m1) {
+                    let optm = match m0 != m1 {
                         true => Some((m0.clone(), m1.clone())),
                         false => None,
                     };
                     *entry = Branch(optm, get_delta(subtree0, subtree1));
                 }
-                Branch(optm, subdelta) => {
-                    if let Some((old, new)) = optm {
-                        if old == new {
-                            *optm = None;
-                        }
-                    }
-                    subdelta.shake()
-                }
+                Branch(_, subdelta) => subdelta.shake(),
                 _ => {}
             }
         }
         tree.retain(|_, child| match child {
             Leaf(pre, post) => pre != post,
-            Branch(metadata, subdelta) => metadata.is_some() || (!subdelta.is_empty()),
+            Branch(optm, subdelta) => optm.is_some() || (!subdelta.is_empty()),
         });
     }
     pub fn is_shaken(&self) -> bool {
@@ -169,47 +177,35 @@ impl Delta {
 
     // TODO maybe these should return something about what they have filtered out?
     pub fn filter_out(&mut self, exclude_list: &ExcludeList) {
-        self.filter_out_rec(&PathBuf::from("."), exclude_list);
+        self.filter_out_rec(&AbstPath::single("."), exclude_list);
     }
-    fn filter_out_rec(&mut self, rel_path: &PathBuf, exclude_list: &ExcludeList) {
+    fn filter_out_rec(&mut self, rel_path: &AbstPath, exclude_list: &ExcludeList) {
         let Delta(tree) = self;
         for (name, child) in tree {
             match child {
                 DeltaNode::Leaf(pre, post) => {
                     //--- PRE ---//
-                    // TODO change this when let statement aren't unstable anymore
-                    //	outside of if
-                    let is_about_dir = if let Some(FSNode::Dir(_, _, _)) = pre {
-                        true
-                    } else {
-                        false
-                    };
-
-                    if exclude_list.should_exclude(rel_path.join(name), is_about_dir) {
+                    let is_about_dir = matches!(pre, Some(FSNode::Dir(_, _, _)));
+                    if exclude_list.should_exclude(&rel_path.add_last(name), is_about_dir) {
                         *pre = None;
                     }
                     //--- ---//
 
                     //--- POST ---//
-                    // TODO change this when let statement aren't unstable anymore
-                    //	outside of if
-                    let is_about_dir = if let Some(FSNode::Dir(_, _, _)) = post {
-                        true
-                    } else {
-                        false
-                    };
-
-                    if exclude_list.should_exclude(rel_path.join(name), is_about_dir) {
+                    let is_about_dir = matches!(post, Some(FSNode::Dir(_, _, _)));
+                    if exclude_list.should_exclude(&rel_path.add_last(name), is_about_dir) {
                         *post = None;
                     }
                     //--- ---//
                 }
                 DeltaNode::Branch(optm, subdelta) => {
-                    if exclude_list.should_exclude(rel_path.join(name), true) {
+                    if exclude_list.should_exclude(&rel_path.add_last(name), true) {
+                        // Make it so that the branch will be removed once the
+                        //	delta gets shaken at the end of the function
                         *optm = None;
                         *subdelta = Delta::empty();
                     } else {
-                        subdelta.filter_out_rec(&rel_path.join(name), exclude_list);
+                        subdelta.filter_out_rec(&rel_path.add_last(name), exclude_list);
                     }
                 }
             }
@@ -229,18 +225,19 @@ impl Delta {
                 }
                 Occupied(mut entry) => match (child_prec, entry.get_mut()) {
                     (Branch(optm0, subdelta0), Branch(optm1, subdelta1)) => {
-                        *optm1 = match (optm0.clone(), optm1.clone()) {
-                            (None, None) => None,
-                            (None, Some((old, new))) => Some((old, new)),
-                            (Some((old, new)), None) => Some((old, new)),
-                            (Some((old0, new0)), Some((old1, new1))) => {
-                                if new0 == old1 {
-                                    Some((old0, new1))
+                        let optm = match (optm0.clone(), optm1.clone()) {
+                            (Some((premtime0, postmtime0)), Some((premtime1, postmtime1))) => {
+                                if postmtime0 != premtime1 {
+                                    return Err(unmergerr(name, "new mtime of precedent delta does not match with old mtime of successive delta"));
                                 } else {
-                                    return Err(unmergerr(name, "new metadata of precedent delta does not match with old metadata of successive delta"));
+                                    Some((premtime0, postmtime1))
                                 }
                             }
+                            (Some((premtime0, postmtime0)), None) => Some((premtime0, postmtime0)),
+                            (None, Some((premtime1, postmtime1))) => Some((premtime1, postmtime1)),
+                            (None, None) => None,
                         };
+                        *optm1 = optm;
                         subdelta1.merge_prec(subdelta0).map_err(push_unmerg(name))?;
                     }
                     (Leaf(pre0, post0), Leaf(pre1, _)) => {
@@ -251,21 +248,24 @@ impl Delta {
                         }
                     }
                     (Leaf(pre0, post0), Branch(optm1, subdelta1)) => match post0 {
-                        Some(FSNode::Dir(metadata, _, subtree)) => {
+                        Some(FSNode::Dir(mtime, _, subtree)) => {
                             let mut subtree = subtree.clone();
-                            subtree = subtree
-								.try_apply_delta(subdelta1)
+                            subtree
+								.apply_delta(subdelta1)
 								.map_err(|_| unmergerr(name, "failed to apply subdelta of successive delta branch to precedent delta's directory leaf"))?;
-                            let hash = hash_tree(&subtree);
-                            let metadata = match optm1 {
-                                Some((oldm, newm)) if metadata == oldm => newm.clone(),
-                                _ => {
-                                    return Err(unmergerr(name, "new metadata of precedent delta does not match with metadata of successive delta"));
+                            let mtime = match optm1 {
+                                Some((premtime1, postmtime1)) => {
+                                    if mtime != premtime1 {
+                                        return Err(unmergerr(name, "new mtime of precedent delta does not match with mtime of successive delta"));
+                                    }
+                                    postmtime1.clone()
                                 }
+                                None => mtime.clone(),
                             };
+                            let hash = hash_tree(&subtree);
                             entry.insert(Leaf(
                                 pre0.clone(),
-                                Some(FSNode::Dir(metadata, hash, subtree)),
+                                Some(FSNode::Dir(mtime, hash, subtree)),
                             ));
                         }
                         _ => {
@@ -273,14 +273,21 @@ impl Delta {
                         }
                     },
                     (Branch(optm0, subdelta0), Leaf(pre1, _)) => match pre1 {
-                        Some(FSNode::Dir(metadata, hash, subtree)) => {
-                            *subtree = subtree.try_undo_delta(subdelta0).map_err(|_| unmergerr(name, "failed to undo subdelta of precedent delta branch to successive delta's directory leaf"))?;
+                        Some(FSNode::Dir(mtime, hash, subtree)) => {
+                            subtree.undo_delta(subdelta0).map_err(|_| unmergerr(name, "failed to undo subdelta of precedent delta branch to successive delta's directory leaf"))?;
                             *hash = hash_tree(subtree);
-                            if let Some((old, new)) = optm0 {
-                                if new == metadata {
-                                    *metadata = old.clone();
-                                } else {
-                                    return Err(unmergerr(name, "new metadata of precedent delta does not match with metadata of successive delta"));
+                            match optm0 {
+                                Some((premtime0, postmtime0)) => {
+                                    if postmtime0 != mtime {
+                                        return Err(unmergerr(name, "new metadata of precedent delta does not match with metadata of successive delta"));
+                                    } else {
+                                        *mtime = premtime0.clone();
+                                    }
+                                }
+                                None => {
+                                    // Leave mtime unchanged because the previous
+                                    //	delta doesn't change the mtime so the
+                                    //	premtime is the same
                                 }
                             }
                         }
@@ -311,7 +318,7 @@ pub fn get_delta(FSTree(last_known_fstree): &FSTree, FSTree(new_tree): &FSTree) 
             IOr::Both(child0, child1) => {
                 if let (Dir(m0, h0, subtree0), Dir(m1, h1, subtree1)) = (child0, child1) {
                     if m0.ne(m1) || h0.ne(h1) {
-                        let delta_metadata = match m0.ne(m1) {
+                        let delta_mtime = match m0.ne(m1) {
                             true => Some((m0.clone(), m1.clone())),
                             false => None,
                         };
@@ -319,12 +326,10 @@ pub fn get_delta(FSTree(last_known_fstree): &FSTree, FSTree(new_tree): &FSTree) 
                             true => get_delta(subtree0, subtree1),
                             false => Delta::empty(),
                         };
-                        delta.insert(key, DeltaNode::Branch(delta_metadata, delta_subtree));
+                        delta.insert(key, DeltaNode::Branch(delta_mtime, delta_subtree));
                     }
-                } else {
-                    if let Some(node) = DeltaNode::edit(child0, child1) {
-                        delta.insert(key, node);
-                    }
+                } else if child0 != child1 {
+                    delta.insert(key, DeltaNode::edit(child0, child1));
                 }
             }
         }
@@ -334,10 +339,39 @@ pub fn get_delta(FSTree(last_known_fstree): &FSTree, FSTree(new_tree): &FSTree) 
 }
 
 impl FSTree {
-    pub fn try_apply_delta(&self, Delta(deltatree): &Delta) -> Result<FSTree, InapplicableDelta> {
-        use std::collections::hash_map::Entry::*;
-        use DeltaNode::*;
-        let FSTree(mut fstree) = self.clone();
+    pub fn apply_delta_at_endpoint(
+        &mut self,
+        delta: &Delta,
+        endpoint: AbstPath,
+    ) -> Result<(), InapplicableDelta> {
+        match endpoint.get(0) {
+            None => self.apply_delta(delta),
+            Some(name) => {
+                let FSTree(fstree) = self;
+                match fstree.get_mut(name) {
+                    Some(FSNode::Dir(_, _, subtree)) => {
+                        subtree.apply_delta_at_endpoint(delta, endpoint.strip_first())
+                    }
+                    Some(FSNode::File(_, _)) => Err(inapperr(
+                        name,
+                        "endpoint claims this node is a directory, but it is a file",
+                    )),
+                    Some(FSNode::SymLink(_, _)) => Err(inapperr(
+                        name,
+                        "endpoint claims this node is a directory, but it is a symlink",
+                    )),
+                    None => Err(inapperr(
+                        name,
+                        "endpoint claims this node is a directory, but it doesn't exist",
+                    )),
+                }
+            }
+        }
+    }
+    pub fn apply_delta(&mut self, Delta(deltatree): &Delta) -> Result<(), InapplicableDelta> {
+        use std::collections::hash_map::Entry::{Occupied, Vacant};
+        use DeltaNode::{Branch, Leaf};
+        let FSTree(fstree) = self;
         for (name, child) in deltatree {
             match child {
                 Leaf(None, None) => {
@@ -420,17 +454,19 @@ impl FSTree {
                 },
                 Branch(optm, subdelta) => match fstree.entry(name.clone()) {
                     Occupied(mut entry) => match entry.get_mut() {
-                        FSNode::Dir(metadata, hash, subtree) => {
-                            if let Some((old, new)) = optm {
-                                if metadata.eq(&old) {
-                                    *metadata = new.clone();
-                                } else {
-                                    return Err(inapperr(name, "metadata of directory does not match old metadata of delta branch"));
+                        FSNode::Dir(mtime, hash, subtree) => {
+                            match optm {
+                                Some((premtime, postmtime)) => {
+                                    if mtime != premtime {
+                                        return Err(inapperr(name, "mtime of directory does not match old mtime of delta branch"));
+                                    }
+                                    *mtime = postmtime.clone();
+                                }
+                                None => {
+                                    // Leave the mtime unchanged
                                 }
                             }
-                            *subtree = subtree
-                                .try_apply_delta(subdelta)
-                                .map_err(push_inapp(name))?;
+                            subtree.apply_delta(subdelta).map_err(push_inapp(name))?;
                             *hash = hash_tree(subtree);
                         }
                         FSNode::File(_, _) => {
@@ -439,7 +475,7 @@ impl FSTree {
                                 "delta claims this node is a directory, but it is a file in tree",
                             ));
                         }
-                        FSNode::SymLink(_) => {
+                        FSNode::SymLink(_, _) => {
                             return Err(inapperr(
 								name,
 								"delta claims this node is a directory, but it is a symlink in tree",
@@ -455,13 +491,12 @@ impl FSTree {
                 },
             }
         }
-        Ok(FSTree(fstree))
+        Ok(())
     }
-
-    pub fn try_undo_delta(&self, Delta(deltatree): &Delta) -> Result<FSTree, InapplicableDelta> {
+    pub fn undo_delta(&mut self, Delta(deltatree): &Delta) -> Result<(), InapplicableDelta> {
         use std::collections::hash_map::Entry::*;
         use DeltaNode::*;
-        let FSTree(mut fstree) = self.clone();
+        let FSTree(fstree) = self;
         for (name, child) in deltatree {
             match child {
                 Leaf(None, None) => {
@@ -542,42 +577,49 @@ impl FSTree {
                         ));
                     }
                 },
-                Branch(optm, subdelta) => match fstree.entry(name.clone()) {
-                    Occupied(mut entry) => match entry.get_mut() {
-                        FSNode::Dir(metadata, hash, subtree) => {
-                            if let Some((old, new)) = optm {
-                                if metadata.eq(&new) {
-                                    *metadata = old.clone();
-                                } else {
-                                    return Err(inapperr(name, "metadata of directory does not match new metadata of delta branch"));
+                Branch(optm, subdelta) => {
+                    match fstree.entry(name.clone()) {
+                        Occupied(mut entry) => match entry.get_mut() {
+                            FSNode::Dir(mtime, hash, subtree) => {
+                                match optm {
+                                    Some((premtime, postmtime)) => {
+                                        if mtime != postmtime {
+                                            return Err(inapperr(name, "mtime of directory does not match new mtime of delta branch"));
+                                        }
+                                        *mtime = premtime.clone();
+                                    }
+                                    None => {
+                                        // Leave mtime unchanged
+                                    }
                                 }
+                                subtree.apply_delta(subdelta).map_err(push_inapp(name))?;
+                                // *subtree =
+                                //     subtree.try_undo_delta(subdelta).map_err(push_inapp(name))?;
+                                *hash = hash_tree(subtree);
                             }
-                            *subtree =
-                                subtree.try_undo_delta(subdelta).map_err(push_inapp(name))?;
-                            *hash = hash_tree(subtree);
-                        }
-                        FSNode::File(_, _) => {
-                            return Err(inapperr(
+                            FSNode::File(_, _) => {
+                                return Err(inapperr(
                                 name,
                                 "delta claims this node is a directory, but it is a file in tree",
                             ));
-                        }
-                        FSNode::SymLink(_) => {
-                            return Err(inapperr(
+                            }
+                            FSNode::SymLink(_, _) => {
+                                return Err(inapperr(
 								name,
 								"delta claims this node is a directory, but it is a symlink in tree",
 							));
-                        }
-                    },
-                    Vacant(_) => {
-                        return Err(inapperr(
+                            }
+                        },
+                        Vacant(_) => {
+                            return Err(inapperr(
                             name,
                             "delta claims this node is a directory, but it does not exist in tree",
                         ));
+                        }
                     }
-                },
+                }
             }
         }
-        Ok(FSTree(fstree))
+        Ok(())
     }
 }

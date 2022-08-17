@@ -1,21 +1,19 @@
 use crate::{
-    fs::{self, OsStrExt, PathExt},
+    fs::{self, AbstPath, Endpoint},
     hash::{self, Hash},
 };
-
-use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::{
-    bbupcom::{error_context, generr, inerr, Error, Querable, Query},
-    BbupCom, ProgressReader,
+    bbupcom::{error_context, generr, inerr, Error, Query},
+    BbupCom, ProgressReader, Queryable,
 };
 
 impl BbupCom {
     pub async fn check_ok(&mut self) -> Result<(), Error> {
-        let errmsg = format!("check for ok status");
+        let errmsg = "check for ok status".to_string();
         let errctx = error_context(errmsg.clone());
         let status = self
             .rx
@@ -92,14 +90,13 @@ impl BbupCom {
         }
     }
 
-    pub async fn get_file_to<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Error> {
-        let path = path.as_ref().to_path_buf();
-        let errmsg = format!("could not get file to path {:?}", path);
+    pub async fn get_file_to(&mut self, path: &AbstPath) -> Result<(), Error> {
+        let errmsg = format!("could not get file to path {path}");
         let errctx = error_context(errmsg.clone());
         self.check_ok()
             .await
             .map_err(inerr(errctx("get ok status")))?;
-        let mut file = fs::async_create_file(&path)
+        let mut file = fs::async_create_file(path)
             .await
             .map_err(inerr(errctx("async create file to save content")))?;
         let len = self
@@ -110,7 +107,7 @@ impl BbupCom {
 
         if self.progress {
             let name = match path.file_name() {
-                Some(val) => val.force_to_string(),
+                Some(val) => val,
                 None => String::from("[invalid filename]"),
             };
             let pw = ProgressReader::new(&mut self.rx, len, &name);
@@ -134,59 +131,57 @@ impl BbupCom {
 
     pub async fn query_files(
         &mut self,
-        queries: Vec<(Querable, PathBuf, Hash)>,
-        endpoint: &PathBuf,
+        queries: Vec<(Queryable, AbstPath, Hash)>,
+        endpoint: &AbstPath,
     ) -> Result<(), Error> {
         let errmsg = String::from("could not query files and symlinks");
         let errctx = error_context(errmsg.clone());
         for (querable, rel_path, hash) in queries {
-            let path = endpoint.join(rel_path.clone());
+            let path = endpoint.append(&rel_path);
             match querable {
-                Querable::File => {
-                    self.send_struct(Query::Object(Querable::File, rel_path.clone()))
+                Queryable::File => {
+                    self.send_struct(Query::Object(Queryable::File, rel_path.clone()))
                         .await
-                        .map_err(inerr(errctx(format!(
-                            "ask query for file at path {path:?}"
-                        ))))?;
+                        .map_err(inerr(errctx(format!("ask query for file at path {path}"))))?;
 
                     self.get_file_to(&path)
                         .await
-                        .map_err(inerr(errctx(format!("query file at path {path:?}"))))?;
+                        .map_err(inerr(errctx(format!("query file at path {path}"))))?;
 
                     let file = fs::read_file(&path).map_err(inerr(errctx(format!(
-                        "open file to check hash at path {path:?}"
+                        "open file to check hash at path {path}"
                     ))))?;
 
                     if hash
                         != hash::hash_stream(file)
-                            .map_err(inerr(errctx(format!("hash file content at path {path:?}"))))?
+                            .map_err(inerr(errctx(format!("hash file content at path {path}"))))?
                     {
-                        return Err(generr(errmsg, format!("hash of the file recieved (at path {path:?}) does not match the hash given")));
+                        return Err(generr(errmsg, format!("hash of the file recieved (at path {path}) does not match the hash given")));
                     }
                 }
-                Querable::SymLink => {
-                    self.send_struct(Query::Object(Querable::SymLink, rel_path.clone()))
+                Queryable::SymLink => {
+                    self.send_struct(Query::Object(Queryable::SymLink, rel_path.clone()))
                         .await
                         .map_err(inerr(errctx(format!(
-                            "ask query for symlink at path {path:?}"
+                            "ask query for symlink at path {path}"
                         ))))?;
 
-                    let endpoint: PathBuf = self.get_struct().await.map_err(inerr(errctx(
-                        format!("query symlink's endpoint at path {path:?}"),
+                    let endpoint: Endpoint = self.get_struct().await.map_err(inerr(errctx(
+                        format!("query symlink's endpoint at path {path}"),
                     )))?;
 
-                    if hash != hash::hash_bytes(endpoint.force_to_string().as_bytes()) {
-                        return Err(generr(errmsg, format!("hash of the symlink recieved (at path {path:?}) does not match the hash given")));
+                    if hash != hash::hash_bytes(endpoint.as_bytes()) {
+                        return Err(generr(errmsg, format!("hash of the symlink recieved (at path {path}) does not match the hash given")));
                     }
                     fs::create_symlink(&path, endpoint).map_err(inerr(errctx(format!(
-                        "create queried symlink at path {path:?}"
+                        "create queried symlink at path {path}"
                     ))))?;
                 }
             }
         }
         self.send_struct(Query::Stop)
             .await
-            .map_err(inerr(errctx(format!("send query stop signal"))))?;
+            .map_err(inerr(errctx("send query stop signal".to_string())))?;
 
         Ok(())
     }

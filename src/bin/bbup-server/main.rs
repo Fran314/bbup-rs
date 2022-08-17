@@ -40,10 +40,10 @@ async fn main() -> Result<()> {
     let home_dir = fs::home_dir().context("could not resolve home_dir path")?;
 
     match args.cmd {
-        SubCommand::Setup => return setup::setup(home_dir),
+        SubCommand::Setup => setup::setup(home_dir),
         SubCommand::Run { verbose, progress } => {
             let server_config = ServerConfig::load(&home_dir)?;
-            let archive_root = home_dir.join(&server_config.archive_root);
+            let archive_root = home_dir.append(&server_config.archive_root);
 
             let archive_state =
                 ArchiveState::load(&archive_root).context("failed to load aarchive's state")?;
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
                                 println!("connection processed correctly")
                             }
                         }
-                        Err(err) => println!("Error: {err:?}"),
+                        Err(err) => println!("Error: {err}"),
                     }
                 });
             }

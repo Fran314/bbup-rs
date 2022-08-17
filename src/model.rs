@@ -1,4 +1,4 @@
-use crate::fs::PathExt;
+use crate::fs::AbstPath;
 use crate::fstree::Delta;
 
 use serde::{Deserialize, Serialize};
@@ -9,12 +9,14 @@ use thiserror::Error;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Commit {
     pub commit_id: String,
+    pub endpoint: AbstPath,
     pub delta: Delta,
 }
 impl Commit {
     pub fn base_commit() -> Commit {
         Commit {
             commit_id: String::from("0").repeat(64),
+            endpoint: AbstPath::empty(),
             delta: Delta::empty(),
         }
     }
@@ -25,7 +27,7 @@ pub struct ExcludeList {
 }
 #[derive(Error, Debug)]
 pub enum ExcludeListError {
-    #[error("Exclude List Error: Failed to parse rule to regex\nrule: {rule}\nreason: {err:?}")]
+    #[error("Exclude List Error: Failed to parse rule to regex\nrule: {rule}\nreason: {err}")]
     UnparsableRule { rule: String, err: regex::Error },
 }
 fn unparerr<S: std::string::ToString>(rule: S) -> impl Fn(regex::Error) -> ExcludeListError {
@@ -44,7 +46,7 @@ impl ExcludeList {
         .join(rules)
     }
     pub fn join(self, rules: &Vec<String>) -> Result<ExcludeList, ExcludeListError> {
-        let mut list = self.list.clone();
+        let mut list = self.list;
         for rule in rules {
             let rgx = Regex::new(rule).map_err(unparerr(rule))?;
             list.push(rgx);
@@ -53,11 +55,11 @@ impl ExcludeList {
     }
 
     // TODO this should somehow implement the blob pattern thingy
-    pub fn should_exclude<P: AsRef<std::path::Path>>(&self, path: P, is_dir: bool) -> bool {
+    pub fn should_exclude(&self, path: &AbstPath, is_dir: bool) -> bool {
         let path_as_string = {
-            let mut tmp = path.as_ref().force_to_string();
+            let mut tmp = path.to_string();
             if is_dir {
-                tmp.push(std::path::MAIN_SEPARATOR);
+                tmp.push('/');
             }
             tmp
         };

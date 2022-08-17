@@ -1,4 +1,4 @@
-use super::{ConflictNode, Conflicts, Delta, DeltaNode, FSNode, FSTree, IOr};
+use super::{ConflictNode, Conflicts, Delta, DeltaNode, FSNode, FSTree};
 
 use colored::Color;
 use colored::Colorize;
@@ -65,14 +65,14 @@ fn typed<S: std::string::ToString>(t: &str, text: S) -> String {
     format!("[{}] {}", t, text.to_string())
 }
 fn fstree_to_stringtree<S: std::string::ToString, C: Clone + Into<Color>>(
-    text: S,
+    root_text: S,
     FSTree(tree): &FSTree,
     color: C,
 ) -> StringTree {
-    let mut children = tree.into_iter().collect::<Vec<(&String, &FSNode)>>();
+    let mut children = tree.iter().collect::<Vec<(&String, &FSNode)>>();
     children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
     StringTree {
-        text: text.to_string(),
+        text: root_text.to_string(),
         children: children
             .into_iter()
             .map(|(name, child)| match child {
@@ -80,7 +80,7 @@ fn fstree_to_stringtree<S: std::string::ToString, C: Clone + Into<Color>>(
                     let name = styled(name, color.clone());
                     StringTree::leaf(typed("f", name))
                 }
-                FSNode::SymLink(_) => {
+                FSNode::SymLink(_, _) => {
                     let name = styled(name, color.clone());
                     StringTree::leaf(typed("s", name))
                 }
@@ -99,14 +99,17 @@ impl std::fmt::Display for FSTree {
     }
 }
 
-fn deltafstree_to_stringtree<S: std::string::ToString>(text: S, Delta(tree): &Delta) -> StringTree {
+fn deltafstree_to_stringtree<S: std::string::ToString>(
+    root_text: S,
+    Delta(tree): &Delta,
+) -> StringTree {
     use DeltaNode::*;
     use FSNode::*;
-    let mut children = tree.into_iter().collect::<Vec<(&String, &DeltaNode)>>();
+    let mut children = tree.iter().collect::<Vec<(&String, &DeltaNode)>>();
     children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
 
     StringTree {
-        text: text.to_string(),
+        text: root_text.to_string(),
         children: children
             .into_iter()
             .flat_map(|(name, child)| match child {
@@ -116,7 +119,7 @@ fn deltafstree_to_stringtree<S: std::string::ToString>(text: S, Delta(tree): &De
                         None => "",
                     };
                     let Delta(subtree) = subdelta;
-                    if subtree.len() > 0 {
+                    if !subtree.is_empty() {
                         vec![deltafstree_to_stringtree(
                             typed("d", styled_dir(name, color)),
                             subdelta,
@@ -128,15 +131,21 @@ fn deltafstree_to_stringtree<S: std::string::ToString>(text: S, Delta(tree): &De
                 Leaf(Some(File(_, _)), Some(File(_, _))) => {
                     vec![StringTree::leaf(typed("f", styled(name, "yellow")))]
                 }
-                Leaf(Some(SymLink(_)), Some(SymLink(_))) => {
+                Leaf(Some(SymLink(_, _)), Some(SymLink(_, _))) => {
                     vec![StringTree::leaf(typed("s", styled(name, "yellow")))]
                 }
+                // I don't really think it's necessary to check that pre != post,
+                //	it's only a display utility function and we """know""" we're
+                //	only working with shaken trees so the only place were this
+                //	could be working on unshaken trees is on malicious code, and
+                //	fuck them.
+                // Still, I'll leave the pre != post just to be sure
                 Leaf(pre, post) if pre != post => {
                     let mut output = vec![];
                     if let Some(val) = pre {
                         let removed = match val {
                             File(_, _) => StringTree::leaf(typed("f", styled(name, "red"))),
-                            SymLink(_) => StringTree::leaf(typed("s", styled(name, "red"))),
+                            SymLink(_, _) => StringTree::leaf(typed("s", styled(name, "red"))),
                             Dir(_, _, subtree) => fstree_to_stringtree(
                                 typed("d", styled_dir(name, "red")),
                                 subtree,
@@ -148,7 +157,7 @@ fn deltafstree_to_stringtree<S: std::string::ToString>(text: S, Delta(tree): &De
                     if let Some(val) = post {
                         let added = match val {
                             File(_, _) => StringTree::leaf(typed("f", styled(name, "green"))),
-                            SymLink(_) => StringTree::leaf(typed("s", styled(name, "green"))),
+                            SymLink(_, _) => StringTree::leaf(typed("s", styled(name, "green"))),
                             Dir(_, _, subtree) => fstree_to_stringtree(
                                 typed("d", styled_dir(name, "green")),
                                 subtree,
@@ -179,14 +188,14 @@ impl std::fmt::Display for Delta {
 
 fn format_leaf_state(val: &Option<FSNode>) -> String {
     match val {
-        Some(FSNode::File(metadata, hash)) => {
-            format!("File [m:{} h:{}]", metadata, hash.to_hex(6),)
+        Some(FSNode::File(_, hash)) => {
+            format!("File [h:{}]", hash.to_hex(6),)
         }
-        Some(FSNode::SymLink(hash)) => {
+        Some(FSNode::SymLink(_, hash)) => {
             format!("SymLink [h:{}]", hash.to_hex(6),)
         }
-        Some(FSNode::Dir(metadata, hash, _)) => {
-            format!("Dir [m:{} h:{}]", metadata, hash.to_hex(6),)
+        Some(FSNode::Dir(_, hash, _)) => {
+            format!("Dir [h:{}]", hash.to_hex(6),)
         }
         None => String::from("None"),
     }
@@ -211,7 +220,7 @@ fn conflicts_to_stringtree<S: std::string::ToString>(
     use DeltaNode as DN;
     use FSNode as FN;
 
-    let mut children = tree.into_iter().collect::<Vec<(&String, &ConflictNode)>>();
+    let mut children = tree.iter().collect::<Vec<(&String, &ConflictNode)>>();
     children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
 
     StringTree {
@@ -235,24 +244,9 @@ fn conflicts_to_stringtree<S: std::string::ToString>(
                         format_delta_leaf(delta1)
                     )),
                 },
-                CN::Branch(ior) => match ior {
-                    IOr::Left(((prem0, postm0), (prem1, postm1))) => StringTree::leaf(format!(
-                        "{}/\n0: [{}] -> [{}]\n1: [{}] -> [{}]",
-                        name, prem0, postm0, prem1, postm1
-                    )),
-                    IOr::Both(((prem0, postm0), (prem1, postm1)), subconflict) => {
-                        conflicts_to_stringtree(
-                            format!(
-                                "{}/\n0: [{}] -> [{}]\n1: [{}] -> [{}]",
-                                name, prem0, postm0, prem1, postm1
-                            ),
-                            subconflict,
-                        )
-                    }
-                    IOr::Right(subconflict) => {
-                        conflicts_to_stringtree(format!("{}/", name), subconflict)
-                    }
-                },
+                CN::Branch(subconflicts) => {
+                    conflicts_to_stringtree(format!("{}/", name), subconflicts)
+                }
             })
             .collect(),
     }

@@ -28,7 +28,7 @@ impl Hash {
         let Hash(bytes) = self;
         let mut output = String::new();
         bytes
-            .into_iter()
+            .iter()
             .for_each(|byte| output += format!("{:02x}", byte).as_str());
 
         output[0..len as usize].to_string()
@@ -41,6 +41,7 @@ impl std::fmt::Display for Hash {
 }
 /// Convert the absurd output type of sha2's digest/finalize
 /// to a useful Hash
+#[allow(clippy::type_complexity)]
 fn to_hash(
     hash: GenericArray<u8, UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>>,
 ) -> Hash {

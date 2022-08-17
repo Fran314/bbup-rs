@@ -1,7 +1,7 @@
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::fs::AbstPath;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -22,7 +22,7 @@ pub fn inerr<S: std::string::ToString, E: std::error::Error>(src: S) -> impl Fn(
 }
 pub fn generr<S: std::string::ToString, T: std::string::ToString>(src: S, err: T) -> Error {
     Error::GenericError {
-        src: (src).to_string().clone(),
+        src: src.to_string(),
         err: err.to_string(),
     }
 }
@@ -56,14 +56,12 @@ pub enum JobType {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Query {
-    Object(Querable, PathBuf),
-    // FileAt(PathBuf),
-    // SymLinkAt(PathBuf),
+    Object(Queryable, AbstPath),
     Stop,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Querable {
+pub enum Queryable {
     File,
     SymLink,
 }

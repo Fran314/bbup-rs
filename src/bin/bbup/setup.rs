@@ -1,13 +1,11 @@
-use std::path::PathBuf;
-
 use crate::{ClientConfig, ClientSettings};
 
-use bbup_rust::input;
+use bbup_rust::{fs::AbstPath, input};
 
 use anyhow::Result;
 
-pub fn setup(home_dir: PathBuf) -> Result<()> {
-    if ClientConfig::exists(&home_dir) {
+pub fn setup(home_dir: &AbstPath) -> Result<()> {
+    if ClientConfig::exists(home_dir) {
         anyhow::bail!("bbup client is already setup");
     }
 
@@ -22,9 +20,12 @@ pub fn setup(home_dir: PathBuf) -> Result<()> {
         host_name,
         host_address,
     };
-    ClientConfig::from(settings, Vec::new()).save(&home_dir)?;
+    ClientConfig::from(settings, Vec::new()).save(home_dir)?;
 
     println!("bbup client set up correctly!");
+    println!();
+    println!("run 'bbup init' inside a directory to backup to initialize a backup source");
+    println!();
 
     Ok(())
 }

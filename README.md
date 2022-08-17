@@ -39,8 +39,26 @@ download the binaries from the lates release or build them
 	- [endpoint]: the endpoint for the backup of this backup source. This is a path to the root of the endpoint relative to the root of the archive (i.e: if the endpoint is `~/foo/bar/archive/moo/boo/my-photos`, enter `moo/boo/my-photos`)
 	- [exclude_list]: the list of paths to exclude (like a .gitignore)
 
-## Other
+## Build
+
+### Raspberry Pi (64 bit)
 To build for RaspberryPi (probably 4, don't know for other models)
+```bash
+cargo build --release --target aarch64-unknown-linux-gnu
+```
+If it doesn't work, add the target and install the linker install
+```bash
+rustup target add aarch64-unknown-linux-gnu
+sudo apt install gcc-aarch64-linux-gnu
+```
+and add the file ./.cargo/config with the following content
+```
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+```
+
+### Raspberry Pi (32 bit)
+To build for RaspberryPi (32 bit)
 ```bash
 cargo build --release --target armv7-unknown-linux-gnueabihf
 ```

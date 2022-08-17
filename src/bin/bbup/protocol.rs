@@ -1,11 +1,8 @@
-use bbup_rust::fstree::Change;
-use std::path::PathBuf;
+use bbup_rust::fstree::{Action, Delta};
 
 use crate::{ProcessConfig, ProcessState};
 
-use bbup_rust::com::{BbupCom, Querable};
-use bbup_rust::hash::Hash;
-use bbup_rust::model::Commit;
+use bbup_rust::com::{BbupCom, Queryable};
 use bbup_rust::{fs, fstree};
 
 use anyhow::{Context, Result};
@@ -45,146 +42,132 @@ pub async fn pull_update_delta(
         .context("could not send last known commit")?;
 
     // [PULL] Get delta from last_known_commit to server's most recent commit
-    let mut update: Commit = com
+    let mut delta: Delta = com
         .get_struct()
         .await
-        .context("could not get update-delta from server")?;
+        .context("could not get update delta from server")?;
+    let id: String = com
+        .get_struct()
+        .await
+        .context("could not get update id from server")?;
 
     // [PULL] Filter out updates that match the exclude_list
-    update.delta.filter_out(&config.exclude_list);
+    delta.filter_out(&config.exclude_list);
 
     if config.flags.verbose {
-        if update.delta.is_empty() {
+        if delta.is_empty() {
             println!("pull delta: no missed change to pull")
         } else {
-            println!("pull delta:\n{}", update.delta)
+            println!("pull delta:\n{}", delta)
         }
     }
 
-    state.update = Some(update);
+    state.update = Some((id, delta));
 
     Ok(())
 }
 
-pub async fn check_for_conflicts(state: &mut ProcessState) -> Result<()> {
-    match (&state.local_delta, &state.update) {
-        (
-            Some(local_delta),
-            Some(Commit {
-                commit_id: _,
-                delta: update_delta,
-            }),
-        ) => {
-            let conflicts = fstree::check_for_conflicts(local_delta, update_delta);
-            if let Some(conflicts) = conflicts {
-                println!("conflicts:\n{}", conflicts);
-
-                anyhow::bail!(
-                    "found conflicts between pulled update and local changes. Resolve manually"
-                )
-            }
-            Ok(())
-        }
-        _ => {
-            anyhow::bail!(
-				"Some part of the state was required for check-for-conflicts but is missing\nstate.local_delta: {}\nstate.update: {}",
-				state.local_delta.is_some(),
-				state.update.is_some(),
-			)
-        }
-    }
-}
-
-pub async fn download_update(
+pub async fn apply_update_or_get_conflicts(
     config: &ProcessConfig,
     state: &mut ProcessState,
     com: &mut BbupCom,
 ) -> Result<()> {
-    match &state.update {
-        Some(Commit {
-            commit_id: _,
-            delta: update_delta,
-        }) => {
-            // Get all files that need to be downloaded from server
-            let queries: Vec<(Querable, PathBuf, Hash)> = update_delta
-                .flatten()
-                .into_iter()
-                .flat_map(|(path, change)| match change {
-                    Change::AddFile(_, hash) | Change::EditFile(_, Some(hash)) => {
-                        vec![(Querable::File, path, hash)]
+    match (&state.local_delta, &state.update) {
+        (Some(local_delta), Some((update_id, update_delta))) => {
+            // Check for conflicts or get the necessary actions
+            let necessary_actions =
+                match fstree::get_actions_or_conflicts(local_delta, update_delta) {
+                    Ok(actions) => actions,
+                    Err(conflicts) => {
+                        println!("conflicts:\n{}", conflicts);
+                        anyhow::bail!(
+                        "found conflicts between pulled update and local changes. Resolve manually"
+                    )
                     }
-                    Change::AddSymLink(hash) | Change::EditSymLink(hash) => {
-                        vec![(Querable::SymLink, path, hash)]
+                };
+
+            // Check if it is possible to apply the update or something went wrong
+            let mut updated_fstree = state.last_known_fstree.clone();
+            updated_fstree.apply_delta(update_delta)?;
+
+            // Download files that need to be downloaded
+            let mut queries = Vec::new();
+            for (path, action) in &necessary_actions {
+                match action {
+                    Action::AddFile(_, hash) | Action::EditFile(_, Some(hash)) => {
+                        queries.push((Queryable::File, path.clone(), hash.clone()))
                     }
-                    _ => vec![],
-                })
-                .collect();
 
-            com.query_files(queries, &config.link_root.join(".bbup").join("temp"))
-                .await
-                .context("could not query files and symlinks to apply update")?;
+                    Action::AddSymLink(_, hash) | Action::EditSymLink(_, Some(hash)) => {
+                        queries.push((Queryable::SymLink, path.clone(), hash.clone()))
+                    }
 
-            Ok(())
-        }
-        _ => {
-            anyhow::bail!(
-				"Some part of the state was required for download-update but is missing\nstate.update: {}",
-				state.update.is_some(),
-			)
-        }
-    }
-}
+                    _ => {}
+                }
+            }
+            com.query_files(
+                queries,
+                &config.link_root.add_last(".bbup").add_last("temp"),
+            )
+            .await
+            .context("could not query files and symlinks to apply update")?;
 
-pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> Result<()> {
-    match &state.update {
-        Some(Commit { commit_id, delta }) => {
-            let updated_fstree = state.last_known_fstree.try_apply_delta(delta)?;
-
-            for (path, change) in delta.flatten() {
-                let to_path = config.link_root.join(&path);
-                let from_temp_path = config.link_root.join(".bbup").join("temp").join(&path);
+            // Apply actions
+            for (path, action) in necessary_actions {
+                let to_path = config.link_root.append(&path);
+                let from_temp_path = config
+                    .link_root
+                    .add_last(".bbup")
+                    .add_last("temp")
+                    .append(&path);
                 let errmsg = |msg: &str| -> String {
                     format!(
-                        "could not {} to apply update\npath: {:?}",
+                        "could not {} to apply update\npath: {}",
                         msg,
                         to_path.clone()
                     )
                 };
-                match change {
-                    Change::AddDir(metadata) => {
+                match action {
+                    Action::AddDir => {
                         fs::create_dir(&to_path).context(errmsg("create added directory"))?;
-                        fs::set_metadata(&to_path, &metadata)
-                            .context(errmsg("set metadata of added directory"))?;
                     }
-                    Change::AddFile(metadata, _) => {
-                        fs::rename_file(from_temp_path, &to_path)
+                    Action::AddFile(mtime, _) => {
+                        fs::rename_file(&from_temp_path, &to_path)
                             .context(errmsg("move added file from temp"))?;
-                        fs::set_metadata(&to_path, &metadata)
-                            .context(errmsg("set metadata of added file"))?;
+                        fs::set_mtime(&to_path, &mtime)
+                            .context(errmsg("set mtime of added file"))?;
                     }
-                    Change::AddSymLink(_) => {
-                        fs::rename_symlink(from_temp_path, &to_path)
+                    Action::AddSymLink(mtime, _) => {
+                        fs::rename_symlink(&from_temp_path, &to_path)
                             .context(errmsg("move added symlink from temp"))?;
+                        fs::set_mtime(&to_path, &mtime)
+                            .context(errmsg("set mtime of added symlink"))?;
                     }
-                    Change::EditDir(metadata) => {
-                        fs::set_metadata(&to_path, &metadata)
-                            .context(errmsg("set metadata of edited directory"))?;
+                    Action::EditDir(mtime) => {
+                        fs::set_mtime(&to_path, &mtime)
+                            .context(errmsg("set mtime of edited directory"))?;
                     }
-                    Change::EditFile(optm, opth) => {
-                        if let Some(_) = opth {
-                            fs::rename_file(from_temp_path, &to_path)
+                    Action::EditFile(optm, opth) => {
+                        if opth.is_some() {
+                            fs::rename_file(&from_temp_path, &to_path)
                                 .context(errmsg("move edited file from temp"))?;
                         }
-                        if let Some(metadata) = optm {
-                            fs::set_metadata(&to_path, &metadata)
-                                .context(errmsg("set metadata of edited file"))?;
+                        if let Some(mtime) = optm {
+                            fs::set_mtime(&to_path, &mtime)
+                                .context(errmsg("set mtime of edited file"))?;
                         }
                     }
-                    Change::EditSymLink(_) => {
-                        fs::rename_symlink(from_temp_path, &to_path)
-                            .context(errmsg("move edited symlink from temp"))?;
+                    Action::EditSymLink(optm, opth) => {
+                        if opth.is_some() {
+                            fs::rename_symlink(&from_temp_path, &to_path)
+                                .context(errmsg("move edited symlink from temp"))?;
+                        }
+                        if let Some(mtime) = optm {
+                            fs::set_mtime(&to_path, &mtime)
+                                .context(errmsg("set mtime of edited symlink"))?;
+                        }
                     }
-                    Change::RemoveDir => {
+                    Action::RemoveDir => {
                         // Why remove_dir_all instead of just remove_dir here?
                         // One would think that, because the delta.flatten() flattens a
                         //	removed directory by recursively adding a removefile/
@@ -197,15 +180,15 @@ pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> R
                         //	together with the directory itself
                         fs::remove_dir_all(&to_path).context(errmsg("remove deleted dir"))?;
                     }
-                    Change::RemoveFile => {
+                    Action::RemoveFile => {
                         fs::remove_file(&to_path).context(errmsg("remove deleted file"))?;
                     }
-                    Change::RemoveSymLink => {
+                    Action::RemoveSymLink => {
                         fs::remove_symlink(&to_path).context(errmsg("remove deleted symlink"))?;
                     }
                 }
             }
-            state.last_known_commit = commit_id.clone();
+            state.last_known_commit = update_id.clone();
             state.last_known_fstree = updated_fstree;
             state.save(&config.link_root)?;
 
@@ -219,7 +202,8 @@ pub async fn apply_update(config: &ProcessConfig, state: &mut ProcessState) -> R
         }
         _ => {
             anyhow::bail!(
-				"Some part of the state was required for apply-update but is missing\nstate.update: {}",
+				"Some part of the state was required for applying update but is missing\nstate.local_delta: {}\nstate.update: {}",
+				state.local_delta.is_some(),
 				state.update.is_some(),
 			)
         }
@@ -238,26 +222,24 @@ pub async fn upload_changes(
 
             com.send_struct(local_delta).await?;
 
-            let querable: Vec<PathBuf> = local_delta
-                .flatten()
-                .into_iter()
-                .filter(|(_, change)| match change {
-                    Change::AddFile(_, _)
-                    | Change::AddSymLink(_)
-                    | Change::EditFile(_, _)
-                    | Change::EditSymLink(_) => true,
-                    _ => false,
-                })
-                .map(|(path, _)| path)
-                .collect();
+            let mut queryables = Vec::new();
+            for (path, action) in &local_delta.to_actions() {
+                match action {
+                    Action::AddFile(_, _)
+                    | Action::EditFile(_, Some(_))
+                    | Action::AddSymLink(_, _)
+                    | Action::EditSymLink(_, Some(_)) => queryables.push(path.clone()),
 
-            com.supply_files(&querable, &config.link_root)
+                    _ => {}
+                }
+            }
+            com.supply_files(&queryables, &config.link_root)
                 .await
                 .context("could not supply files and symlinks to upload push")?;
 
             state.last_known_commit = com.get_struct().await?;
             state.last_known_fstree = new_tree.clone();
-            state.save(&&config.link_root)?;
+            state.save(&config.link_root)?;
 
             Ok(())
         }

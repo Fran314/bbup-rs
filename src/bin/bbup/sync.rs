@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Result};
 
 pub async fn process_link(config: ProcessConfig) -> Result<()> {
     if config.flags.verbose {
-        println!("Syncing link: [{:?}]", config.link_root);
+        println!("Synchronizing link: [{}]", config.link_root);
     }
 
     let process = {
@@ -22,7 +22,7 @@ pub async fn process_link(config: ProcessConfig) -> Result<()> {
         )?;
 
         if config.flags.verbose {
-            println!("ssh tunnel PID: {}", &tunnel.pid());
+            println!("ssh tunnel PID: {}", tunnel.pid());
         }
 
         tunnel.wait_for_ready()?;
@@ -52,9 +52,10 @@ pub async fn process_link(config: ProcessConfig) -> Result<()> {
                 // PULL
                 com.send_struct(JobType::Pull).await?;
                 protocol::pull_update_delta(&config, &mut state, &mut com).await?;
-                protocol::check_for_conflicts(&mut state).await?;
-                protocol::download_update(&config, &mut state, &mut com).await?;
-                protocol::apply_update(&config, &mut state).await?;
+                // protocol::check_for_conflicts(&mut state).await?;
+                // protocol::download_update(&config, &mut state, &mut com).await?;
+                // protocol::apply_update(&config, &mut state).await?;
+                protocol::apply_update_or_get_conflicts(&config, &mut state, &mut com).await?;
             }
 
             {
@@ -72,11 +73,8 @@ pub async fn process_link(config: ProcessConfig) -> Result<()> {
         match conversation_result {
             Ok(()) => Ok(()),
             Err(error) => {
-                match com.send_error(1, "error propagated from client").await {
-                    Err(err) => {
-                        println!("Could not propagate error to server, because {:#?}", err)
-                    }
-                    _ => {}
+                if let Err(err) = com.send_error(1, "error propagated from client").await {
+                    println!("Could not propagate error to server, because {:#?}", err)
                 }
                 Err(error)
             }
@@ -86,13 +84,13 @@ pub async fn process_link(config: ProcessConfig) -> Result<()> {
     match process {
         Ok(()) => {
             if config.flags.verbose {
-                println!("Link correctly synced: [{:?}] ", config.link_root);
+                println!("Link correctly synchronized: [{}] ", config.link_root);
             }
 
             Ok(())
         }
         Err(err) => {
-            bail!("Failed to sync link [{:?}]\n{:?}", config.link_root, err);
+            bail!("Failed to sync link [{}]\n{}", config.link_root, err);
         }
     }
 }
