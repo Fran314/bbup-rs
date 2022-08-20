@@ -2,7 +2,7 @@ use super::AbstPath;
 
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq, Clone)]
 pub enum Error {
     #[error("Abstract File System Error: trying to read/write data to object with unknown extension.\nPath: {path}")]
     UnknownExtension { path: String },
@@ -44,4 +44,45 @@ pub fn generr<S: std::string::ToString, T: std::string::ToString>(src: S, err: T
 }
 pub fn error_context<S: std::string::ToString>(context: S) -> impl Fn(&str) -> String {
     move |failure: &str| -> String { format!("{}\nFailed to {}", context.to_string(), failure) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{error_context, generr, inerr, unkext, wrgobj, AbstPath, Error};
+
+    #[test]
+    fn test() {
+        let path = String::from("path/to/something");
+        assert_eq!(
+            unkext(&AbstPath::from(&path)),
+            Error::UnknownExtension { path }
+        );
+
+        let wrgobj_error = Error::OperationOnWrongObject {
+            src: String::from("source"),
+            err: String::from("error"),
+        };
+        assert_eq!(wrgobj("source", "error"), wrgobj_error);
+
+        assert_eq!(
+            inerr("source")(wrgobj_error.clone()),
+            Error::Inner {
+                src: String::from("source"),
+                err: wrgobj_error.to_string()
+            }
+        );
+
+        assert_eq!(
+            generr("source", "error"),
+            Error::Generic {
+                src: String::from("source"),
+                err: String::from("error")
+            }
+        );
+
+        assert_eq!(
+            error_context("Some source")("do something"),
+            String::from("Some source\nFailed to do something")
+        )
+    }
 }

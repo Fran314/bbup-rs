@@ -127,15 +127,25 @@ impl AbstPath {
     }
 
     pub fn exists(&self) -> bool {
-        self.to_path_buf().exists()
+        let path = self.to_path_buf();
+        // The reason why we have to do this `path.is_symlink()` thing is because
+        //	by default PathBuf::exists() follows symlink so if you're checking a
+        //	path pointing to a symlink and the symlink's endpoint doesn't exist,
+        //	PathBuf::exists() will tell you that the path doesn't exists.
+        // Furthermore, PathBuf::exists() doesn't provide a function that does
+        //	what exists does without following symlinks
+        path.is_symlink() || path.exists()
     }
     pub fn object_type(&self) -> Option<ObjectType> {
         let path = self.to_path_buf();
 
-        if !path.exists() {
-            None
-        } else if path.is_symlink() {
+        // The reason behind why we check first if the path is a symlink and
+        //	then if it exists is the same reason for the weird implementation of
+        //	AbstPath::exists() so go see that
+        if path.is_symlink() {
             Some(ObjectType::SymLink)
+        } else if !path.exists() {
+            None
         } else if path.is_dir() {
             Some(ObjectType::Dir)
         } else if path.is_file() {
@@ -238,6 +248,29 @@ mod tests {
     use std::collections::VecDeque;
 
     #[test]
+    fn test() {
+        force_to_string();
+        empty();
+        single();
+        from();
+        to_path_buf();
+        len();
+        is_empty();
+        get();
+        add_first();
+        add_last();
+        strip_first();
+        strip_last();
+        append();
+        parent();
+        file_name();
+        extension();
+        into_iter();
+        into_iter_ref();
+        to_string();
+        exists_and_type();
+    }
+
     fn force_to_string() {
         use super::ForceToString;
         use std::ffi::OsStr;
@@ -249,12 +282,10 @@ mod tests {
         assert_eq!(OsStr::new(path).force_to_string().as_str(), path);
     }
 
-    #[test]
     fn empty() {
         assert_eq!(AbstPath(VecDeque::from([])), AbstPath::empty());
     }
 
-    #[test]
     fn single() {
         assert_eq!(
             AbstPath(VecDeque::from([String::from("test")])),
@@ -268,7 +299,6 @@ mod tests {
         );
     }
 
-    #[test]
     fn from() {
         assert_eq!(
             AbstPath(VecDeque::from([
@@ -299,7 +329,6 @@ mod tests {
         assert_ne!(AbstPath::single("test/path"), AbstPath::from("test/path"));
     }
 
-    #[test]
     fn to_path_buf() {
         use std::path::PathBuf;
         let path = "/home/user/Desktop/something";
@@ -318,7 +347,6 @@ mod tests {
         assert_eq!(AbstPath::from(path).to_path_buf(), PathBuf::from(path));
     }
 
-    #[test]
     fn len() {
         assert_eq!(AbstPath::empty().len(), 0);
         assert_eq!(AbstPath::single("a/b/c/d/e/f").len(), 1);
@@ -337,7 +365,6 @@ mod tests {
         assert_eq!(vec.len(), AbstPath(vec).len())
     }
 
-    #[test]
     fn is_empty() {
         assert!(AbstPath::empty().is_empty());
         assert!(AbstPath::from("").is_empty());
@@ -346,7 +373,6 @@ mod tests {
         assert!(!AbstPath::from("test").is_empty());
     }
 
-    #[test]
     fn get() {
         let first = String::from("first");
         let second = String::from("second");
@@ -371,7 +397,6 @@ mod tests {
         assert_eq!(path.get(path.len()), None);
     }
 
-    #[test]
     fn add_first() {
         use std::path::PathBuf;
 
@@ -415,7 +440,6 @@ mod tests {
         );
     }
 
-    #[test]
     fn add_last() {
         use std::path::PathBuf;
 
@@ -435,7 +459,6 @@ mod tests {
         );
     }
 
-    #[test]
     fn strip_first() {
         use std::path::PathBuf;
 
@@ -460,7 +483,6 @@ mod tests {
         );
     }
 
-    #[test]
     fn strip_last() {
         use std::path::PathBuf;
 
@@ -485,7 +507,6 @@ mod tests {
         );
     }
 
-    #[test]
     fn append() {
         use std::path::PathBuf;
 
@@ -516,7 +537,6 @@ mod tests {
         );
     }
 
-    #[test]
     fn parent() {
         let path = "path/to/somewhere";
         let child = "child";
@@ -526,14 +546,12 @@ mod tests {
         )
     }
 
-    #[test]
     fn file_name() {
         let file = "supersecretpassword.txt";
         let path = format!("path/to/somewhere/{file}");
         assert_eq!(AbstPath::from(path).file_name().unwrap().as_str(), file);
     }
 
-    #[test]
     fn extension() {
         let path = "path/to/some/file.txt";
         assert_eq!(AbstPath::from(path).extension(), Some("txt"));
@@ -548,7 +566,6 @@ mod tests {
         assert_eq!(AbstPath::from(path).extension(), None);
     }
 
-    #[test]
     fn into_iter() {
         let vec = VecDeque::from([
             String::from("path"),
@@ -570,7 +587,6 @@ mod tests {
         assert_eq!(vec_iter.next(), None);
     }
 
-    #[test]
     fn into_iter_ref() {
         let vec = VecDeque::from([
             String::from("path"),
@@ -592,7 +608,6 @@ mod tests {
         assert_eq!(vec_iter.next(), None);
     }
 
-    #[test]
     fn to_string() {
         let path = "/home/user/Desktop/something";
         assert_eq!(AbstPath::from(path).to_string().as_str(), path);
@@ -609,5 +624,77 @@ mod tests {
         assert_eq!(AbstPath::empty().to_string().as_str(), "");
         assert_eq!(AbstPath::single("").to_string().as_str(), "");
         assert_eq!(AbstPath::from("").to_string().as_str(), "");
+    }
+
+    fn exists_and_type() {
+        use super::{ObjectType, ABST_OBJ_HEADER};
+        use std::path::PathBuf;
+        trait SafeAdd {
+            fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf);
+        }
+        impl SafeAdd for (AbstPath, PathBuf) {
+            fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf) {
+                let (abst, pb) = self;
+                let new_abst = abst.add_last(suffix.to_string());
+                let new_pb = pb.join(suffix.to_string());
+                //	make sure the path means actually what I think it mean
+                assert_eq!(new_abst.to_path_buf(), new_pb);
+                (new_abst, new_pb)
+            }
+        }
+
+        let path_bf = PathBuf::from("/tmp/bbup-test-abst_fs-path-exists");
+        let path = (AbstPath::from(&path_bf), path_bf);
+        //	make sure the path means actually what I think it mean
+        assert_eq!(path.0.to_path_buf(), path.1);
+
+        if path.1.exists() {
+            panic!(
+                "path [{:?}] should not exist in order to run this test, but it does exist!",
+                path.1
+            );
+        }
+
+        let result = std::panic::catch_unwind(|| {
+            std::fs::create_dir(&path.1).unwrap();
+
+            let file = path.safe_add_last("file.txt");
+            assert!(!file.0.exists());
+            assert_eq!(file.0.object_type(), None);
+            std::fs::File::create(&file.1).unwrap();
+            assert!(file.0.exists());
+            assert_eq!(file.0.object_type(), Some(ObjectType::File));
+
+            let dir = path.safe_add_last("dir");
+            assert!(!dir.0.exists());
+            assert_eq!(dir.0.object_type(), None);
+            std::fs::create_dir(&dir.1).unwrap();
+            assert!(dir.0.exists());
+            assert_eq!(dir.0.object_type(), Some(ObjectType::Dir));
+
+            let symlink = path.safe_add_last("symlink.ln");
+            assert!(!symlink.0.exists());
+            assert_eq!(symlink.0.object_type(), None);
+            std::os::unix::fs::symlink("some/path/to/somwhere", &symlink.1).unwrap();
+            assert!(symlink.0.exists());
+            assert_eq!(symlink.0.object_type(), Some(ObjectType::SymLink));
+
+            let abst_symlink = path.safe_add_last("abst_symlink.ln");
+            assert!(!abst_symlink.0.exists());
+            assert_eq!(abst_symlink.0.object_type(), None);
+            std::fs::write(
+                abst_symlink.1,
+                format!("{ABST_OBJ_HEADER}\nunix\nsome/path/to/somewhere").as_bytes(),
+            )
+            .unwrap();
+            assert!(abst_symlink.0.exists());
+            assert_eq!(abst_symlink.0.object_type(), Some(ObjectType::SymLink));
+        });
+
+        if path.1.exists() {
+            std::fs::remove_dir_all(&path.1).unwrap();
+        }
+
+        assert!(result.is_ok())
     }
 }

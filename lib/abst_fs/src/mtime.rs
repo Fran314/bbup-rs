@@ -62,16 +62,78 @@ pub fn set_mtime(path: &AbstPath, mtime: &Mtime) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::Mtime;
+    use super::{get_mtime, set_mtime, AbstPath, Mtime};
+    use std::path::PathBuf;
 
-    #[test]
-    fn to_string() {
-        let mtime = Mtime(498705663, 141592653);
-        assert_eq!(format!("{mtime}"), "1985-10-21 01:21:03.141592653");
+    const TEST_MTIME: Mtime = Mtime(498705663, 141592653);
+    const TEST_MTIME_STRING: &str = "1985-10-21 01:21:03.141592653";
+
+    trait SafeAdd {
+        fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf);
+    }
+    impl SafeAdd for (AbstPath, PathBuf) {
+        fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf) {
+            let (abst, pb) = self;
+            let new_abst = abst.add_last(suffix.to_string());
+            let new_pb = pb.join(suffix.to_string());
+            //	make sure the path means actually what I think it mean
+            assert_eq!(new_abst.to_path_buf(), new_pb);
+            (new_abst, new_pb)
+        }
     }
 
-    // #[test]
-    // fn get_set_mtime() {
-    //     unimplemented!("I first have to figure out how to test file system stuff in a safe way");
-    // }
+    #[test]
+    fn test() {
+        to_string();
+        get_set_mtime();
+    }
+
+    fn to_string() {
+        assert_eq!(format!("{TEST_MTIME}"), TEST_MTIME_STRING);
+    }
+
+    fn get_set_mtime() {
+        let path_bf = PathBuf::from("/tmp/bbup-test-abst_fs-mtime");
+        let path = (AbstPath::from(&path_bf), path_bf);
+        //	make sure the path means actually what I think it mean
+        assert_eq!(path.0.to_path_buf(), path.1);
+
+        if path.1.exists() {
+            panic!(
+                "path [{:?}] should not exist in order to run this test, but it does exist!",
+                path.1
+            );
+        }
+
+        let result = std::panic::catch_unwind(|| {
+            std::fs::create_dir(&path.1).unwrap();
+
+            let (dir, _) = path.safe_add_last("dir");
+            std::fs::create_dir(dir.to_path_buf()).unwrap();
+            get_mtime(&dir).unwrap();
+            set_mtime(&dir, &TEST_MTIME).unwrap();
+            assert_eq!(get_mtime(&dir).unwrap(), TEST_MTIME);
+
+            let (symlink, _) = path.safe_add_last("symlink");
+            std::os::unix::fs::symlink("some/path/to/somewhere", symlink.to_path_buf()).unwrap();
+            get_mtime(&symlink).unwrap();
+            set_mtime(&symlink, &TEST_MTIME).unwrap();
+            assert_eq!(get_mtime(&symlink).unwrap(), TEST_MTIME);
+
+            let (file, _) = path.safe_add_last("file");
+            std::fs::File::create(file.to_path_buf()).unwrap();
+            get_mtime(&file).unwrap();
+            set_mtime(&file, &TEST_MTIME).unwrap();
+            assert_eq!(get_mtime(&file).unwrap(), TEST_MTIME);
+
+            let (non_existing_object, _) = path.safe_add_last("non_existing_object");
+            assert!(get_mtime(&non_existing_object).is_err());
+        });
+
+        if path.1.exists() {
+            std::fs::remove_dir_all(&path.1).unwrap();
+        }
+
+        assert!(result.is_ok())
+    }
 }

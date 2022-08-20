@@ -208,3 +208,121 @@ fn trim_newline(s: &mut String) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        create_symlink, read_link, remove_symlink, rename_symlink, AbstPath, Endpoint,
+        ABST_OBJ_HEADER,
+    };
+    use std::path::PathBuf;
+
+    trait SafeAdd {
+        fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf);
+    }
+    impl SafeAdd for (AbstPath, PathBuf) {
+        fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf) {
+            let (abst, pb) = self;
+            let new_abst = abst.add_last(suffix.to_string());
+            let new_pb = pb.join(suffix.to_string());
+            //	make sure the path means actually what I think it mean
+            assert_eq!(new_abst.to_path_buf(), new_pb);
+            (new_abst, new_pb)
+        }
+    }
+
+    #[test]
+    fn test() {
+        let path_bf = PathBuf::from("/tmp/bbup-test-abst_fs-symlink");
+        let path = (AbstPath::from(&path_bf), path_bf);
+        //	make sure the path means actually what I think it mean
+        assert_eq!(path.0.to_path_buf(), path.1);
+
+        if path.1.exists() {
+            panic!(
+                "path [{:?}] should not exist in order to run this test, but it does exist!",
+                path.1
+            );
+        }
+
+        let result = std::panic::catch_unwind(|| {
+            std::fs::create_dir(&path.1).unwrap();
+
+            let (symlink, symlink_pb) = path.safe_add_last("symlink");
+            let path_to_somewhere = String::from("some/path/to/somewhere");
+            let unix_endpoint = Endpoint::Unix(path_to_somewhere.clone());
+            assert!(!symlink.exists());
+            create_symlink(&symlink, unix_endpoint.clone()).unwrap();
+            assert!(symlink.exists());
+            assert_eq!(read_link(&symlink).unwrap(), unix_endpoint);
+            remove_symlink(&symlink).unwrap();
+
+            assert!(!symlink.exists());
+            std::fs::write(
+                &symlink_pb,
+                format!("{ABST_OBJ_HEADER}\nunix\n{path_to_somewhere}"),
+            )
+            .unwrap();
+            assert!(symlink.exists());
+            assert_eq!(read_link(&symlink).unwrap(), unix_endpoint);
+            remove_symlink(&symlink).unwrap();
+
+            std::fs::write(
+                &symlink_pb,
+                format!("{ABST_OBJ_HEADER}\nfake_os\n{path_to_somewhere}"),
+            )
+            .unwrap();
+            assert!(read_link(&symlink).is_err());
+            std::fs::remove_file(&symlink_pb).unwrap();
+
+            std::fs::write(
+                &symlink_pb,
+                format!("{ABST_OBJ_HEADER}\nwindows\nneither-dir-nor-file\n{path_to_somewhere}"),
+            )
+            .unwrap();
+            assert!(read_link(&symlink).is_err());
+            std::fs::remove_file(&symlink_pb).unwrap();
+
+            let windows_file_endpoint =
+                Endpoint::Windows(false, String::from("some/path/to/some/file"));
+            assert!(!symlink.exists());
+            create_symlink(&symlink, windows_file_endpoint.clone()).unwrap();
+            assert!(symlink.exists());
+            assert_eq!(read_link(&symlink).unwrap(), windows_file_endpoint);
+            remove_symlink(&symlink).unwrap();
+
+            let windows_dir_endpoint =
+                Endpoint::Windows(true, String::from("some/path/to/some/directory"));
+            assert!(!symlink.exists());
+            create_symlink(&symlink, windows_dir_endpoint.clone()).unwrap();
+            assert!(symlink.exists());
+            assert_eq!(read_link(&symlink).unwrap(), windows_dir_endpoint);
+            remove_symlink(&symlink).unwrap();
+
+            let (other_symlink, _) = path.safe_add_last("other_symlink");
+            create_symlink(&symlink, unix_endpoint).unwrap();
+            rename_symlink(&symlink, &other_symlink).unwrap();
+            rename_symlink(&other_symlink, &symlink).unwrap();
+            remove_symlink(&symlink).unwrap();
+            assert!(remove_symlink(&symlink).is_err());
+            assert!(remove_symlink(&other_symlink).is_err());
+
+            let (non_existing_symlink, _) = path.safe_add_last("non_existing_symlink");
+            assert!(read_link(&non_existing_symlink).is_err());
+            assert!(rename_symlink(&non_existing_symlink, &other_symlink).is_err());
+            assert!(remove_symlink(&non_existing_symlink).is_err());
+
+            let (file, _) = path.safe_add_last("file");
+            std::fs::File::create(file.to_path_buf()).unwrap();
+            assert!(read_link(&file).is_err());
+            assert!(rename_symlink(&file, &other_symlink).is_err());
+            assert!(remove_symlink(&file).is_err());
+        });
+
+        if path.1.exists() {
+            std::fs::remove_dir_all(&path.1).unwrap();
+        }
+
+        assert!(result.is_ok())
+    }
+}

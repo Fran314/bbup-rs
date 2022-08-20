@@ -120,27 +120,41 @@ mod tests {
     };
     use std::path::PathBuf;
 
+    trait SafeAdd {
+        fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf);
+    }
+    impl SafeAdd for (AbstPath, PathBuf) {
+        fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf) {
+            let (abst, pb) = self;
+            let new_abst = abst.add_last(suffix.to_string());
+            let new_pb = pb.join(suffix.to_string());
+            //	make sure the path means actually what I think it mean
+            assert_eq!(new_abst.to_path_buf(), new_pb);
+            (new_abst, new_pb)
+        }
+    }
+
     #[test]
     fn test() {
         use std::io::{BufReader, Read, Write};
 
         let path_bf = PathBuf::from("/tmp/bbup-test-abst_fs-file");
-        let path = AbstPath::from(&path_bf);
-        //	make sure paths mean actually what I think they mean
-        assert_eq!(path.to_path_buf(), path_bf);
+        let path = (AbstPath::from(&path_bf), path_bf);
+        //	make sure the path means actually what I think it mean
+        assert_eq!(path.0.to_path_buf(), path.1);
 
-        if path_bf.exists() {
+        if path.1.exists() {
             panic!(
-                "path [{path_bf:?}] should not exist in order to run this test, but it does exist!"
+                "path [{:?}] should not exist in order to run this test, but it does exist!",
+                path.1
             );
         }
 
         let result = std::panic::catch_unwind(|| {
-            std::fs::create_dir(&path_bf).unwrap();
+            std::fs::create_dir(&path.1).unwrap();
 
             // create_file
-            let file = path.add_last("file.txt");
-            assert_eq!(file.to_path_buf(), path_bf.join("file.txt"));
+            let (file, _) = path.safe_add_last("file.txt");
             assert!(!file.exists());
             create_file(&file).unwrap();
             assert!(file.exists());
@@ -160,36 +174,31 @@ mod tests {
             reader.read_to_string(&mut buffer).unwrap();
             assert_eq!(buffer, String::from(dummy_content));
 
-            let dir = path.add_last("dir");
-            assert_eq!(dir.to_path_buf(), path_bf.join("dir"));
+            let (dir, _) = path.safe_add_last("dir");
             std::fs::create_dir(dir.to_path_buf()).unwrap();
             assert!(read_file(&dir).is_err());
 
             // rename_file
-            let file2 = path.add_last("file2");
-            assert_eq!(file2.to_path_buf(), path_bf.join("file2"));
+            let (file2, _) = path.safe_add_last("file2");
             rename_file(&file, &file2).unwrap();
             rename_file(&file2, &file).unwrap();
 
-            let non_existing_file = path.add_last("file-that-doesn't-exist.txt");
-            assert_eq!(
-                non_existing_file.to_path_buf(),
-                path_bf.join("file-that-doesn't-exist.txt")
-            );
+            let (non_existing_file, _) = path.safe_add_last("file-that-doesn't-exist.txt");
+            assert!(read_file(&non_existing_file).is_err());
             assert!(rename_file(&non_existing_file, &file2).is_err());
 
-            let symlink = path.add_last("symlink.ln");
-            assert_eq!(symlink.to_path_buf(), path_bf.join("symlink.ln"));
+            let (symlink, _) = path.safe_add_last("symlink.ln");
             std::os::unix::fs::symlink(".", symlink.to_path_buf()).unwrap();
             assert!(rename_file(&symlink, &file2).is_err());
 
             // remove_file
             remove_file(&file).unwrap();
+            assert!(remove_file(&file).is_err());
             assert!(remove_file(&symlink).is_err());
         });
 
-        if path_bf.exists() {
-            std::fs::remove_dir_all(path_bf).unwrap();
+        if path.1.exists() {
+            std::fs::remove_dir_all(&path.1).unwrap();
         }
 
         assert!(result.is_ok())
@@ -200,23 +209,22 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
         let path_bf = PathBuf::from("/tmp/bbup-test-abst_fs-file-async");
-        let path_bf_clone = path_bf.clone();
-        let path = AbstPath::from(&path_bf);
-        //	make sure paths mean actually what I think they mean
-        assert_eq!(path.to_path_buf(), path_bf);
+        let path = (AbstPath::from(&path_bf), path_bf);
+        //	make sure the path means actually what I think it mean
+        assert_eq!(path.0.to_path_buf(), path.1);
 
-        if path_bf.exists() {
+        if path.1.exists() {
             panic!(
-                "path [{path_bf:?}] should not exist in order to run this test, but it does exist!"
+                "path [{:?}] should not exist in order to run this test, but it does exist!",
+                path.1
             );
         }
 
         let result = std::panic::catch_unwind(|| async {
-            std::fs::create_dir(&path_bf).unwrap();
+            std::fs::create_dir(&path.1).unwrap();
 
             // async_create_file
-            let file = path.add_last("file.txt");
-            assert_eq!(file.to_path_buf(), path_bf.join("file.txt"));
+            let (file, _) = path.safe_add_last("file.txt");
             assert!(!file.exists());
             async_create_file(&file).await.unwrap();
             assert!(file.exists());
@@ -236,14 +244,13 @@ mod tests {
             reader.read_to_string(&mut buffer).await.unwrap();
             assert_eq!(buffer, String::from(dummy_content));
 
-            let dir = path.add_last("dir");
-            assert_eq!(dir.to_path_buf(), path_bf.join("dir"));
+            let (dir, _) = path.safe_add_last("dir");
             std::fs::create_dir(dir.to_path_buf()).unwrap();
             assert!(async_read_file(&dir).await.is_err());
         });
 
-        if path_bf_clone.exists() {
-            std::fs::remove_dir_all(path_bf_clone).unwrap();
+        if path.1.exists() {
+            std::fs::remove_dir_all(&path.1).unwrap();
         }
 
         assert!(result.is_ok())
