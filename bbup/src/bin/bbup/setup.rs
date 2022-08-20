@@ -1,4 +1,4 @@
-use crate::{ClientConfig, ClientSettings};
+use super::{ClientConfig, ClientSettings};
 
 use abst_fs::AbstPath;
 

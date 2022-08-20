@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use abst_fs as fs;
 
-mod smodel;
-use smodel::*;
+mod model;
+use model::*;
 mod process;
 mod setup;
 

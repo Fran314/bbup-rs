@@ -1,4 +1,4 @@
-use super::{Delta, DeltaNode};
+use super::{delta::UnmergeableDelta, Delta, DeltaNode};
 
 use abst_fs::AbstPath;
 
@@ -49,7 +49,7 @@ impl Commit {
 
 #[derive(Error, Debug)]
 #[error("Get Update Delta Error: Failed to get the update delta since the last known commit\nproblematic commit id: {0}\nreason: {1}")]
-pub struct GetUpdError(String, super::delta::UnmergeableDelta);
+pub struct GetUpdError(String, UnmergeableDelta);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CommitList(Vec<Commit>);

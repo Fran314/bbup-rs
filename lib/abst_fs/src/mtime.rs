@@ -6,9 +6,6 @@ use super::{error_context, inerr, AbstPath, Error};
 pub struct Mtime(i64, u32);
 
 impl Mtime {
-    pub fn unix_epoch() -> Mtime {
-        Mtime(0, 0)
-    }
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes: Vec<u8> = Vec::new();
         bytes.append(&mut self.0.to_be_bytes().to_vec());
@@ -61,4 +58,20 @@ pub fn set_mtime(path: &AbstPath, mtime: &Mtime) -> Result<(), Error> {
         .map_err(inerr(errctx("set mime")))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Mtime;
+
+    #[test]
+    fn to_string() {
+        let mtime = Mtime(498705663, 141592653);
+        assert_eq!(format!("{mtime}"), "1985-10-21 01:21:03.141592653");
+    }
+
+    // #[test]
+    // fn get_set_mtime() {
+    //     unimplemented!("I first have to figure out how to test file system stuff in a safe way");
+    // }
 }

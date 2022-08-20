@@ -1,5 +1,4 @@
-use crate::protocol;
-use crate::{ProcessConfig, ProcessState};
+use super::{protocol, ProcessConfig, ProcessState};
 
 use tokio::net::TcpStream;
 

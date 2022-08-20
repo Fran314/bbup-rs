@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use abst_fs::{self as fs, AbstPath};
-use fs_vcs::{Delta, ExcludeList, FSTree};
+use fs_vcs::{Commit, Delta, ExcludeList, FSTree};
 
 use anyhow::{Context, Result};
 
@@ -45,14 +45,6 @@ pub struct ProcessState {
     pub update: Option<(String, Delta)>,
 }
 impl ProcessState {
-    fn lkc_path(link_root: &AbstPath) -> AbstPath {
-        link_root
-            .add_last(".bbup")
-            .add_last("last-known-commit.bin")
-    }
-    fn ofst_path(link_root: &AbstPath) -> AbstPath {
-        link_root.add_last(".bbup").add_last("old-fstree.bin")
-    }
     pub fn from(lkc: String, last_known_fstree: FSTree) -> ProcessState {
         ProcessState {
             last_known_commit: lkc,
@@ -61,6 +53,17 @@ impl ProcessState {
             local_delta: None,
             update: None,
         }
+    }
+    pub fn init_state() -> ProcessState {
+        ProcessState::from(Commit::base_commit().commit_id, FSTree::empty())
+    }
+    fn lkc_path(link_root: &AbstPath) -> AbstPath {
+        link_root
+            .add_last(".bbup")
+            .add_last("last-known-commit.bin")
+    }
+    fn ofst_path(link_root: &AbstPath) -> AbstPath {
+        link_root.add_last(".bbup").add_last("old-fstree.bin")
     }
     pub fn load(link_root: &AbstPath) -> Result<ProcessState> {
         let lkc: String = fs::load(&ProcessState::lkc_path(link_root))
