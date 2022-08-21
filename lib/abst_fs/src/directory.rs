@@ -152,37 +152,33 @@ mod tests {
         let path = (AbstPath::from(&path_bf), path_bf);
         //	make sure the path means actually what I think it mean
         assert_eq!(path.0.to_path_buf(), path.1);
-
-        if path.1.exists() {
-            panic!(
-                "path [{:?}] should not exist in order to run this test, but it does exist!",
-                path.1
-            );
-        }
+        assert!(!path.1.exists());
+        std::fs::create_dir(&path.1).unwrap();
 
         let result = std::panic::catch_unwind(|| {
             // create_dir
-            assert!(!path.0.exists());
-            create_dir(&path.0).expect("could not create dir");
-            create_dir(&path.0).expect("failed to do nothing on creating dir that already exists");
-            assert!(path.0.exists());
-            assert_eq!(path.0.object_type(), Some(ObjectType::Dir));
-            let file = path.safe_add_last("file.txt");
+            let dir = path.safe_add_last("dir");
+            assert!(!dir.0.exists());
+            create_dir(&dir.0).expect("could not create dir");
+            create_dir(&dir.0).expect("failed to do nothing on creating dir that already exists");
+            assert!(dir.0.exists());
+            assert_eq!(dir.0.object_type(), Some(ObjectType::Dir));
+            let file = dir.safe_add_last("file.txt");
             std::fs::File::create(&file.1).unwrap();
             assert!(create_dir(&file.0).is_err());
             std::fs::remove_file(&file.1).unwrap();
 
             // list_dir_content
-            assert_eq!(list_dir_content(&path.0).unwrap(), vec![]);
+            assert_eq!(list_dir_content(&dir.0).unwrap(), vec![]);
 
-            let (non_existing_dir, _) = path.safe_add_last("non-existing-dir");
+            let (non_existing_dir, _) = dir.safe_add_last("non-existing-dir");
             assert!(list_dir_content(&non_existing_dir).is_err());
-            let (file1, _) = path.safe_add_last("file1.txt");
-            let (file2, _) = path.safe_add_last("file2.png");
-            let (symlink1, _) = path.safe_add_last("symlink1.ln");
-            let (symlink2, _) = path.safe_add_last("symlink2");
-            let (dir1, _) = path.safe_add_last("dir1");
-            let (dir2, _) = path.safe_add_last("dir2");
+            let (file1, _) = dir.safe_add_last("file1.txt");
+            let (file2, _) = dir.safe_add_last("file2.png");
+            let (symlink1, _) = dir.safe_add_last("symlink1.ln");
+            let (symlink2, _) = dir.safe_add_last("symlink2");
+            let (dir1, _) = dir.safe_add_last("dir1");
+            let (dir2, _) = dir.safe_add_last("dir2");
             std::fs::File::create(file1.to_path_buf()).unwrap();
             assert!(list_dir_content(&file1).is_err());
             std::fs::File::create(file2.to_path_buf()).unwrap();
@@ -190,7 +186,7 @@ mod tests {
             std::os::unix::fs::symlink(".", symlink2.to_path_buf()).unwrap();
             create_dir(&dir1).unwrap();
             create_dir(&dir2).unwrap();
-            let mut dir_list = list_dir_content(&path.0)
+            let mut dir_list = list_dir_content(&dir.0)
                 .unwrap()
                 .into_iter()
                 .map(|path| path.to_string())
@@ -204,27 +200,27 @@ mod tests {
             assert_eq!(dir_list, artificialdir_list);
 
             // make_clean_dir
-            assert!(path.0.exists());
-            assert_ne!(list_dir_content(&path.0).unwrap(), vec![]);
+            assert!(dir.0.exists());
+            assert_ne!(list_dir_content(&dir.0).unwrap(), vec![]);
 
             assert!(make_clean_dir(&file1).is_err());
-            make_clean_dir(&path.0).unwrap();
-            assert!(path.0.exists());
-            assert_eq!(list_dir_content(&path.0).unwrap(), vec![]);
+            make_clean_dir(&dir.0).unwrap();
+            assert!(dir.0.exists());
+            assert_eq!(list_dir_content(&dir.0).unwrap(), vec![]);
 
-            make_clean_dir(&path.0).unwrap();
-            assert!(path.0.exists());
-            assert_eq!(list_dir_content(&path.0).unwrap(), vec![]);
+            make_clean_dir(&dir.0).unwrap();
+            assert!(dir.0.exists());
+            assert_eq!(list_dir_content(&dir.0).unwrap(), vec![]);
 
-            remove_dir(&path.0).unwrap();
-            assert!(!path.0.exists());
+            remove_dir(&dir.0).unwrap();
+            assert!(!dir.0.exists());
 
-            make_clean_dir(&path.0).unwrap();
-            assert!(path.0.exists());
-            assert_eq!(list_dir_content(&path.0).unwrap(), vec![]);
+            make_clean_dir(&dir.0).unwrap();
+            assert!(dir.0.exists());
+            assert_eq!(list_dir_content(&dir.0).unwrap(), vec![]);
 
             // ensure_parent
-            let parent = path.safe_add_last("test").safe_add_last("something");
+            let parent = dir.safe_add_last("test").safe_add_last("something");
             let (child, _) = parent.safe_add_last("file.txt");
             let parent = parent.0;
             assert!(!parent.exists());
@@ -236,22 +232,20 @@ mod tests {
             remove_dir(&parent).unwrap();
             assert!(!parent.exists());
             assert!(remove_dir(&parent).is_err());
-            let (file, _) = path.safe_add_last("file.txt");
+            let (file, _) = dir.safe_add_last("file.txt");
             std::fs::File::create(file.to_path_buf()).unwrap();
             assert!(remove_dir(&file).is_err());
 
             // remove_dir_all
             assert!(remove_dir_all(&file).is_err());
-            assert!(path.0.exists());
-            remove_dir_all(&path.0).unwrap();
-            assert!(remove_dir_all(&path.0).is_err());
+            assert!(dir.0.exists());
+            remove_dir_all(&dir.0).unwrap();
+            assert!(remove_dir_all(&dir.0).is_err());
             assert!(!parent.exists());
             assert!(remove_dir(&parent).is_err());
         });
 
-        if path.1.exists() {
-            std::fs::remove_dir_all(path.1).unwrap();
-        }
+        std::fs::remove_dir_all(path.1).unwrap();
 
         assert!(result.is_ok())
     }

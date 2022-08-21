@@ -211,6 +211,8 @@ fn trim_newline(s: &mut String) {
 
 #[cfg(test)]
 mod tests {
+    use crate::symlink::trim_newline;
+
     use super::{
         create_symlink, read_link, remove_symlink, rename_symlink, AbstPath, Endpoint,
         ABST_OBJ_HEADER,
@@ -233,21 +235,34 @@ mod tests {
 
     #[test]
     fn test() {
+        let mut text = String::from("no new line");
+        trim_newline(&mut text);
+        assert_eq!(text, String::from("no new line"));
+
+        text = String::from("unix new line\n");
+        trim_newline(&mut text);
+        assert_eq!(text, String::from("unix new line"));
+
+        text = String::from("windows new line\r\n");
+        trim_newline(&mut text);
+        assert_eq!(text, String::from("windows new line"));
+
+        text = String::from("multiple new lines\n\n");
+        trim_newline(&mut text);
+        assert_eq!(text, String::from("multiple new lines\n"));
+
+        text = String::from("multiline\ntext");
+        trim_newline(&mut text);
+        assert_eq!(text, String::from("multiline\ntext"));
+
         let path_bf = PathBuf::from("/tmp/bbup-test-abst_fs-symlink");
         let path = (AbstPath::from(&path_bf), path_bf);
         //	make sure the path means actually what I think it mean
         assert_eq!(path.0.to_path_buf(), path.1);
-
-        if path.1.exists() {
-            panic!(
-                "path [{:?}] should not exist in order to run this test, but it does exist!",
-                path.1
-            );
-        }
+        assert!(!path.1.exists());
+        std::fs::create_dir(&path.1).unwrap();
 
         let result = std::panic::catch_unwind(|| {
-            std::fs::create_dir(&path.1).unwrap();
-
             let (symlink, symlink_pb) = path.safe_add_last("symlink");
             let path_to_somewhere = String::from("some/path/to/somewhere");
             let unix_endpoint = Endpoint::Unix(path_to_somewhere.clone());
@@ -319,9 +334,7 @@ mod tests {
             assert!(remove_symlink(&file).is_err());
         });
 
-        if path.1.exists() {
-            std::fs::remove_dir_all(&path.1).unwrap();
-        }
+        std::fs::remove_dir_all(&path.1).unwrap();
 
         assert!(result.is_ok())
     }

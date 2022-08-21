@@ -244,31 +244,44 @@ impl Endpoint {
 
 #[cfg(test)]
 mod tests {
-    use super::AbstPath;
+    use super::{AbstPath, Endpoint};
     use std::collections::VecDeque;
 
     #[test]
     fn test() {
+        // ForceToString
         force_to_string();
+
+        // AbstPath
         empty();
         single();
         from();
+
         to_path_buf();
+
         len();
         is_empty();
         get();
+
         add_first();
         add_last();
         strip_first();
         strip_last();
         append();
+
         parent();
         file_name();
         extension();
+
         into_iter();
         into_iter_ref();
+
         to_string();
+
         exists_and_type();
+
+        // Endpoint
+        as_bytes();
     }
 
     fn force_to_string() {
@@ -647,17 +660,10 @@ mod tests {
         let path = (AbstPath::from(&path_bf), path_bf);
         //	make sure the path means actually what I think it mean
         assert_eq!(path.0.to_path_buf(), path.1);
-
-        if path.1.exists() {
-            panic!(
-                "path [{:?}] should not exist in order to run this test, but it does exist!",
-                path.1
-            );
-        }
+        assert!(!path.1.exists());
+        std::fs::create_dir(&path.1).unwrap();
 
         let result = std::panic::catch_unwind(|| {
-            std::fs::create_dir(&path.1).unwrap();
-
             let file = path.safe_add_last("file.txt");
             assert!(!file.0.exists());
             assert_eq!(file.0.object_type(), None);
@@ -691,10 +697,37 @@ mod tests {
             assert_eq!(abst_symlink.0.object_type(), Some(ObjectType::SymLink));
         });
 
-        if path.1.exists() {
-            std::fs::remove_dir_all(&path.1).unwrap();
-        }
+        std::fs::remove_dir_all(&path.1).unwrap();
 
         assert!(result.is_ok())
+    }
+
+    fn as_bytes() {
+        assert_ne!(
+            Endpoint::Unix(String::from("some/path/to/somewhere")).as_bytes(),
+            Endpoint::Unix(String::from("path/to/somewhere/else")).as_bytes()
+        );
+
+        assert_ne!(
+            Endpoint::Windows(true, String::from("some/path/to/somewhere")).as_bytes(),
+            Endpoint::Windows(true, String::from("path/to/somewhere/else")).as_bytes()
+        );
+        assert_ne!(
+            Endpoint::Windows(false, String::from("some/path/to/somewhere")).as_bytes(),
+            Endpoint::Windows(false, String::from("path/to/somewhere/else")).as_bytes()
+        );
+        assert_ne!(
+            Endpoint::Windows(true, String::from("some/path/to/somewhere")).as_bytes(),
+            Endpoint::Windows(false, String::from("some/path/to/somewhere")).as_bytes()
+        );
+
+        assert_ne!(
+            Endpoint::Unix(String::from("some/path/to/somewhere")).as_bytes(),
+            Endpoint::Windows(true, String::from("some/path/to/somewhere")).as_bytes()
+        );
+        assert_ne!(
+            Endpoint::Unix(String::from("some/path/to/somewhere")).as_bytes(),
+            Endpoint::Windows(false, String::from("some/path/to/somewhere")).as_bytes()
+        );
     }
 }

@@ -6,6 +6,9 @@ use super::{error_context, inerr, AbstPath, Error};
 pub struct Mtime(i64, u32);
 
 impl Mtime {
+    pub fn from(time: i64, nanoseconds: u32) -> Mtime {
+        Mtime(time, nanoseconds)
+    }
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes: Vec<u8> = Vec::new();
         bytes.append(&mut self.0.to_be_bytes().to_vec());
@@ -84,8 +87,32 @@ mod tests {
 
     #[test]
     fn test() {
+        from();
+        to_bytes();
         to_string();
         get_set_mtime();
+    }
+
+    fn from() {
+        assert_eq!(TEST_MTIME, Mtime::from(498705663, 141592653));
+        assert_eq!(
+            Mtime(1132648943, 735182781),
+            Mtime::from(1132648943, 735182781)
+        );
+    }
+    fn to_bytes() {
+        assert_ne!(
+            TEST_MTIME.to_bytes(),
+            Mtime(1132648943, 141592653).to_bytes()
+        );
+        assert_ne!(
+            TEST_MTIME.to_bytes(),
+            Mtime(498705663, 735182781).to_bytes()
+        );
+        assert_ne!(
+            TEST_MTIME.to_bytes(),
+            Mtime(1132648943, 735182781).to_bytes()
+        );
     }
 
     fn to_string() {
@@ -97,17 +124,11 @@ mod tests {
         let path = (AbstPath::from(&path_bf), path_bf);
         //	make sure the path means actually what I think it mean
         assert_eq!(path.0.to_path_buf(), path.1);
+        assert!(!path.1.exists());
 
-        if path.1.exists() {
-            panic!(
-                "path [{:?}] should not exist in order to run this test, but it does exist!",
-                path.1
-            );
-        }
+        std::fs::create_dir(&path.1).unwrap();
 
         let result = std::panic::catch_unwind(|| {
-            std::fs::create_dir(&path.1).unwrap();
-
             let (dir, _) = path.safe_add_last("dir");
             std::fs::create_dir(dir.to_path_buf()).unwrap();
             get_mtime(&dir).unwrap();
@@ -130,9 +151,7 @@ mod tests {
             assert!(get_mtime(&non_existing_object).is_err());
         });
 
-        if path.1.exists() {
-            std::fs::remove_dir_all(&path.1).unwrap();
-        }
+        std::fs::remove_dir_all(&path.1).unwrap();
 
         assert!(result.is_ok())
     }

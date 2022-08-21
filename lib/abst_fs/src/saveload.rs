@@ -80,8 +80,8 @@ mod tests {
         string: String,
         vec: Vec<TestStruct>,
     }
-    impl Default for TestStruct {
-        fn default() -> Self {
+    impl TestStruct {
+        fn test_default() -> Self {
             let depth2 = TestStruct {
                 byte: 255,
                 int: 3141592653589793238,
@@ -129,42 +129,35 @@ mod tests {
         let path = (AbstPath::from(&path_bf), path_bf);
         //	make sure the path means actually what I think it mean
         assert_eq!(path.0.to_path_buf(), path.1);
-
-        if path.1.exists() {
-            panic!(
-                "path [{:?}] should not exist in order to run this test, but it does exist!",
-                path.1
-            );
-        }
+        assert!(!path.1.exists());
+        std::fs::create_dir(&path.1).unwrap();
 
         let result = std::panic::catch_unwind(|| {
-            std::fs::create_dir(&path.1).unwrap();
-
             let (file_bin, _) = path.safe_add_last("file.bin");
             assert_eq!(get_ext(&file_bin), Some(Ext::Bin));
             assert!(load::<TestStruct>(&file_bin).is_err());
-            save(&file_bin, &TestStruct::default()).unwrap();
+            save(&file_bin, &TestStruct::test_default()).unwrap();
             assert_eq!(
                 load::<TestStruct>(&file_bin).unwrap(),
-                TestStruct::default()
+                TestStruct::test_default()
             );
 
             let (file_toml, _) = path.safe_add_last("file.toml");
             assert_eq!(get_ext(&file_toml), Some(Ext::Toml));
             assert!(load::<TestStruct>(&file_toml).is_err());
-            save(&file_toml, &TestStruct::default()).unwrap();
+            save(&file_toml, &TestStruct::test_default()).unwrap();
             assert_eq!(
                 load::<TestStruct>(&file_toml).unwrap(),
-                TestStruct::default()
+                TestStruct::test_default()
             );
 
             let (file_txt, file_txt_pb) = path.safe_add_last("file.txt");
             assert_eq!(get_ext(&file_txt), None);
             assert!(load::<TestStruct>(&file_txt).is_err());
-            assert!(save(&file_txt, &TestStruct::default()).is_err());
+            assert!(save(&file_txt, &TestStruct::test_default()).is_err());
             std::fs::write(
                 file_txt_pb,
-                bincode::serialize(&TestStruct::default()).unwrap(),
+                bincode::serialize(&TestStruct::test_default()).unwrap(),
             )
             .unwrap();
             assert!(load::<TestStruct>(&file_txt).is_err());
@@ -172,17 +165,17 @@ mod tests {
             let (symlink, symlink_pb) = path.safe_add_last("symlink");
             assert_eq!(get_ext(&symlink), None);
             assert!(load::<TestStruct>(&symlink).is_err());
-            assert!(save(&symlink, &TestStruct::default()).is_err());
+            assert!(save(&symlink, &TestStruct::test_default()).is_err());
             std::os::unix::fs::symlink("some/path/to/somewhere", symlink_pb).unwrap();
             assert!(load::<TestStruct>(&symlink).is_err());
 
             let (extensionless_file, _) = path.safe_add_last("extensionless_file");
             assert_eq!(get_ext(&extensionless_file), None);
             assert!(load::<TestStruct>(&extensionless_file).is_err());
-            assert!(save(&extensionless_file, &TestStruct::default()).is_err());
+            assert!(save(&extensionless_file, &TestStruct::test_default()).is_err());
             std::fs::write(
                 extensionless_file.to_path_buf(),
-                bincode::serialize(&TestStruct::default()).unwrap(),
+                bincode::serialize(&TestStruct::test_default()).unwrap(),
             )
             .unwrap();
             assert!(load::<TestStruct>(&extensionless_file).is_err());
@@ -192,9 +185,7 @@ mod tests {
             assert!(load::<TestStruct>(&non_existing_file).is_err());
         });
 
-        if path.1.exists() {
-            std::fs::remove_dir_all(&path.1).unwrap();
-        }
+        std::fs::remove_dir_all(&path.1).unwrap();
 
         assert!(result.is_ok())
     }

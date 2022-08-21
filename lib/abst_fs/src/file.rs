@@ -142,17 +142,10 @@ mod tests {
         let path = (AbstPath::from(&path_bf), path_bf);
         //	make sure the path means actually what I think it mean
         assert_eq!(path.0.to_path_buf(), path.1);
-
-        if path.1.exists() {
-            panic!(
-                "path [{:?}] should not exist in order to run this test, but it does exist!",
-                path.1
-            );
-        }
+        assert!(!path.1.exists());
+        std::fs::create_dir(&path.1).unwrap();
 
         let result = std::panic::catch_unwind(|| {
-            std::fs::create_dir(&path.1).unwrap();
-
             // create_file
             let (file, _) = path.safe_add_last("file.txt");
             assert!(!file.exists());
@@ -196,11 +189,7 @@ mod tests {
             assert!(remove_file(&file).is_err());
             assert!(remove_file(&symlink).is_err());
         });
-
-        if path.1.exists() {
-            std::fs::remove_dir_all(&path.1).unwrap();
-        }
-
+        std::fs::remove_dir_all(&path.1).unwrap();
         assert!(result.is_ok())
     }
 
@@ -212,17 +201,10 @@ mod tests {
         let path = (AbstPath::from(&path_bf), path_bf);
         //	make sure the path means actually what I think it mean
         assert_eq!(path.0.to_path_buf(), path.1);
-
-        if path.1.exists() {
-            panic!(
-                "path [{:?}] should not exist in order to run this test, but it does exist!",
-                path.1
-            );
-        }
+        assert!(!path.1.exists());
+        std::fs::create_dir(&path.1).unwrap();
 
         let result = std::panic::catch_unwind(|| async {
-            std::fs::create_dir(&path.1).unwrap();
-
             // async_create_file
             let (file, _) = path.safe_add_last("file.txt");
             assert!(!file.exists());
@@ -249,9 +231,7 @@ mod tests {
             assert!(async_read_file(&dir).await.is_err());
         });
 
-        if path.1.exists() {
-            std::fs::remove_dir_all(&path.1).unwrap();
-        }
+        std::fs::remove_dir_all(&path.1).unwrap();
 
         assert!(result.is_ok())
     }
