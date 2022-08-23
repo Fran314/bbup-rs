@@ -12,7 +12,7 @@ The precompiled targets to choose between are:
 | Target | Intended system |
 | --- | --- |
 | **x86_64-unknown-linux-gnu** | generic 64bit Linux system |
-| **x86_64-pc-windows-gnu** | generig 64bit Windows system |
+| **x86_64-pc-windows-gnu** | generic 64bit Windows system |
 | **armv7-unknown-linux-gnueabihf** | Raspberry Pi 32bit, ... |
 | **aarch64-unknown-linux-gnu** | Raspberry Pi 64bit, ... |
 

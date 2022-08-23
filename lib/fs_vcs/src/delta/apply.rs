@@ -276,29 +276,27 @@ impl FSTree {
                                         // Leave mtime unchanged
                                     }
                                 }
-                                subtree.apply_delta(subdelta).map_err(push_inapp(name))?;
-                                // *subtree =
-                                //     subtree.try_undo_delta(subdelta).map_err(push_inapp(name))?;
+                                subtree.undo_delta(subdelta).map_err(push_inapp(name))?;
                                 *hash = hash_tree(subtree);
                             }
                             FSNode::File(_, _) => {
                                 return Err(inapperr(
-                                name,
-                                "delta claims this node is a directory, but it is a file in tree",
-                            ));
+									name,
+									"delta claims this node is a directory, but it is a file in tree",
+								));
                             }
                             FSNode::SymLink(_, _) => {
                                 return Err(inapperr(
-								name,
-								"delta claims this node is a directory, but it is a symlink in tree",
-							));
+									name,
+									"delta claims this node is a directory, but it is a symlink in tree",
+								));
                             }
                         },
                         Vacant(_) => {
                             return Err(inapperr(
-                            name,
-                            "delta claims this node is a directory, but it does not exist in tree",
-                        ));
+								name,
+								"delta claims this node is a directory, but it does not exist in tree",
+							));
                         }
                     }
                 }

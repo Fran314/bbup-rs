@@ -64,21 +64,11 @@ impl PartialEq for FSNode {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct FSTree(pub HashMap<String, FSNode>);
 impl FSTree {
     pub fn empty() -> FSTree {
         FSTree(HashMap::new())
-    }
-}
-impl PartialEq for FSTree {
-    fn eq(&self, other: &Self) -> bool {
-        let mut left = self.0.iter().collect::<Vec<(&String, &FSNode)>>();
-        left.sort_by(|(a, _), (b, _)| a.cmp(b));
-        let mut right = other.0.iter().collect::<Vec<(&String, &FSNode)>>();
-        right.sort_by(|(a, _), (b, _)| a.cmp(b));
-
-        left == right
     }
 }
 
@@ -217,31 +207,36 @@ mod tests {
                 Mtime::from(498705720, 271828182),
                 hasher::hash_bytes(Endpoint::Unix("some/path/to/somewhere".to_string()).as_bytes()),
             );
-            let file1 = FSNode::File(
-                Mtime::from(498705780, 161803398),
-                hasher::hash_bytes(b"none of your business"),
-            );
-            let symlink1 = FSNode::SymLink(
-                Mtime::from(498705720, 271828182),
-                hasher::hash_bytes(
-                    Endpoint::Unix("another/path/to/somewhere/else".to_string()).as_bytes(),
-                ),
-            );
-            let dir1 = FSNode::Dir(
-                Mtime::from(498705840, 141421356),
-                hasher::hash_bytes(b""),
-                FSTree(HashMap::from([])),
-            );
-            let dir_subtree = FSTree(HashMap::from([
-                (String::from("dir1"), dir1),
-                (String::from("file1"), file1),
-                (String::from("symlink1"), symlink1),
-            ]));
-            let dir = FSNode::Dir(
-                Mtime::from(498705900, 628318530),
-                hash_tree(&dir_subtree),
-                dir_subtree,
-            );
+            let dir = {
+                // Content
+                let file1 = FSNode::File(
+                    Mtime::from(498705780, 161803398),
+                    hasher::hash_bytes(b"none of your business"),
+                );
+                let symlink1 = FSNode::SymLink(
+                    Mtime::from(498705720, 271828182),
+                    hasher::hash_bytes(
+                        Endpoint::Unix("another/path/to/somewhere/else".to_string()).as_bytes(),
+                    ),
+                );
+                let dir1 = FSNode::Dir(
+                    Mtime::from(498705840, 141421356),
+                    hash_tree(&FSTree::empty()),
+                    FSTree::empty(),
+                );
+
+                // Dir creation
+                let subtree = FSTree(HashMap::from([
+                    (String::from("dir1"), dir1),
+                    (String::from("file1"), file1),
+                    (String::from("symlink1"), symlink1),
+                ]));
+                FSNode::Dir(
+                    Mtime::from(498705900, 628318530),
+                    hash_tree(&subtree),
+                    subtree,
+                )
+            };
             FSTree(HashMap::from([
                 (String::from("dir"), dir),
                 (String::from("file"), file),
@@ -306,6 +301,20 @@ mod tests {
             FSNode::File(
                 Mtime::from(498705660, 0),
                 hasher::hash_bytes(b"this is some test content"),
+            ),
+        );
+
+        // Only the hash matters
+        assert_eq!(
+            FSNode::Dir(
+                Mtime::from(498705660, 314159265),
+                hash_tree(&FSTree::empty()),
+                FSTree::empty()
+            ),
+            FSNode::Dir(
+                Mtime::from(498705660, 314159265),
+                hash_tree(&FSTree::empty()),
+                FSTree::test_default()
             ),
         );
     }
