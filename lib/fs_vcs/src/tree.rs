@@ -197,51 +197,105 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
+    impl FSNode {
+        pub fn file(mtime: (i64, u32), content: impl ToString) -> FSNode {
+            FSNode::File(
+                Mtime::from(mtime.0, mtime.1),
+                hasher::hash_bytes(content.to_string().as_bytes()),
+            )
+        }
+        pub fn symlink(mtime: (i64, u32), path: impl ToString) -> FSNode {
+            FSNode::SymLink(
+                Mtime::from(mtime.0, mtime.1),
+                hasher::hash_bytes(Endpoint::Unix(path.to_string()).as_bytes()),
+            )
+        }
+        pub fn dir(mtime: (i64, u32), subtree_gen: impl Fn(&mut FSTree)) -> FSNode {
+            let mut subtree = FSTree::empty();
+            subtree_gen(&mut subtree);
+            FSNode::Dir(Mtime::from(mtime.0, mtime.1), hash_tree(&subtree), subtree)
+        }
+        pub fn empty_dir(mtime: (i64, u32)) -> FSNode {
+            FSNode::Dir(
+                Mtime::from(mtime.0, mtime.1),
+                hash_tree(&FSTree::empty()),
+                FSTree::empty(),
+            )
+        }
+    }
     impl FSTree {
-        fn test_default() -> FSTree {
-            let file = FSNode::File(
-                Mtime::from(498705660, 314159265),
-                hasher::hash_bytes(b"this is some test content"),
-            );
-            let symlink = FSNode::SymLink(
-                Mtime::from(498705720, 271828182),
-                hasher::hash_bytes(Endpoint::Unix("some/path/to/somewhere".to_string()).as_bytes()),
-            );
-            let dir = {
-                // Content
-                let file1 = FSNode::File(
-                    Mtime::from(498705780, 161803398),
-                    hasher::hash_bytes(b"none of your business"),
-                );
-                let symlink1 = FSNode::SymLink(
-                    Mtime::from(498705720, 271828182),
-                    hasher::hash_bytes(
-                        Endpoint::Unix("another/path/to/somewhere/else".to_string()).as_bytes(),
-                    ),
-                );
-                let dir1 = FSNode::Dir(
-                    Mtime::from(498705840, 141421356),
-                    hash_tree(&FSTree::empty()),
-                    FSTree::empty(),
-                );
+        pub fn from<const N: usize>(list: [(impl ToString, FSNode); N]) -> FSTree {
+            FSTree(HashMap::from(
+                list.map(|(name, child)| (name.to_string(), child)),
+            ))
+        }
+        pub fn with_file(
+            mut self,
+            name: impl ToString,
+            mtime: (i64, u32),
+            content: impl ToString,
+        ) -> FSTree {
+            self.add_file(name, mtime, content);
+            self
+        }
+        pub fn add_file(&mut self, name: impl ToString, mtime: (i64, u32), content: impl ToString) {
+            let FSTree(tree) = self;
+            tree.insert(name.to_string(), FSNode::file(mtime, content));
+        }
 
-                // Dir creation
-                let subtree = FSTree(HashMap::from([
-                    (String::from("dir1"), dir1),
-                    (String::from("file1"), file1),
-                    (String::from("symlink1"), symlink1),
-                ]));
-                FSNode::Dir(
-                    Mtime::from(498705900, 628318530),
-                    hash_tree(&subtree),
-                    subtree,
-                )
-            };
-            FSTree(HashMap::from([
-                (String::from("dir"), dir),
-                (String::from("file"), file),
-                (String::from("symlink"), symlink),
-            ]))
+        pub fn with_symlink(
+            mut self,
+            name: impl ToString,
+            mtime: (i64, u32),
+            path: impl ToString,
+        ) -> FSTree {
+            self.add_symlink(name, mtime, path);
+            self
+        }
+        pub fn add_symlink(&mut self, name: impl ToString, mtime: (i64, u32), path: impl ToString) {
+            let FSTree(tree) = self;
+            tree.insert(name.to_string(), FSNode::symlink(mtime, path));
+        }
+
+        pub fn with_dir(
+            mut self,
+            name: impl ToString,
+            mtime: (i64, u32),
+            subtree_gen: impl Fn(&mut FSTree),
+        ) -> FSTree {
+            self.add_dir(name, mtime, subtree_gen);
+            self
+        }
+        pub fn add_dir(
+            &mut self,
+            name: impl ToString,
+            mtime: (i64, u32),
+            subtree_gen: impl Fn(&mut FSTree),
+        ) {
+            let FSTree(tree) = self;
+
+            tree.insert(name.to_string(), FSNode::dir(mtime, subtree_gen));
+        }
+
+        pub fn with_empty_dir(mut self, name: impl ToString, mtime: (i64, u32)) -> FSTree {
+            self.add_empty_dir(name, mtime);
+            self
+        }
+        pub fn add_empty_dir(&mut self, name: impl ToString, mtime: (i64, u32)) {
+            let FSTree(tree) = self;
+            tree.insert(name.to_string(), FSNode::empty_dir(mtime));
+        }
+
+        fn test_default() -> FSTree {
+            let mut default = FSTree::empty();
+            default.add_file("file", (498705660, 314159265), "this is some test content");
+            default.add_symlink("symlink", (498705720, 271828182), "some/path/to/somewhere");
+            default.add_dir("dir", (498705900, 628318530), |t| {
+                t.add_file("file1", (498705780, 161803398), "none of your business");
+                t.add_symlink("symlink1", (498705720, 271828182), "some/other/path");
+                t.add_empty_dir("dir1", (498705840, 141421356));
+            });
+            default
         }
     }
 
@@ -274,43 +328,21 @@ mod tests {
         assert_eq!(FSTree::test_default(), FSTree::test_default());
         assert_ne!(FSTree::empty(), FSTree::test_default());
         assert_eq!(
-            FSNode::File(
-                Mtime::from(498705660, 314159265),
-                hasher::hash_bytes(b"this is some test content"),
-            ),
-            FSNode::File(
-                Mtime::from(498705660, 314159265),
-                hasher::hash_bytes(b"this is some test content"),
-            ),
+            FSNode::file((498705660, 314159265), "this is some test content"),
+            FSNode::file((498705660, 314159265), "this is some test content")
         );
         assert_ne!(
-            FSNode::File(
-                Mtime::from(498705660, 314159265),
-                hasher::hash_bytes(b"this is some test content"),
-            ),
-            FSNode::File(
-                Mtime::from(498705660, 314159265),
-                hasher::hash_bytes(b"this is a different test content"),
-            ),
+            FSNode::file((498705660, 314159265), "this is some test content"),
+            FSNode::file((498705660, 314159265), "this is a different test content")
         );
         assert_ne!(
-            FSNode::File(
-                Mtime::from(498705660, 314159265),
-                hasher::hash_bytes(b"this is some test content"),
-            ),
-            FSNode::File(
-                Mtime::from(498705660, 0),
-                hasher::hash_bytes(b"this is some test content"),
-            ),
+            FSNode::file((498705660, 314159265), "this is some test content"),
+            FSNode::file((498705660, 0), "this is some test content")
         );
 
         // Only the hash matters
         assert_eq!(
-            FSNode::Dir(
-                Mtime::from(498705660, 314159265),
-                hash_tree(&FSTree::empty()),
-                FSTree::empty()
-            ),
+            FSNode::empty_dir((498705660, 314159265)),
             FSNode::Dir(
                 Mtime::from(498705660, 314159265),
                 hash_tree(&FSTree::empty()),
@@ -338,11 +370,8 @@ mod tests {
                 &Mtime::from(498705780, 161803398),
             )
             .unwrap();
-            std::os::unix::fs::symlink(
-                "another/path/to/somewhere/else",
-                path.join("dir").join("symlink1"),
-            )
-            .unwrap();
+            std::os::unix::fs::symlink("some/other/path", path.join("dir").join("symlink1"))
+                .unwrap();
             abst_fs::set_mtime(
                 &AbstPath::from(path.join("dir").join("symlink1")),
                 &Mtime::from(498705720, 271828182),
