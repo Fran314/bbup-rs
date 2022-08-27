@@ -283,21 +283,18 @@ mod tests {
     }
 
     fn apply_at_endpoint() {
-        let tree = {
-            let mut tree = FSTree::empty();
-            tree.add_dir("main", (580754122, 520360551), |t| {
+        let mut tree = FSTree::gen_from(|t| {
+            t.add_dir("main", (580754122, 520360551), |t| {
                 t.add_file("file", (1301408628, 476906800), "some content");
                 t.add_symlink("symlink", (1180129474, 30754656), "some/path/to/somewhere");
                 t.add_dir("dir", (580754122, 520360551), |t| {
                     t.add_file("file1", (580754122, 520360551), "some different content");
                 });
             });
-            tree
-        };
+        });
 
-        let delta = {
-            let mut delta = Delta::empty();
-            delta.add_leaf(
+        let delta = Delta::gen_from(|d| {
+            d.add_leaf(
                 "file1",
                 Some(FSNode::file(
                     (580754122, 520360551),
@@ -305,7 +302,7 @@ mod tests {
                 )),
                 None,
             );
-            delta.add_leaf(
+            d.add_leaf(
                 "file2",
                 None,
                 Some(FSNode::file(
@@ -313,8 +310,7 @@ mod tests {
                     "another different content",
                 )),
             );
-            delta
-        };
+        });
 
         tree.clone()
             .apply_delta_at_endpoint(&delta, AbstPath::from("main/dir"))
@@ -332,7 +328,6 @@ mod tests {
             .apply_delta_at_endpoint(&delta, AbstPath::from("main/path-that-doesn't-exist"))
             .is_err());
         assert!(tree
-            .clone()
             .apply_delta_at_endpoint(&delta, AbstPath::from("main"))
             .is_err());
     }
@@ -341,12 +336,15 @@ mod tests {
         // Leaf
         {
             let with_none = FSTree::empty();
-            let with_old =
-                FSTree::empty().with_file("file", (1346739082, 772415355), "old content");
-            let with_new =
-                FSTree::empty().with_file("file", (1412647461, 938826506), "new content");
-            let with_other =
-                FSTree::empty().with_file("file", (1294861033, 436961381), "other content");
+            let with_old = FSTree::gen_from(|t| {
+                t.add_file("file", (1346739082, 772415355), "old content");
+            });
+            let with_new = FSTree::gen_from(|t| {
+                t.add_file("file", (1412647461, 938826506), "new content");
+            });
+            let with_other = FSTree::gen_from(|t| {
+                t.add_file("file", (1294861033, 436961381), "other content");
+            });
 
             let source = [
                 (
@@ -357,26 +355,24 @@ mod tests {
                 ),
                 (
                     Some(FSNode::file((1346739082, 772415355), "old content")),
-                    with_old.clone(),   // correct_source
-                    with_other.clone(), // wrong_source_1
-                    with_none.clone(),  // wrong_source_2
+                    with_old,          // correct_source
+                    with_other,        // wrong_source_1
+                    with_none.clone(), // wrong_source_2
                 ),
             ];
             let target = [
-                (None, with_none.clone()),
+                (None, with_none),
                 (
                     Some(FSNode::file((1412647461, 938826506), "new content")),
-                    with_new.clone(),
+                    with_new,
                 ),
             ];
 
             for (source_node, correct_source, wrong_source_1, wrong_source_2) in source {
                 for (target_node, target_tree) in target.clone() {
-                    let delta = {
-                        let mut delta = Delta::empty();
-                        delta.add_leaf("file", source_node.clone(), target_node.clone());
-                        delta
-                    };
+                    let delta = Delta::gen_from(|d| {
+                        d.add_leaf("file", source_node.clone(), target_node.clone());
+                    });
 
                     // correct source
                     let mut tree = correct_source.clone();
@@ -398,24 +394,19 @@ mod tests {
         {
             // Branch both on correct
             {
-                let mut old_tree = {
-                    let mut tree = FSTree::empty();
-                    tree.add_dir("dir", (504127312, 850809910), |t| {
+                let mut old_tree = FSTree::gen_from(|t| {
+                    t.add_dir("dir", (504127312, 850809910), |t| {
                         t.add_file("file", (639031454, 844698469), "old content");
                     });
-                    tree
-                };
-                let new_tree = {
-                    let mut tree = FSTree::empty();
-                    tree.add_dir("dir", (894310328, 379690596), |t| {
+                });
+                let new_tree = FSTree::gen_from(|t| {
+                    t.add_dir("dir", (894310328, 379690596), |t| {
                         t.add_file("file", (1202109107, 840618676), "new content");
                     });
-                    tree
-                };
+                });
 
-                let delta = {
-                    let mut delta = Delta::empty();
-                    delta.add_branch(
+                let delta = Delta::gen_from(|d| {
+                    d.add_branch(
                         "dir",
                         Some(((504127312, 850809910), (894310328, 379690596))),
                         |d| {
@@ -426,8 +417,7 @@ mod tests {
                             );
                         },
                     );
-                    delta
-                };
+                });
 
                 old_tree.apply_delta(&delta).unwrap();
                 assert_eq!(old_tree, new_tree);
@@ -435,52 +425,41 @@ mod tests {
 
             // Branch mtime on wrong mtime
             {
-                let mut tree = {
-                    let mut tree = FSTree::empty();
-                    tree.add_dir("dir", (563726258, 169812194), |t| {
+                let mut tree = FSTree::gen_from(|t| {
+                    t.add_dir("dir", (563726258, 169812194), |t| {
                         t.add_file("file", (818074359, 720231487), "qwertyuiop");
                     });
-                    tree
-                };
-
-                let delta = {
-                    let mut delta = Delta::empty();
-                    delta.add_empty_branch(
+                });
+                let delta = Delta::gen_from(|d| {
+                    d.add_empty_branch(
                         "dir",
                         Some(((1140615005, 566816009), (1151990024, 189224283))),
                     );
-                    delta
-                };
+                });
 
                 assert!(tree.apply_delta(&delta).is_err());
             }
 
             // Branch on wrong node
             {
-                let delta = {
-                    let mut delta = Delta::empty();
-                    delta.add_empty_branch("dir", None);
-                    delta
-                };
+                let delta = Delta::gen_from(|d| {
+                    d.add_empty_branch("dir", None);
+                });
 
                 // on file
-                let mut tree = {
-                    let mut tree = FSTree::empty();
-                    tree.add_file(
+                let mut tree = FSTree::gen_from(|t| {
+                    t.add_file(
                         "dir",
                         (772556155, 27466130),
                         "It doesn't matter what I write here",
                     );
-                    tree
-                };
+                });
                 assert!(tree.apply_delta(&delta).is_err());
 
                 // on symlink
-                let mut tree = {
-                    let mut tree = FSTree::empty();
-                    tree.add_symlink("dir", (536938468, 588641777), "jus/imagine/this/is/a/path");
-                    tree
-                };
+                let mut tree = FSTree::gen_from(|t| {
+                    t.add_symlink("dir", (536938468, 588641777), "jus/imagine/this/is/a/path");
+                });
                 assert!(tree.apply_delta(&delta).is_err());
 
                 // on missing
@@ -493,16 +472,21 @@ mod tests {
         // Leaf
         {
             let with_none = FSTree::empty();
-            let with_old = FSTree::empty().with_file("file", (835060797, 689306331), "old content");
-            let with_new = FSTree::empty().with_file("file", (835060797, 689306331), "new content");
-            let with_other =
-                FSTree::empty().with_file("file", (1466699534, 795055847), "other content");
+            let with_old = FSTree::gen_from(|t| {
+                t.add_file("file", (835060797, 689306331), "old content");
+            });
+            let with_new = FSTree::gen_from(|t| {
+                t.add_file("file", (835060797, 689306331), "new content");
+            });
+            let with_other = FSTree::gen_from(|t| {
+                t.add_file("file", (1466699534, 795055847), "other content");
+            });
 
             let source = [
                 (None, with_none.clone()),
                 (
                     Some(FSNode::file((835060797, 689306331), "old content")),
-                    with_old.clone(),
+                    with_old,
                 ),
             ];
             let target = [
@@ -514,20 +498,18 @@ mod tests {
                 ),
                 (
                     Some(FSNode::file((835060797, 689306331), "new content")),
-                    with_new.clone(),   // correct_target
-                    with_other.clone(), // wrong_target_1
-                    with_none.clone(),  // wrong_target_2
+                    with_new,   // correct_target
+                    with_other, // wrong_target_1
+                    with_none,  // wrong_target_2
                 ),
             ];
 
             for (source_node, source_tree) in source {
                 for (target_node, correct_target, wrong_target_1, wrong_target_2) in target.clone()
                 {
-                    let delta = {
-                        let mut delta = Delta::empty();
-                        delta.add_leaf("file", source_node.clone(), target_node.clone());
-                        delta
-                    };
+                    let delta = Delta::gen_from(|d| {
+                        d.add_leaf("file", source_node.clone(), target_node.clone());
+                    });
 
                     // correct target
                     let mut tree = correct_target.clone();
@@ -549,24 +531,19 @@ mod tests {
         {
             // Branch both on correct
             {
-                let old_tree = {
-                    let mut tree = FSTree::empty();
-                    tree.add_dir("dir", (943474742, 242156167), |t| {
+                let old_tree = FSTree::gen_from(|t| {
+                    t.add_dir("dir", (943474742, 242156167), |t| {
                         t.add_file("file", (576998097, 714596691), "boop beep boop");
                     });
-                    tree
-                };
-                let mut new_tree = {
-                    let mut tree = FSTree::empty();
-                    tree.add_dir("dir", (522369369, 121597026), |t| {
+                });
+                let mut new_tree = FSTree::gen_from(|t| {
+                    t.add_dir("dir", (522369369, 121597026), |t| {
                         t.add_file("file", (1387503744, 18260525), "ping pong bzzzz");
                     });
-                    tree
-                };
+                });
 
-                let delta = {
-                    let mut delta = Delta::empty();
-                    delta.add_branch(
+                let delta = Delta::gen_from(|d| {
+                    d.add_branch(
                         "dir",
                         Some(((943474742, 242156167), (522369369, 121597026))),
                         |d| {
@@ -577,8 +554,7 @@ mod tests {
                             );
                         },
                     );
-                    delta
-                };
+                });
 
                 new_tree.undo_delta(&delta).unwrap();
                 assert_eq!(old_tree, new_tree);
@@ -586,48 +562,36 @@ mod tests {
 
             // Branch mtime on wrong mtime
             {
-                let mut tree = {
-                    let mut tree = FSTree::empty();
-                    tree.add_dir("dir", (1139146882, 934492139), |t| {
+                let mut tree = FSTree::gen_from(|t| {
+                    t.add_dir("dir", (1139146882, 934492139), |t| {
                         t.add_file("file", (818074359, 720231487), "asdfghjkl");
                     });
-                    tree
-                };
-
-                let delta = {
-                    let mut delta = Delta::empty();
-                    delta.add_empty_branch(
+                });
+                let delta = Delta::gen_from(|d| {
+                    d.add_empty_branch(
                         "dir",
                         Some(((931306566, 389992216), (1170146405, 763554716))),
                     );
-                    delta
-                };
-
+                });
                 assert!(tree.undo_delta(&delta).is_err());
             }
 
             // Branch on wrong node
             {
-                let delta = {
-                    let mut delta = Delta::empty();
-                    delta.add_empty_branch("dir", None);
-                    delta
-                };
+                let delta = Delta::gen_from(|d| {
+                    d.add_empty_branch("dir", None);
+                });
 
                 // on file
-                let mut tree = {
-                    let mut tree = FSTree::empty();
-                    tree.add_file("dir", (1111032689, 805260693), "here is content");
-                    tree
-                };
+                let mut tree = FSTree::gen_from(|t| {
+                    t.add_file("dir", (1111032689, 805260693), "here is content");
+                });
                 assert!(tree.undo_delta(&delta).is_err());
 
                 // on symlink
-                let mut tree = {
-                    let mut tree = FSTree::empty();
-                    tree.add_symlink("dir", (1546349176, 863048823), "path/that/leads/to");
-                    tree
-                };
+                let mut tree = FSTree::gen_from(|t| {
+                    t.add_symlink("dir", (1546349176, 863048823), "path/that/leads/to");
+                });
                 assert!(tree.undo_delta(&delta).is_err());
 
                 // on missing

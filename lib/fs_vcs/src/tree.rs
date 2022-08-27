@@ -224,47 +224,19 @@ mod tests {
         }
     }
     impl FSTree {
-        pub fn from<const N: usize>(list: [(impl ToString, FSNode); N]) -> FSTree {
-            FSTree(HashMap::from(
-                list.map(|(name, child)| (name.to_string(), child)),
-            ))
+        pub fn gen_from(gen: impl Fn(&mut FSTree)) -> FSTree {
+            let mut tree = FSTree::empty();
+            gen(&mut tree);
+            tree
         }
-        pub fn with_file(
-            mut self,
-            name: impl ToString,
-            mtime: (i64, u32),
-            content: impl ToString,
-        ) -> FSTree {
-            self.add_file(name, mtime, content);
-            self
-        }
+
         pub fn add_file(&mut self, name: impl ToString, mtime: (i64, u32), content: impl ToString) {
             let FSTree(tree) = self;
             tree.insert(name.to_string(), FSNode::file(mtime, content));
         }
-
-        pub fn with_symlink(
-            mut self,
-            name: impl ToString,
-            mtime: (i64, u32),
-            path: impl ToString,
-        ) -> FSTree {
-            self.add_symlink(name, mtime, path);
-            self
-        }
         pub fn add_symlink(&mut self, name: impl ToString, mtime: (i64, u32), path: impl ToString) {
             let FSTree(tree) = self;
             tree.insert(name.to_string(), FSNode::symlink(mtime, path));
-        }
-
-        pub fn with_dir(
-            mut self,
-            name: impl ToString,
-            mtime: (i64, u32),
-            subtree_gen: impl Fn(&mut FSTree),
-        ) -> FSTree {
-            self.add_dir(name, mtime, subtree_gen);
-            self
         }
         pub fn add_dir(
             &mut self,
@@ -276,26 +248,21 @@ mod tests {
 
             tree.insert(name.to_string(), FSNode::dir(mtime, subtree_gen));
         }
-
-        pub fn with_empty_dir(mut self, name: impl ToString, mtime: (i64, u32)) -> FSTree {
-            self.add_empty_dir(name, mtime);
-            self
-        }
         pub fn add_empty_dir(&mut self, name: impl ToString, mtime: (i64, u32)) {
             let FSTree(tree) = self;
             tree.insert(name.to_string(), FSNode::empty_dir(mtime));
         }
 
         fn test_default() -> FSTree {
-            let mut default = FSTree::empty();
-            default.add_file("file", (498705660, 314159265), "this is some test content");
-            default.add_symlink("symlink", (498705720, 271828182), "some/path/to/somewhere");
-            default.add_dir("dir", (498705900, 628318530), |t| {
-                t.add_file("file1", (498705780, 161803398), "none of your business");
-                t.add_symlink("symlink1", (498705720, 271828182), "some/other/path");
-                t.add_empty_dir("dir1", (498705840, 141421356));
-            });
-            default
+            FSTree::gen_from(|t| {
+                t.add_file("file", (498705660, 314159265), "this is some test content");
+                t.add_symlink("symlink", (498705720, 271828182), "some/path/to/somewhere");
+                t.add_dir("dir", (498705900, 628318530), |t| {
+                    t.add_file("file1", (498705780, 161803398), "none of your business");
+                    t.add_symlink("symlink1", (498705720, 271828182), "some/other/path");
+                    t.add_empty_dir("dir1", (498705840, 141421356));
+                });
+            })
         }
     }
 

@@ -52,7 +52,7 @@ impl Delta {
                     *entry = Branch(optm, get_delta(subtree0, subtree1));
                 }
                 Branch(_, subdelta) => subdelta.shake(),
-                _ => {}
+                Leaf(_, _) => {}
             }
         }
         tree.retain(|_, child| match child {
@@ -113,28 +113,27 @@ mod tests {
             optm: Option<((i64, u32), (i64, u32))>,
             subdelta_gen: impl Fn(&mut Delta),
         ) -> DeltaNode {
-            let optm = match optm {
-                Some(((presec, prenano), (postsec, postnano))) => {
-                    Some((Mtime::from(presec, prenano), Mtime::from(postsec, postnano)))
-                }
-                None => None,
-            };
+            let optm = optm.map(|((presec, prenano), (postsec, postnano))| {
+                (Mtime::from(presec, prenano), Mtime::from(postsec, postnano))
+            });
             let mut subdelta = Delta::empty();
             subdelta_gen(&mut subdelta);
             DeltaNode::Branch(optm, subdelta)
         }
         pub fn empty_branch(optm: Option<((i64, u32), (i64, u32))>) -> DeltaNode {
-            let optm = match optm {
-                Some(((presec, prenano), (postsec, postnano))) => {
-                    Some((Mtime::from(presec, prenano), Mtime::from(postsec, postnano)))
-                }
-                None => None,
-            };
+            let optm = optm.map(|((presec, prenano), (postsec, postnano))| {
+                (Mtime::from(presec, prenano), Mtime::from(postsec, postnano))
+            });
             DeltaNode::Branch(optm, Delta::empty())
         }
     }
 
     impl Delta {
+        pub fn gen_from(gen: impl Fn(&mut Delta)) -> Delta {
+            let mut delta = Delta::empty();
+            gen(&mut delta);
+            delta
+        }
         pub fn add_leaf(&mut self, name: impl ToString, pre: Option<FSNode>, post: Option<FSNode>) {
             let Delta(map) = self;
             map.insert(name.to_string(), DeltaNode::leaf(pre, post));
@@ -248,22 +247,21 @@ mod tests {
     }
 
     fn delta_shake() {
-        let mut unshaken_delta = {
-            let mut delta = Delta::empty();
-            delta.add_empty_branch("branch1", None);
-            delta.add_branch("branch2", None, |d| {
+        let mut unshaken_delta = Delta::gen_from(|d| {
+            d.add_empty_branch("branch1", None);
+            d.add_branch("branch2", None, |d| {
                 let dir = FSNode::empty_dir((1063113618, 113746745));
                 let file = FSNode::file((593849028, 842039177), "");
                 let symlink =
                     FSNode::symlink((984260842, 571979684), "some/original/interesting/path");
 
                 d.add_leaf("leaf1", None, None);
-                d.add_leaf("leaf2", Some(dir.clone()), Some(dir.clone()));
-                d.add_leaf("leaf3", Some(file.clone()), Some(file.clone()));
-                d.add_leaf("leaf4", Some(symlink.clone()), Some(symlink.clone()));
+                d.add_leaf("leaf2", Some(dir.clone()), Some(dir));
+                d.add_leaf("leaf3", Some(file.clone()), Some(file));
+                d.add_leaf("leaf4", Some(symlink.clone()), Some(symlink));
                 d.add_empty_branch("branch", None);
             });
-            delta.add_leaf(
+            d.add_leaf(
                 "leaf",
                 Some(FSNode::dir((1283460680, 617587361), |t| {
                     t.add_file("file.txt", (777784611, 365943901), "file with content");
@@ -272,12 +270,10 @@ mod tests {
                     t.add_file("other-file.txt", (1283460680, 617587361), "different file");
                 })),
             );
-            delta
-        };
+        });
 
-        let shaken_delta = {
-            let mut delta = Delta::empty();
-            delta.add_branch(
+        let shaken_delta = Delta::gen_from(|d| {
+            d.add_branch(
                 "leaf",
                 Some(((1283460680, 617587361), (539622622, 899584595))),
                 |d| {
@@ -293,8 +289,7 @@ mod tests {
                     );
                 },
             );
-            delta
-        };
+        });
 
         unshaken_delta.shake();
         assert_eq!(unshaken_delta, shaken_delta);
@@ -311,10 +306,9 @@ mod tests {
             })
         };
 
-        let pre_fstree = {
-            let mut tree = FSTree::empty();
-            tree.add_empty_dir("mtime-edit-dir", (667322229, 283834161));
-            tree.add_dir("content-edit-dir", (995819275, 864246209), |t| {
+        let pre_fstree = FSTree::gen_from(|t| {
+            t.add_empty_dir("mtime-edit-dir", (667322229, 283834161));
+            t.add_dir("content-edit-dir", (995819275, 864246209), |t| {
                 t.add_dir("both-edit-dir", (820956170, 426474588), |t| {
                     t.add_file("removed-file", (1213260096, 785625266), "some content");
                     t.add_symlink("removed-symlink", (808926076, 398339329), "some/fake/path");
@@ -353,13 +347,11 @@ mod tests {
                     t.add_dir("dir-to-symlink", (1364181678, 477789959), mock_dir_content);
                 });
             });
-            tree
-        };
+        });
 
-        let post_fstree = {
-            let mut tree = FSTree::empty();
-            tree.add_empty_dir("mtime-edit-dir", (1428359331, 168489967));
-            tree.add_dir("content-edit-dir", (995819275, 864246209), |t| {
+        let post_fstree = FSTree::gen_from(|t| {
+            t.add_empty_dir("mtime-edit-dir", (1428359331, 168489967));
+            t.add_dir("content-edit-dir", (995819275, 864246209), |t| {
                 t.add_dir("both-edit-dir", (1535927666, 535018497), |t| {
                     t.add_file("added-file", (1029314114, 210225767), "added content");
                     t.add_symlink("added-symlink", (999001645, 810306108), "new/fake/path");
@@ -399,16 +391,14 @@ mod tests {
                     t.add_symlink("dir-to-symlink", (1122800412, 992618853), "also/not/dir");
                 });
             });
-            tree
-        };
+        });
 
-        let supposed_delta = {
-            let mut delta = Delta::empty();
-            delta.add_empty_branch(
+        let supposed_delta = Delta::gen_from(|d| {
+            d.add_empty_branch(
                 "mtime-edit-dir",
                 Some(((667322229, 283834161), (1428359331, 168489967))),
             );
-            delta.add_branch("content-edit-dir", None, |d| {
+            d.add_branch("content-edit-dir", None, |d| {
                 d.add_branch(
                     "both-edit-dir",
                     Some(((820956170, 426474588), (1535927666, 535018497))),
@@ -522,8 +512,7 @@ mod tests {
                     },
                 )
             });
-            delta
-        };
+        });
 
         assert_eq!(supposed_delta, get_delta(&pre_fstree, &post_fstree));
 
@@ -531,7 +520,7 @@ mod tests {
         fstree_to_upgrade.apply_delta(&supposed_delta).unwrap();
         assert_eq!(fstree_to_upgrade, post_fstree);
 
-        let mut fstree_to_downgrade = post_fstree.clone();
+        let mut fstree_to_downgrade = post_fstree;
         fstree_to_downgrade.undo_delta(&supposed_delta).unwrap();
         assert_eq!(fstree_to_downgrade, pre_fstree);
     }
