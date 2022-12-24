@@ -1,5 +1,5 @@
-mod cmodel;
-use cmodel::*;
+mod model;
+use model::*;
 mod init;
 mod protocol;
 mod setup;

@@ -1,8 +1,6 @@
-use crate::{cmodel::ProcessState, LinkConfig, LinkType};
+use super::{LinkConfig, LinkType, ProcessState};
 
 use abst_fs::AbstPath;
-
-use fs_vcs::{Commit, FSTree};
 
 use anyhow::Result;
 
@@ -30,7 +28,7 @@ pub fn init(cwd: &AbstPath) -> Result<()> {
         }
     }
     LinkConfig::from(LinkType::Bijection, endpoint, exclude_list).save(cwd)?;
-    ProcessState::from(Commit::base_commit().commit_id, FSTree::empty()).save(cwd)?;
+    ProcessState::init_state().save(cwd)?;
 
     println!("backup source initialized correctly!");
     println!();

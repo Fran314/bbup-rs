@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use std::collections::HashMap;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum FSTreeError {
     #[error(
         "File System Tree Error: could not generate fs-tree from specified path as it is not a directory\npath: {path}"
@@ -64,7 +64,7 @@ impl PartialEq for FSNode {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct FSTree(pub HashMap<String, FSNode>);
 impl FSTree {
     pub fn empty() -> FSTree {
@@ -91,7 +91,11 @@ pub fn hash_tree(FSTree(tree): &FSTree) -> Hash {
 
     let mut s: Vec<u8> = Vec::new();
     for (name, node) in sorted_children {
-        s.append(&mut name.as_bytes().to_vec());
+        // The reason why we append the hash of the name and not the name itself
+        //	is to avoid unlikely but possible collisions.
+        // This makes the appended blocks all the same length, which is better
+        let name_hash = hasher::hash_bytes(name.as_bytes());
+        s.append(&mut name_hash.to_bytes());
         match node {
             FSNode::File(mtime, hash) => {
                 s.append(&mut mtime.to_bytes());
@@ -181,4 +185,200 @@ fn generate_fstree_rec(
     }
 
     Ok(FSTree(tree))
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::{
+        generate_fstree, generr, hash_tree, inerr, ExcludeList, FSNode, FSTree, FSTreeError,
+    };
+    use abst_fs::{AbstPath, Endpoint, Mtime};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    impl FSNode {
+        pub fn file(mtime: (i64, u32), content: impl ToString) -> FSNode {
+            FSNode::File(
+                Mtime::from(mtime.0, mtime.1),
+                hasher::hash_bytes(content.to_string().as_bytes()),
+            )
+        }
+        pub fn symlink(mtime: (i64, u32), path: impl ToString) -> FSNode {
+            FSNode::SymLink(
+                Mtime::from(mtime.0, mtime.1),
+                hasher::hash_bytes(Endpoint::Unix(path.to_string()).as_bytes()),
+            )
+        }
+        pub fn dir(mtime: (i64, u32), subtree_gen: impl Fn(&mut FSTree)) -> FSNode {
+            let mut subtree = FSTree::empty();
+            subtree_gen(&mut subtree);
+            FSNode::Dir(Mtime::from(mtime.0, mtime.1), hash_tree(&subtree), subtree)
+        }
+        pub fn empty_dir(mtime: (i64, u32)) -> FSNode {
+            FSNode::Dir(
+                Mtime::from(mtime.0, mtime.1),
+                hash_tree(&FSTree::empty()),
+                FSTree::empty(),
+            )
+        }
+    }
+    impl FSTree {
+        pub fn gen_from(gen: impl Fn(&mut FSTree)) -> FSTree {
+            let mut tree = FSTree::empty();
+            gen(&mut tree);
+            tree
+        }
+
+        pub fn add_file(&mut self, name: impl ToString, mtime: (i64, u32), content: impl ToString) {
+            let FSTree(tree) = self;
+            tree.insert(name.to_string(), FSNode::file(mtime, content));
+        }
+        pub fn add_symlink(&mut self, name: impl ToString, mtime: (i64, u32), path: impl ToString) {
+            let FSTree(tree) = self;
+            tree.insert(name.to_string(), FSNode::symlink(mtime, path));
+        }
+        pub fn add_dir(
+            &mut self,
+            name: impl ToString,
+            mtime: (i64, u32),
+            subtree_gen: impl Fn(&mut FSTree),
+        ) {
+            let FSTree(tree) = self;
+
+            tree.insert(name.to_string(), FSNode::dir(mtime, subtree_gen));
+        }
+        pub fn add_empty_dir(&mut self, name: impl ToString, mtime: (i64, u32)) {
+            let FSTree(tree) = self;
+            tree.insert(name.to_string(), FSNode::empty_dir(mtime));
+        }
+
+        fn test_default() -> FSTree {
+            FSTree::gen_from(|t| {
+                t.add_file("file", (498705660, 314159265), "this is some test content");
+                t.add_symlink("symlink", (498705720, 271828182), "some/path/to/somewhere");
+                t.add_dir("dir", (498705900, 628318530), |t| {
+                    t.add_file("file1", (498705780, 161803398), "none of your business");
+                    t.add_symlink("symlink1", (498705720, 271828182), "some/other/path");
+                    t.add_empty_dir("dir1", (498705840, 141421356));
+                });
+            })
+        }
+    }
+
+    #[test]
+    fn test() {
+        errors();
+
+        various();
+
+        generate();
+    }
+
+    fn errors() {
+        let generic_error = FSTreeError::Generic {
+            src: "some source".to_string(),
+            err: "some error".to_string(),
+        };
+        assert_eq!(generr("some source", "some error"), generic_error);
+        assert_eq!(
+            FSTreeError::Inner {
+                src: "some source".to_string(),
+                err: generic_error.to_string()
+            },
+            inerr("some source")(generic_error),
+        );
+    }
+
+    fn various() {
+        assert_eq!(FSTree::empty(), FSTree(HashMap::new()));
+        assert_eq!(FSTree::test_default(), FSTree::test_default());
+        assert_ne!(FSTree::empty(), FSTree::test_default());
+        assert_eq!(
+            FSNode::file((498705660, 314159265), "this is some test content"),
+            FSNode::file((498705660, 314159265), "this is some test content")
+        );
+        assert_ne!(
+            FSNode::file((498705660, 314159265), "this is some test content"),
+            FSNode::file((498705660, 314159265), "this is a different test content")
+        );
+        assert_ne!(
+            FSNode::file((498705660, 314159265), "this is some test content"),
+            FSNode::file((498705660, 0), "this is some test content")
+        );
+
+        // Only the hash matters
+        assert_eq!(
+            FSNode::empty_dir((498705660, 314159265)),
+            FSNode::Dir(
+                Mtime::from(498705660, 314159265),
+                hash_tree(&FSTree::empty()),
+                FSTree::test_default()
+            ),
+        );
+    }
+
+    fn generate() {
+        let path = PathBuf::from("/tmp/bbup-test-fs_vcs-tree-generate");
+        assert!(!path.exists());
+        std::fs::create_dir(&path).unwrap();
+
+        let result = std::panic::catch_unwind(|| {
+            std::fs::create_dir(path.join("dir")).unwrap();
+            std::fs::create_dir(path.join("dir").join("dir1")).unwrap();
+            abst_fs::set_mtime(
+                &AbstPath::from(path.join("dir").join("dir1")),
+                &Mtime::from(498705840, 141421356),
+            )
+            .unwrap();
+            std::fs::write(path.join("dir").join("file1"), b"none of your business").unwrap();
+            abst_fs::set_mtime(
+                &AbstPath::from(path.join("dir").join("file1")),
+                &Mtime::from(498705780, 161803398),
+            )
+            .unwrap();
+            std::os::unix::fs::symlink("some/other/path", path.join("dir").join("symlink1"))
+                .unwrap();
+            abst_fs::set_mtime(
+                &AbstPath::from(path.join("dir").join("symlink1")),
+                &Mtime::from(498705720, 271828182),
+            )
+            .unwrap();
+            abst_fs::set_mtime(
+                &AbstPath::from(path.join("dir")),
+                &Mtime::from(498705900, 628318530),
+            )
+            .unwrap();
+
+            std::fs::write(path.join("file"), b"this is some test content").unwrap();
+            abst_fs::set_mtime(
+                &AbstPath::from(path.join("file")),
+                &Mtime::from(498705660, 314159265),
+            )
+            .unwrap();
+            std::os::unix::fs::symlink("some/path/to/somewhere", path.join("symlink")).unwrap();
+            abst_fs::set_mtime(
+                &AbstPath::from(path.join("symlink")),
+                &Mtime::from(498705720, 271828182),
+            )
+            .unwrap();
+            std::fs::create_dir(path.join(".bbup")).unwrap();
+            std::fs::write(path.join("excluded-file"), b"this file will be excluded").unwrap();
+
+            let exclude_list = ExcludeList::from(&vec![String::from("excluded-file")]).unwrap();
+
+            assert_eq!(
+                generate_fstree(&AbstPath::from(&path), &exclude_list).unwrap(),
+                FSTree::test_default()
+            );
+            assert_ne!(
+                generate_fstree(&AbstPath::from(&path), &ExcludeList::from(&vec![]).unwrap())
+                    .unwrap(),
+                FSTree::test_default()
+            );
+            assert!(generate_fstree(&AbstPath::from(path.join("file")), &exclude_list).is_err())
+        });
+        std::fs::remove_dir_all(&path).unwrap();
+        assert!(result.is_ok())
+    }
 }

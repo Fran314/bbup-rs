@@ -1,9 +1,6 @@
-use crate::smodel::ArchiveState;
-use crate::ServerConfig;
+use super::{ArchiveState, ServerConfig};
 
 use abst_fs::{list_dir_content, AbstPath, ObjectType};
-use fs_vcs::{CommitList, FSTree};
-// use bbup::model::Commit;
 
 use anyhow::Result;
 
@@ -26,8 +23,7 @@ pub fn setup(home_dir: AbstPath) -> Result<()> {
     }
 
     ServerConfig::from(server_port, archive_root).save(&home_dir)?;
-    ArchiveState::from(CommitList::base_commit_list(), FSTree::empty())
-        .save(&absolute_archive_root)?;
+    ArchiveState::init_state().save(&absolute_archive_root)?;
 
     println!("bbup server set up correctly!");
     println!();

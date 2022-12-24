@@ -1,6 +1,9 @@
 # BBUP (Baldo BackUP)
 `bbup` is a backup software that manages and versions multiple backup sources with multiple backup types. The types of backup are bijective backup (which is basically synchronization), injective backup (for managing something like photos) and block injective backup (for projects).
 
+[As Frederick R. Barnard once said](https://en.wiktionary.org/wiki/a_picture_paints_a_thousand_words), "if you're confused, here look at this diagram I made in Inkscape"
+![bbup-diagram](/bbup-diagram.png)
+
 ## Install
 Currently the only way to install the software is either to manually download the binaries from the latest releases or to build the binaries yourself.
 
@@ -9,12 +12,12 @@ You can download the latest release [here](https://github.com/Fran314/bbup-rs/re
 The binaries that you have to donwload depend on the system you're planning to run this on.  
 The precompiled targets to choose between are:
 
-| Target | Intended system |
-| --- | --- |
-| **x86_64-unknown-linux-gnu** | generic 64bit Linux system |
-| **x86_64-pc-windows-gnu** | generig 64bit Windows system |
-| **armv7-unknown-linux-gnueabihf** | Raspberry Pi 32bit, ... |
-| **aarch64-unknown-linux-gnu** | Raspberry Pi 64bit, ... |
+| Target                            | Intended system              |
+| --------------------------------- | ---------------------------- |
+| **x86_64-unknown-linux-gnu**      | generic 64bit Linux system   |
+| **x86_64-pc-windows-gnu**         | generic 64bit Windows system |
+| **armv7-unknown-linux-gnueabihf** | Raspberry Pi 32bit, ...      |
+| **aarch64-unknown-linux-gnu**     | Raspberry Pi 64bit, ...      |
 
 Make sure to download the correct binaries for your system
 

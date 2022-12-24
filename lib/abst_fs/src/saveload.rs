@@ -1,25 +1,15 @@
-// use std::path::Path;
+use super::{ensure_parent, error_context, generr, inerr, unkext, AbstPath, Error, ObjectType};
 
 use serde::{de::DeserializeOwned, Serialize};
 
-use super::ensure_parent;
-use super::{error_context, generr, inerr, unkext, AbstPath, Error, ObjectType};
-
+#[derive(Debug, PartialEq)]
 enum Ext {
-    // JSON,
-    // YAML,
     Bin,
     Toml,
 }
 fn get_ext(path: &AbstPath) -> Option<Ext> {
-    // let ext = match path.as_ref().extension().and_then(std::ffi::OsStr::to_str) {
-    //     Some(val) => val,
-    //     None => return None,
-    // };
     let ext = path.extension()?;
     match ext.to_ascii_lowercase().as_str() {
-        // "json" => Some(Ext::JSON),
-        // "yaml" => Some(Ext::YAML),
         "bin" => Some(Ext::Bin),
         "toml" => Some(Ext::Toml),
         _ => None,
@@ -39,18 +29,6 @@ pub fn load<T: DeserializeOwned>(path: &AbstPath) -> Result<T, Error> {
     }
 
     match get_ext(path) {
-        // Some(Ext::JSON) => {
-        //     let serialized =
-        //         std::fs::read_to_string(&path).map_err(inerr(errctx("read content to string")))?;
-        //     serde_json::from_str(&serialized)
-        //         .map_err(inerr(errctx("deserialize content from json")))
-        // }
-        // Some(Ext::YAML) => {
-        //     let serialized =
-        //         std::fs::read_to_string(&path).map_err(inerr(errctx("read content to string")))?;
-        //     serde_yaml::from_str(&serialized)
-        //         .map_err(inerr(errctx("deserialize content from yaml")))
-        // }
         Some(Ext::Toml) => {
             let serialized = std::fs::read_to_string(path.to_path_buf())
                 .map_err(inerr(errctx("read content to string")))?;
@@ -71,18 +49,6 @@ pub fn load<T: DeserializeOwned>(path: &AbstPath) -> Result<T, Error> {
 pub fn save<T: Serialize>(path: &AbstPath, content: &T) -> Result<(), Error> {
     let errctx = error_context(format!("could not save file at path {}", path));
     match get_ext(path) {
-        // Some(Ext::JSON) => {
-        //     let serialized = serde_json::to_string(content)
-        //         .map_err(inerr(errctx("serialize content to json")))?;
-        //     ensure_parent(&path)?;
-        //     std::fs::write(&path, serialized).map_err(inerr(errctx("write content to file")))
-        // }
-        // Some(Ext::YAML) => {
-        //     let serialized = serde_yaml::to_string(content)
-        //         .map_err(inerr(errctx("serialize content to yaml")))?;
-        //     ensure_parent(&path)?;
-        //     std::fs::write(&path, serialized).map_err(inerr(errctx("write content to file")))
-        // }
         Some(Ext::Toml) => {
             let serialized =
                 toml::to_string(content).map_err(inerr(errctx("serialize content to toml")))?;
@@ -98,5 +64,129 @@ pub fn save<T: Serialize>(path: &AbstPath, content: &T) -> Result<(), Error> {
                 .map_err(inerr(errctx("write content to file")))
         }
         None => Err(unkext(path)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{get_ext, load, save, AbstPath, Ext};
+    use serde::{Deserialize, Serialize};
+    use std::path::PathBuf;
+
+    #[derive(Debug, PartialEq, Deserialize, Serialize)]
+    struct TestStruct {
+        byte: u8,
+        int: i64,
+        string: String,
+        vec: Vec<TestStruct>,
+    }
+    impl TestStruct {
+        fn test_default() -> Self {
+            let depth2 = TestStruct {
+                byte: 255,
+                int: 3141592653589793238,
+                string: String::from("depth2struct"),
+                vec: Vec::new(),
+            };
+            let depth1_a = TestStruct {
+                byte: 127,
+                int: 2718281828459045235,
+                string: String::from("depth1_astruct"),
+                vec: vec![depth2],
+            };
+            let depth1_b = TestStruct {
+                byte: 57,
+                int: 1618033988749894848,
+                string: String::from("depth1_bstruct"),
+                vec: Vec::new(),
+            };
+            TestStruct {
+                byte: 0,
+                int: 1414213562373095048,
+                string: String::from("depth0struct"),
+                vec: vec![depth1_a, depth1_b],
+            }
+        }
+    }
+
+    trait SafeAdd {
+        fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf);
+    }
+    impl SafeAdd for (AbstPath, PathBuf) {
+        fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf) {
+            let (abst, pb) = self;
+            let new_abst = abst.add_last(suffix.to_string());
+            let new_pb = pb.join(suffix.to_string());
+            //	make sure the path means actually what I think it mean
+            assert_eq!(new_abst.to_path_buf(), new_pb);
+            (new_abst, new_pb)
+        }
+    }
+
+    #[test]
+    fn test() {
+        let path_bf = PathBuf::from("/tmp/bbup-test-abst_fs-saveload");
+        let path = (AbstPath::from(&path_bf), path_bf);
+        //	make sure the path means actually what I think it mean
+        assert_eq!(path.0.to_path_buf(), path.1);
+        assert!(!path.1.exists());
+        std::fs::create_dir(&path.1).unwrap();
+
+        let result = std::panic::catch_unwind(|| {
+            let (file_bin, _) = path.safe_add_last("file.bin");
+            assert_eq!(get_ext(&file_bin), Some(Ext::Bin));
+            assert!(load::<TestStruct>(&file_bin).is_err());
+            save(&file_bin, &TestStruct::test_default()).unwrap();
+            assert_eq!(
+                load::<TestStruct>(&file_bin).unwrap(),
+                TestStruct::test_default()
+            );
+
+            let (file_toml, _) = path.safe_add_last("file.toml");
+            assert_eq!(get_ext(&file_toml), Some(Ext::Toml));
+            assert!(load::<TestStruct>(&file_toml).is_err());
+            save(&file_toml, &TestStruct::test_default()).unwrap();
+            assert_eq!(
+                load::<TestStruct>(&file_toml).unwrap(),
+                TestStruct::test_default()
+            );
+
+            let (file_txt, file_txt_pb) = path.safe_add_last("file.txt");
+            assert_eq!(get_ext(&file_txt), None);
+            assert!(load::<TestStruct>(&file_txt).is_err());
+            assert!(save(&file_txt, &TestStruct::test_default()).is_err());
+            std::fs::write(
+                file_txt_pb,
+                bincode::serialize(&TestStruct::test_default()).unwrap(),
+            )
+            .unwrap();
+            assert!(load::<TestStruct>(&file_txt).is_err());
+
+            let (symlink, symlink_pb) = path.safe_add_last("symlink");
+            assert_eq!(get_ext(&symlink), None);
+            assert!(load::<TestStruct>(&symlink).is_err());
+            assert!(save(&symlink, &TestStruct::test_default()).is_err());
+            std::os::unix::fs::symlink("some/path/to/somewhere", symlink_pb).unwrap();
+            assert!(load::<TestStruct>(&symlink).is_err());
+
+            let (extensionless_file, _) = path.safe_add_last("extensionless_file");
+            assert_eq!(get_ext(&extensionless_file), None);
+            assert!(load::<TestStruct>(&extensionless_file).is_err());
+            assert!(save(&extensionless_file, &TestStruct::test_default()).is_err());
+            std::fs::write(
+                extensionless_file.to_path_buf(),
+                bincode::serialize(&TestStruct::test_default()).unwrap(),
+            )
+            .unwrap();
+            assert!(load::<TestStruct>(&extensionless_file).is_err());
+
+            let (non_existing_file, _) = path.safe_add_last("non_existing_file.bin");
+            assert_eq!(get_ext(&non_existing_file), Some(Ext::Bin));
+            assert!(load::<TestStruct>(&non_existing_file).is_err());
+        });
+
+        std::fs::remove_dir_all(&path.1).unwrap();
+
+        assert!(result.is_ok())
     }
 }

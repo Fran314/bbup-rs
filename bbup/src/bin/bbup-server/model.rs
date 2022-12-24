@@ -1,52 +1,9 @@
 use abst_fs::{self as fs, AbstPath};
 use fs_vcs::{CommitList, FSTree};
-// use bbup::model::Commit;
 
 use serde::{Deserialize, Serialize};
 
 use anyhow::{Context, Result};
-
-// pub type CommitList = Vec<Commit>;
-// pub trait CommmitListExt {
-//     fn get_update_delta(&self, endpoint: &AbstPath, lkc: String) -> Result<Delta>;
-// }
-// impl CommmitListExt for CommitList {
-//     fn get_update_delta(&self, endpoint: &AbstPath, lkc: String) -> Result<Delta> {
-//         let mut output: Delta = Delta::empty();
-//         'commit_loop: for commit in self.iter().rev() {
-//             if commit.commit_id.eq(&lkc) {
-//                 break;
-//             }
-//             let mut delta = commit.delta.clone();
-//             let mut commit_endpoint = commit.endpoint.clone();
-//             let mut curr_endpoint = endpoint.clone();
-
-//             for component in endpoint {
-//                 match commit_endpoint.get(0) {
-//                     Some(comp) if component == comp => {
-//                         commit_endpoint = commit_endpoint.strip_first();
-//                         curr_endpoint = curr_endpoint.strip_first();
-//                     }
-//                     Some(_) => continue 'commit_loop,
-//                     None => break,
-//                 }
-//             }
-//             for component in commit_endpoint.into_iter().rev() {
-//                 let node = DeltaNode::Branch(None, delta);
-//                 let tree = HashMap::from([(component, node)]);
-//                 delta = Delta(tree)
-//             }
-
-//             if let Some(delta_at_endpoint) = delta.get_subdelta_tree_copy(&curr_endpoint) {
-//                 output.merge_prec(&delta_at_endpoint).context(format!(
-//                     "failed to merge commit {} with successive commits",
-//                     commit.commit_id
-//                 ))?;
-//             }
-//         }
-//         Ok(output)
-//     }
-// }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServerConfig {
@@ -95,17 +52,20 @@ pub struct ArchiveState {
     pub archive_tree: FSTree,
 }
 impl ArchiveState {
-    fn cl_path(archive_root: &AbstPath) -> AbstPath {
-        archive_root.add_last(".bbup").add_last("commit-list.bin")
-    }
-    fn at_path(archive_root: &AbstPath) -> AbstPath {
-        archive_root.add_last(".bbup").add_last("archive-tree.bin")
-    }
     pub fn from(commit_list: CommitList, archive_tree: FSTree) -> ArchiveState {
         ArchiveState {
             commit_list,
             archive_tree,
         }
+    }
+    pub fn init_state() -> ArchiveState {
+        ArchiveState::from(CommitList::base_commit_list(), FSTree::empty())
+    }
+    fn cl_path(archive_root: &AbstPath) -> AbstPath {
+        archive_root.add_last(".bbup").add_last("commit-list.bin")
+    }
+    fn at_path(archive_root: &AbstPath) -> AbstPath {
+        archive_root.add_last(".bbup").add_last("archive-tree.bin")
     }
     pub fn load(archive_root: &AbstPath) -> Result<ArchiveState> {
         let commit_list: CommitList = fs::load(&ArchiveState::cl_path(archive_root))

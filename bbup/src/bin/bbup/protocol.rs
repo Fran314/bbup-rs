@@ -1,6 +1,6 @@
 use fs_vcs::{generate_fstree, get_actions_or_conflicts, get_delta, Action, Delta};
 
-use crate::{ProcessConfig, ProcessState};
+use super::{ProcessConfig, ProcessState};
 
 use abst_fs as fs;
 use bbup::com::{BbupCom, Queryable};

@@ -1,4 +1,4 @@
-use crate::{ArchiveConfig, ArchiveState};
+use super::{ArchiveConfig, ArchiveState};
 
 use abst_fs::{self as fs, AbstPath};
 use fs_vcs::{Action, Commit, Delta};
