@@ -4,13 +4,19 @@ use abst_fs::{list_dir_content, AbstPath, ObjectType};
 
 use anyhow::Result;
 
-pub fn setup(home_dir: AbstPath) -> Result<()> {
+pub fn setup(home_dir: AbstPath, opt_server_port: Option<u16>, opt_archive_root: Option<String>) -> Result<()> {
     if ServerConfig::exists(&home_dir) {
         anyhow::bail!("bbup server is already setup");
     }
 
-    let server_port = input::get("enter server port (0-65535): ")?.parse::<u16>()?;
-    let archive_root = AbstPath::from(input::get("enter archive root (relative to ~): ")?);
+    let server_port = match opt_server_port {
+        Some(val) => val,
+        None => input::get("enter server port (0-65535): ")?.parse::<u16>()?,
+    };
+    let archive_root = match opt_archive_root {
+        Some(val) => AbstPath::from(val),
+        None => AbstPath::from(input::get("enter archive root (relative to ~): ")?),
+    };
     let absolute_archive_root = home_dir.append(&archive_root);
     match absolute_archive_root.object_type() {
         Some(ObjectType::Dir) => {}

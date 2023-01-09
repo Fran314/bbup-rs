@@ -25,9 +25,33 @@ enum SubCommand {
         progress: bool,
     },
     /// Initialize link
-    Init,
+    Init {
+        /// Set endpoint
+        #[clap(short, long)]
+        endpoint: Option<String>,
+
+        /// Set exclude list to empty
+        #[clap(short, long)]
+        no_exclude_list: bool,
+    },
     /// Initialize bbup client
-    Setup,
+    Setup {
+        /// Set port for client
+        #[clap(short, long, value_parser)]
+        local_port: Option<u16>,
+
+        /// Set port for server
+        #[clap(short, long, value_parser)]
+        server_port: Option<u16>,
+
+        /// Set server username
+        #[clap(short = 'n', long, value_parser)]
+        host_name: Option<String>,
+
+        /// Set server address
+        #[clap(short = 'a', long, value_parser)]
+        host_address: Option<String>,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -35,18 +59,35 @@ enum SubCommand {
 struct Args {
     #[clap(subcommand)]
     cmd: SubCommand,
+
+    /// Set fake home directory
+    #[clap(short = 'H', long)]
+    home_dir: Option<String>,
+
+    /// Set fake current working directory
+    #[clap(short = 'C', long)]
+    cwd: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
-    let home_dir = fs::home_dir().context("could not resolve home_dir path")?;
-    let cwd = fs::cwd().context("could not resolve current working directory")?;
+    let home_dir = match args.home_dir {
+        Some(val) => abst_fs::AbstPath::from(val),
+        None => fs::home_dir().context("could not resolve home_dir path")?,
+    };
+    //dbg!(&abst_fs::AbstPath::from(args.home_dir.unwrap()));
+    //let home_dir = fs::home_dir().context("could not resolve home_dir path")?;
+    //dbg!(&home_dir);
+    let cwd = match args.cwd {
+        Some(val) => abst_fs::AbstPath::from(val),
+        None => fs::cwd().context("could not resolve current working directory")?,
+    };
 
     match args.cmd {
-        SubCommand::Setup => setup::setup(&home_dir),
-        SubCommand::Init => init::init(&cwd),
+        SubCommand::Setup { local_port, server_port, host_name, host_address } => setup::setup(&home_dir, local_port, server_port, host_name, host_address),
+        SubCommand::Init { endpoint, no_exclude_list } => init::init(&cwd, endpoint, no_exclude_list),
         SubCommand::Sync { verbose, progress } 
 		// | SubCommand::OtherTypeOfSync when I'll have one
 		//	such as SubCommand::Pull

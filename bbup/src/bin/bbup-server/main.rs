@@ -26,7 +26,15 @@ enum SubCommand {
     },
     #[clap(version)]
     /// Initialize bbup client
-    Setup,
+    Setup {
+        /// Set server port
+        #[clap(short, long)]
+        server_port: Option<u16>,
+
+        /// Set archive root
+        #[clap(short, long)]
+        archive_root: Option<String>,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -34,16 +42,23 @@ enum SubCommand {
 struct Args {
     #[clap(subcommand)]
     cmd: SubCommand,
+
+    /// Set fake home directory
+    #[clap(short = 'H', long)]
+    home_dir: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
-    let home_dir = fs::home_dir().context("could not resolve home_dir path")?;
+    let home_dir = match args.home_dir {
+        Some(val) => fs::AbstPath::from(val),
+        None => fs::home_dir().context("could not resolve home_dir path")?,
+    };
 
     match args.cmd {
-        SubCommand::Setup => setup::setup(home_dir),
+        SubCommand::Setup { server_port, archive_root } => setup::setup(home_dir, server_port, archive_root),
         SubCommand::Run { verbose, progress } => {
             let server_config = ServerConfig::load(&home_dir)?;
             let archive_root = home_dir.append(&server_config.archive_root);

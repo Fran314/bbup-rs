@@ -1,6 +1,11 @@
 mod actions;
 pub use actions::{
-    get_actions_or_conflicts, Action, Actions, ConflictNode, Conflicts, Queries, Query,
+    get_actions_or_conflicts,
+    Action,
+    Actions,
+    ConflictNode,
+    Conflicts,
+    //Queries, Query,
 };
 
 mod commit;
