@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
 
+// TODO add tests
+// (maybe, not really sure how useful tests would be here)
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum IOr<L, R> {
     Left(L),

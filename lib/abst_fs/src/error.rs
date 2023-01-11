@@ -51,19 +51,29 @@ mod tests {
     use super::{error_context, generr, inerr, unkext, wrgobj, AbstPath, Error};
 
     #[test]
-    fn test() {
+    fn test_unkext() {
         let path = String::from("path/to/something");
         assert_eq!(
             unkext(&AbstPath::from(&path)),
             Error::UnknownExtension { path }
         );
+    }
 
+    #[test]
+    fn test_wrgobj() {
         let wrgobj_error = Error::OperationOnWrongObject {
             src: String::from("source"),
             err: String::from("error"),
         };
         assert_eq!(wrgobj("source", "error"), wrgobj_error);
+    }
 
+    #[test]
+    fn test_inerr() {
+        let wrgobj_error = Error::OperationOnWrongObject {
+            src: String::from("source"),
+            err: String::from("error"),
+        };
         assert_eq!(
             inerr("source")(wrgobj_error.clone()),
             Error::Inner {
@@ -71,7 +81,10 @@ mod tests {
                 err: wrgobj_error.to_string()
             }
         );
+    }
 
+    #[test]
+    fn test_generr() {
         assert_eq!(
             generr("source", "error"),
             Error::Generic {
@@ -79,10 +92,13 @@ mod tests {
                 err: String::from("error")
             }
         );
+    }
 
+    #[test]
+    fn test_errctx() {
         assert_eq!(
             error_context("Some source")("do something"),
             String::from("Some source\nFailed to do something")
-        )
+        );
     }
 }

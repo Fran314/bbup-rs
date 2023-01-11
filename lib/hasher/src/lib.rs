@@ -73,12 +73,6 @@ mod tests {
     use super::{hash_bytes, hash_stream, Hash};
 
     #[test]
-    fn test() {
-        to_bytes();
-        to_string();
-        hash();
-    }
-
     fn to_bytes() {
         for _ in 0..1000 {
             let bytes: [u8; 32] = rand::random();
@@ -90,6 +84,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn to_string() {
         for b in 0..=15 {
             let h = Hash([17 * b; 32]);
@@ -121,6 +116,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn hash() {
         let tests = [
             (

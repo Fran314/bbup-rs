@@ -71,6 +71,21 @@ mod tests {
     const TEST_MTIME: Mtime = Mtime(498705663, 141592653);
     const TEST_MTIME_STRING: &str = "1985-10-21 01:21:03.141592653";
 
+    // --- SAFETY MEASURES --- //
+    // Testing this crate is dangerous as an unexpected behaviour could
+    // potentially damage the machine it's ran on. To fix this we uso two safety
+    // measures: we create object and work only inside the `/tmp` folder, and
+    // we make sure that the paths (AbstPath) that we use actually mean what we
+    // think they mean, to avoid situations where we think we're deleting a file
+    // inside /tmp but actually we're deleting a home directory.
+    //
+    // The purpose of `safe_add_last` is to append components to paths while
+    // checking that they still mean what we think they mean.
+    //
+    // `setup_sandbox` and `cleanup_sandbox` create and destroy the sandbox
+    // environments in which the testing will happen. The creation happens only
+    // after having checked that the path didn't get corrupted while being
+    // transformed into an AbstPath
     trait SafeAdd {
         fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf);
     }
@@ -84,15 +99,22 @@ mod tests {
             (new_abst, new_pb)
         }
     }
+    fn setup_sandbox(path: impl std::fmt::Display) -> (AbstPath, PathBuf) {
+        let path_bf = PathBuf::from(format!("/tmp/{path}"));
+        assert!(!path_bf.exists());
+        std::fs::create_dir(&path_bf).unwrap();
+
+        let path = (AbstPath::from(&path_bf), path_bf);
+        assert_eq!(path.0.to_path_buf(), path.1); // make sure the path means actually what I think it mean
+        path
+    }
+    fn cleanup_sandbox(path: impl std::fmt::Display) {
+        let path_bf = PathBuf::from(format!("/tmp/{path}"));
+        std::fs::remove_dir_all(&path_bf).unwrap();
+    }
+    // --- --- //
 
     #[test]
-    fn test() {
-        from();
-        to_bytes();
-        to_string();
-        get_set_mtime();
-    }
-
     fn from() {
         assert_eq!(TEST_MTIME, Mtime::from(498705663, 141592653));
         assert_eq!(
@@ -100,6 +122,7 @@ mod tests {
             Mtime::from(1132648943, 735182781)
         );
     }
+    #[test]
     fn to_bytes() {
         assert_ne!(
             TEST_MTIME.to_bytes(),
@@ -115,18 +138,15 @@ mod tests {
         );
     }
 
+    #[test]
     fn to_string() {
         assert_eq!(format!("{TEST_MTIME}"), TEST_MTIME_STRING);
     }
 
+    #[test]
     fn get_set_mtime() {
-        let path_bf = PathBuf::from("/tmp/bbup-test-abst_fs-mtime");
-        let path = (AbstPath::from(&path_bf), path_bf);
-        //	make sure the path means actually what I think it mean
-        assert_eq!(path.0.to_path_buf(), path.1);
-        assert!(!path.1.exists());
-
-        std::fs::create_dir(&path.1).unwrap();
+        let sandbox = "bbup-test-abst_fs-mtime";
+        let path = setup_sandbox(sandbox);
 
         let result = std::panic::catch_unwind(|| {
             let (dir, _) = path.safe_add_last("dir");
@@ -151,7 +171,7 @@ mod tests {
             assert!(get_mtime(&non_existing_object).is_err());
         });
 
-        std::fs::remove_dir_all(&path.1).unwrap();
+        cleanup_sandbox(sandbox);
 
         assert!(result.is_ok())
     }

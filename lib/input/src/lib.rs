@@ -1,5 +1,8 @@
 use std::io::{self, BufRead, Write};
 
+// TODO add tests
+// (maybe, not really sure how useful tests would be here)
+
 pub fn get<T: std::fmt::Display>(prompt: T) -> std::io::Result<String> {
     let mut input = String::new();
 

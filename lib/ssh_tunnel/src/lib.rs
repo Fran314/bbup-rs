@@ -1,5 +1,7 @@
 use std::io::BufRead;
 
+// TODO add tests
+
 // TODO add custom error handling
 
 // TODO redo connection: probably -N -v instead of -tt

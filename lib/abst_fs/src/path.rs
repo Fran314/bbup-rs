@@ -112,7 +112,7 @@ impl AbstPath {
         Some(AbstPath::from(self.to_path_buf().parent()?))
     }
     pub fn file_name(&self) -> Option<String> {
-        // NOTE: same as `fn parent(&self)`
+        // NOTE: same reasoning as the comment for `fn parent(&self)`
         Some(self.to_path_buf().file_name()?.force_to_string())
     }
     pub fn extension(&self) -> Option<&str> {
@@ -248,42 +248,6 @@ mod tests {
     use std::collections::VecDeque;
 
     #[test]
-    fn test() {
-        // ForceToString
-        force_to_string();
-
-        // AbstPath
-        empty();
-        single();
-        from();
-
-        to_path_buf();
-
-        len();
-        is_empty();
-        get();
-
-        add_first();
-        add_last();
-        strip_first();
-        strip_last();
-        append();
-
-        parent();
-        file_name();
-        extension();
-
-        into_iter();
-        into_iter_ref();
-
-        to_string();
-
-        exists_and_type();
-
-        // Endpoint
-        as_bytes();
-    }
-
     fn force_to_string() {
         use super::ForceToString;
         use std::ffi::OsStr;
@@ -295,10 +259,12 @@ mod tests {
         assert_eq!(OsStr::new(path).force_to_string().as_str(), path);
     }
 
+    #[test]
     fn empty() {
         assert_eq!(AbstPath(VecDeque::from([])), AbstPath::empty());
     }
 
+    #[test]
     fn single() {
         assert_eq!(
             AbstPath(VecDeque::from([String::from("test")])),
@@ -312,6 +278,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn from() {
         assert_eq!(
             AbstPath(VecDeque::from([
@@ -342,6 +309,7 @@ mod tests {
         assert_ne!(AbstPath::single("test/path"), AbstPath::from("test/path"));
     }
 
+    #[test]
     fn to_path_buf() {
         use std::path::PathBuf;
         let path = "/home/user/Desktop/something";
@@ -360,6 +328,7 @@ mod tests {
         assert_eq!(AbstPath::from(path).to_path_buf(), PathBuf::from(path));
     }
 
+    #[test]
     fn len() {
         assert_eq!(AbstPath::empty().len(), 0);
         assert_eq!(AbstPath::single("a/b/c/d/e/f").len(), 1);
@@ -378,6 +347,7 @@ mod tests {
         assert_eq!(vec.len(), AbstPath(vec).len())
     }
 
+    #[test]
     fn is_empty() {
         assert!(AbstPath::empty().is_empty());
         assert!(AbstPath::from("").is_empty());
@@ -386,6 +356,7 @@ mod tests {
         assert!(!AbstPath::from("test").is_empty());
     }
 
+    #[test]
     fn get() {
         let first = String::from("first");
         let second = String::from("second");
@@ -410,6 +381,7 @@ mod tests {
         assert_eq!(path.get(path.len()), None);
     }
 
+    #[test]
     fn add_first() {
         use std::path::PathBuf;
 
@@ -453,6 +425,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn add_last() {
         use std::path::PathBuf;
 
@@ -472,6 +445,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn strip_first() {
         use std::path::PathBuf;
 
@@ -496,6 +470,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn strip_last() {
         use std::path::PathBuf;
 
@@ -520,6 +495,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn append() {
         use std::path::PathBuf;
 
@@ -550,6 +526,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn parent() {
         let path = "path/to/somewhere";
         let child = "child";
@@ -559,12 +536,14 @@ mod tests {
         )
     }
 
+    #[test]
     fn file_name() {
         let file = "supersecretpassword.txt";
         let path = format!("path/to/somewhere/{file}");
         assert_eq!(AbstPath::from(path).file_name().unwrap().as_str(), file);
     }
 
+    #[test]
     fn extension() {
         let path = "path/to/some/file.txt";
         assert_eq!(AbstPath::from(path).extension(), Some("txt"));
@@ -579,6 +558,7 @@ mod tests {
         assert_eq!(AbstPath::from(path).extension(), None);
     }
 
+    #[test]
     fn into_iter() {
         let vec = VecDeque::from([
             String::from("path"),
@@ -600,6 +580,7 @@ mod tests {
         assert_eq!(vec_iter.next(), None);
     }
 
+    #[test]
     fn into_iter_ref() {
         let vec = VecDeque::from([
             String::from("path"),
@@ -621,6 +602,7 @@ mod tests {
         assert_eq!(vec_iter.next(), None);
     }
 
+    #[test]
     fn to_string() {
         let path = "/home/user/Desktop/something";
         assert_eq!(AbstPath::from(path).to_string().as_str(), path);
@@ -639,6 +621,7 @@ mod tests {
         assert_eq!(AbstPath::from("").to_string().as_str(), "");
     }
 
+    #[test]
     fn exists_and_type() {
         use super::{ObjectType, ABST_OBJ_HEADER};
         use std::path::PathBuf;
@@ -702,6 +685,7 @@ mod tests {
         assert!(result.is_ok())
     }
 
+    #[test]
     fn as_bytes() {
         assert_ne!(
             Endpoint::Unix(String::from("some/path/to/somewhere")).as_bytes(),
