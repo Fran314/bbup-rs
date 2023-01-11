@@ -1,4 +1,4 @@
-use fs_vcs::{generate_fstree, get_actions_or_conflicts, get_delta, Action, Delta};
+use fs_vcs::{generate_fstree, get_actions, get_delta, Action, Delta};
 
 use super::{ProcessConfig, ProcessState};
 
@@ -75,7 +75,7 @@ pub async fn apply_update_or_get_conflicts(
     match (&state.local_delta, &state.update) {
         (Some(local_delta), Some((update_id, update_delta))) => {
             // Check for conflicts or get the necessary actions
-            let necessary_actions = match get_actions_or_conflicts(local_delta, update_delta) {
+            let necessary_actions = match get_actions(local_delta, update_delta) {
                 Ok(actions) => actions,
                 Err(conflicts) => {
                     println!("conflicts:\n{}", conflicts);
@@ -217,8 +217,9 @@ pub async fn upload_changes(
 
             com.send_struct(local_delta).await?;
 
+            let actions = local_delta.to_actions()?;
             let mut queryables = Vec::new();
-            for (path, action) in &local_delta.to_actions() {
+            for (path, action) in actions {
                 match action {
                     Action::AddFile(_, _)
                     | Action::EditFile(_, Some(_))

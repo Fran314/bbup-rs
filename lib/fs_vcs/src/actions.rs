@@ -6,6 +6,8 @@ use hasher::Hash;
 
 use super::{Delta, DeltaNode, FSNode, FSTree};
 
+use thiserror::Error;
+
 #[allow(clippy::large_enum_variant)]
 #[derive(PartialEq, Debug)]
 pub enum ConflictNode {
@@ -91,6 +93,22 @@ impl<'a> IntoIterator for &'a Actions {
     }
 }
 
+#[derive(Error, Debug, PartialEq)]
+#[error("File System Tree Delta Error: unable to convert delta to actions. Delta is not shaken")]
+pub struct ImproperDelta;
+
+#[derive(Error, Debug, PartialEq)]
+#[error(
+    "File System Tree Delta Error: unable to get actions from pair of deltas.\nConflict at path: {0}\nError: {1}"
+)]
+pub struct ConvToActionError(AbstPath, String);
+fn convtoacterr(path: AbstPath, err: impl ToString) -> ConvToActionError {
+    ConvToActionError(path, err.to_string())
+}
+fn push_converr(parent: impl ToString) -> impl Fn(ConvToActionError) -> ConvToActionError {
+    move |ConvToActionError(path, err)| ConvToActionError(path.add_first(parent.to_string()), err)
+}
+
 impl FSNode {
     fn to_add_actions(&self) -> Actions {
         let mut actions = Actions::new();
@@ -128,36 +146,45 @@ impl Delta {
     /// Convert a delta into a series of actions to be performed on the file
     /// system in order to actually apply the delta on the file system and not
     /// just virtually on the fstree
-    pub fn to_actions(&self) -> Actions {
+    pub fn to_actions(&self) -> Result<Actions, ConvToActionError> {
         let Delta(delta) = self;
         let mut actions = Actions::new();
         for (name, child) in delta {
-            let mut child_actions = child.to_actions().add_prefix(name);
+            let mut child_actions = child.to_actions()?.add_prefix(name);
             actions.append(&mut child_actions);
         }
-        actions
+        Ok(actions)
     }
 }
 impl DeltaNode {
-    fn to_actions(&self) -> Actions {
+    fn to_actions(&self) -> Result<Actions, ConvToActionError> {
         let mut actions = Actions::new();
         match self {
             DeltaNode::Branch((_, postmtime), subdelta) => {
-                actions.append(&mut subdelta.to_actions());
+                actions.append(&mut subdelta.to_actions()?);
                 actions.push(AbstPath::empty(), Action::EditDir(postmtime.clone()));
             }
-            DeltaNode::Leaf(Some(FSNode::Dir(_, _, _)), Some(FSNode::Dir(_, _, _)))
-            | DeltaNode::Leaf(None, None) => {
-                // TODO maybe make these errors better?
-                panic!("trying to flat an unshaken delta");
+            DeltaNode::Leaf(Some(FSNode::Dir(_, _, _)), Some(FSNode::Dir(_, _, _))) => {
+                return Err(convtoacterr(
+                    AbstPath::empty(),
+                    "delta is not shaken at path, leaf from dir to dir",
+                ));
+            }
+            DeltaNode::Leaf(None, None) => {
+                return Err(convtoacterr(
+                    AbstPath::empty(),
+                    "delta is not shaken at path, leaf from none to none",
+                ));
             }
             DeltaNode::Leaf(Some(FSNode::File(m0, h0)), Some(FSNode::File(m1, h1))) => {
                 if m0.ne(m1) || h0.ne(h1) {
                     let opth = if h0.ne(h1) { Some(h1.clone()) } else { None };
                     actions.push(AbstPath::empty(), Action::EditFile(m1.clone(), opth));
                 } else {
-                    // TODO maybe make these errors better?
-                    panic!("trying to flat an unshaken delta");
+                    return Err(convtoacterr(
+                        AbstPath::empty(),
+                        "delta is not shaken at path, leaf from file to identical file",
+                    ));
                 }
             }
             DeltaNode::Leaf(Some(FSNode::SymLink(m0, h0)), Some(FSNode::SymLink(m1, h1))) => {
@@ -165,8 +192,10 @@ impl DeltaNode {
                     let opth = if h0.ne(h1) { Some(h1.clone()) } else { None };
                     actions.push(AbstPath::empty(), Action::EditSymLink(m1.clone(), opth));
                 } else {
-                    // TODO maybe make these errors better?
-                    panic!("trying to flat an unshaken delta");
+                    return Err(convtoacterr(
+                        AbstPath::empty(),
+                        "delta is not shaken at path, leaf from symlink to identical symlink",
+                    ));
                 }
             }
             DeltaNode::Leaf(pre, post) => {
@@ -205,21 +234,21 @@ impl DeltaNode {
             }
         }
 
-        actions
+        Ok(actions)
     }
 }
 
 /// This function is needed only for one specific branch of the
-/// `get_actions_or_conflicts` function. More precisely, if both the deltas
+/// `get_actions` function. More precisely, if both the deltas
 /// added a directory, the goal of this function is to add the files in the
 /// missed version of the directory to the local version of the directory (if
 /// this is possible, ie there are no conflicts on overlapping files defined in
 /// different ways). If it's not possible, return a conflict on why it is not
 /// possible
-fn add_tree_actions_or_conflicts(
+fn add_tree_actions(
     FSTree(loc_tree): &FSTree,
     FSTree(miss_tree): &FSTree,
-) -> Result<Actions, ()> {
+) -> Result<Actions, ConvToActionError> {
     let mut necessary_actions = Actions::new();
     for (name, miss_child) in miss_tree {
         match (loc_tree.get(name), miss_child) {
@@ -227,56 +256,56 @@ fn add_tree_actions_or_conflicts(
                 let mut add_child_actions = miss_child.to_add_actions().add_prefix(name);
                 necessary_actions.append(&mut add_child_actions);
             }
-            // The reason why we have the `miss_hash == loc_hash` in the branch
-            // guard and the `miss_mtime != loc_mtime` not in the branch guard
-            // but inside the block is because the branch guard is there to
-            // check if the two objects are compatible, ie they don't cause a
-            // conflict. Two files can be compatible and require an action (if
-            // the mtimes are different) or be compatible and not require any
-            // action (if the mtimes are the same). The purpose of the if block
-            // inside is exactly the one just mentioned. Adding that check in
-            // the branch guard would trigger some false positive conflicts
-            (Some(FSNode::File(loc_mtime, loc_hash)), FSNode::File(miss_mtime, miss_hash))
-                if miss_hash == loc_hash =>
-            {
-                if miss_mtime != loc_mtime {
-                    necessary_actions.push(
+            (Some(FSNode::File(loc_mtime, loc_hash)), FSNode::File(miss_mtime, miss_hash)) => {
+                if miss_hash == loc_hash {
+                    if miss_mtime != loc_mtime {
+                        necessary_actions.push(
+                            AbstPath::single(name),
+                            Action::EditFile(miss_mtime.clone(), None),
+                        );
+                    }
+                } else {
+                    return Err(convtoacterr(
                         AbstPath::single(name),
-                        Action::EditFile(miss_mtime.clone(), None),
-                    );
+                        "adding incompatible files with different contents",
+                    ));
                 }
             }
-            // The same as the comment above regarding the different placement
-            // of the `miss_hash == loc_hash` and `miss_mtime != loc_mtime`
-            // checks holds here too
             (
                 Some(FSNode::SymLink(loc_mtime, loc_hash)),
                 FSNode::SymLink(miss_mtime, miss_hash),
-            ) if miss_hash == loc_hash => {
-                if miss_mtime != loc_mtime {
-                    necessary_actions.push(
+            ) => {
+                if miss_hash == loc_hash {
+                    if miss_mtime != loc_mtime {
+                        necessary_actions.push(
+                            AbstPath::single(name),
+                            Action::EditSymLink(miss_mtime.clone(), None),
+                        );
+                    }
+                } else {
+                    return Err(convtoacterr(
                         AbstPath::single(name),
-                        Action::EditSymLink(miss_mtime.clone(), None),
-                    );
+                        "adding incompatible symlinks with different endpoints",
+                    ));
                 }
             }
             (Some(FSNode::Dir(_, _, loc_subtree)), FSNode::Dir(miss_mtime, _, miss_subtree)) => {
-                let subadd = add_tree_actions_or_conflicts(loc_subtree, miss_subtree);
-                match subadd {
-                    Ok(subactions) => {
-                        necessary_actions.append(&mut subactions.add_prefix(name));
+                let subadd =
+                    add_tree_actions(loc_subtree, miss_subtree).map_err(push_converr(name))?;
+                necessary_actions.append(&mut subadd.add_prefix(name));
 
-                        // IMPORTANT: this edit dir action is necessary even if
-                        //	loc_mtime == miss_mtime, because the subactions executed
-                        //	before this will probably change the actual mtime of
-                        //	the directory on the file system
-                        necessary_actions
-                            .push(AbstPath::single(name), Action::EditDir(miss_mtime.clone()));
-                    }
-                    Err(()) => return Err(()),
-                }
+                // IMPORTANT: this edit dir action is necessary even if
+                //	loc_mtime == miss_mtime, because the subactions executed
+                //	before this will probably change the actual mtime of
+                //	the directory on the file system
+                necessary_actions.push(AbstPath::single(name), Action::EditDir(miss_mtime.clone()));
             }
-            _ => return Err(()),
+            _ => {
+                return Err(convtoacterr(
+                    AbstPath::single(name),
+                    "adding incompatible objects",
+                ))
+            }
         }
     }
     Ok(necessary_actions)
@@ -337,19 +366,22 @@ fn add_tree_actions_or_conflicts(
 ///
 /// This function returns `Ok(necessary_actions)` if there is no conflict,
 /// otherwise `Err(conflicts)`
-pub fn get_actions_or_conflicts(
+pub fn get_actions(
     Delta(local): &Delta,
     Delta(missed): &Delta,
-) -> Result<Actions, Conflicts> {
+) -> Result<Actions, ConvToActionError> {
     let mut necessary_actions = Actions::new();
-    let mut conflicts: HashMap<String, ConflictNode> = HashMap::new();
+    // let mut conflicts: HashMap<String, ConflictNode> = HashMap::new();
     for (name, miss_node) in missed {
         match local.get(name) {
             // If this node of the missed update is not present in the local
             //	update, it is a necessary change to be pulled in order to apply
             //	the missed update
             None => {
-                let mut miss_node_actions = miss_node.to_actions().add_prefix(name);
+                let mut miss_node_actions = miss_node
+                    .to_actions()
+                    .map_err(push_converr(name))?
+                    .add_prefix(name);
                 necessary_actions.append(&mut miss_node_actions);
             }
 
@@ -363,36 +395,38 @@ pub fn get_actions_or_conflicts(
                     DeltaNode::Branch(_, loc_subdelta),
                     DeltaNode::Branch((_, miss_postmtime), miss_subdelta),
                 ) => {
-                    match get_actions_or_conflicts(loc_subdelta, miss_subdelta) {
-                        Ok(subnecessary) => {
-                            necessary_actions.append(&mut subnecessary.add_prefix(name));
-                            necessary_actions.push(
-                                AbstPath::single(name),
-                                Action::EditDir(miss_postmtime.clone()),
-                            );
-                        }
-                        Err(subconflicts) => {
-                            conflicts.insert(name.clone(), ConflictNode::Branch(subconflicts));
-                        }
-                    };
+                    let subactions =
+                        get_actions(loc_subdelta, miss_subdelta).map_err(push_converr(name))?;
+                    necessary_actions.append(&mut subactions.add_prefix(name));
+                    necessary_actions.push(
+                        AbstPath::single(name),
+                        Action::EditDir(miss_postmtime.clone()),
+                    );
                 }
                 // If the object has been removed by both deltas, this is
                 //	compatible behaviour and no further action is needed
                 (DeltaNode::Leaf(_, None), DeltaNode::Leaf(_, None)) => {}
 
-                // If the objects have the same content (same hash), the only
-                //	edit needed is if the local mtime is different to the missed
-                //	mtime, in which case the local mtime is set to the missed
-                //	mtime
                 (
                     DeltaNode::Leaf(_, Some(FSNode::File(loc_mtime, loc_hash))),
                     DeltaNode::Leaf(_, Some(FSNode::File(miss_mtime, miss_hash))),
-                ) if loc_hash == miss_hash => {
-                    if loc_mtime != miss_mtime {
-                        necessary_actions.push(
+                ) => {
+                    if loc_hash == miss_hash {
+                        // If the objects have the same content (same hash), the only
+                        //	edit needed is if the local mtime is different to the missed
+                        //	mtime, in which case the local mtime is set to the missed
+                        //	mtime
+                        if loc_mtime != miss_mtime {
+                            necessary_actions.push(
+                                AbstPath::single(name),
+                                Action::EditFile(miss_mtime.clone(), None),
+                            );
+                        }
+                    } else {
+                        return Err(convtoacterr(
                             AbstPath::single(name),
-                            Action::EditFile(miss_mtime.clone(), None),
-                        );
+                            "added or edited incompatible files with different content",
+                        ));
                     }
                 }
 
@@ -400,12 +434,19 @@ pub fn get_actions_or_conflicts(
                 (
                     DeltaNode::Leaf(_, Some(FSNode::SymLink(loc_mtime, loc_hash))),
                     DeltaNode::Leaf(_, Some(FSNode::SymLink(miss_mtime, miss_hash))),
-                ) if loc_hash == miss_hash => {
-                    if loc_mtime != miss_mtime {
-                        necessary_actions.push(
+                ) => {
+                    if loc_hash == miss_hash {
+                        if loc_mtime != miss_mtime {
+                            necessary_actions.push(
+                                AbstPath::single(name),
+                                Action::EditSymLink(miss_mtime.clone(), None),
+                            );
+                        }
+                    } else {
+                        return Err(convtoacterr(
                             AbstPath::single(name),
-                            Action::EditSymLink(miss_mtime.clone(), None),
-                        );
+                            "added or edited incompatible symlinks with different endpoints",
+                        ));
                     }
                 }
 
@@ -414,42 +455,29 @@ pub fn get_actions_or_conflicts(
                     DeltaNode::Leaf(_, Some(FSNode::Dir(_, _, loc_subtree))),
                     DeltaNode::Leaf(_, Some(FSNode::Dir(miss_mtime, _, miss_subtree))),
                 ) => {
-                    let subget = add_tree_actions_or_conflicts(loc_subtree, miss_subtree);
-                    match subget {
-                        Ok(subactions) => {
-                            necessary_actions.append(&mut subactions.add_prefix(name));
-                            necessary_actions
-                                .push(AbstPath::single(name), Action::EditDir(miss_mtime.clone()));
-                        }
-                        Err(()) => {
-                            conflicts.insert(
-                                name.clone(),
-                                ConflictNode::Leaf(loc_node.clone(), miss_node.clone()),
-                            );
-                        }
-                    }
+                    let subactions =
+                        add_tree_actions(loc_subtree, miss_subtree).map_err(push_converr(name))?;
+                    necessary_actions.append(&mut subactions.add_prefix(name));
+                    necessary_actions
+                        .push(AbstPath::single(name), Action::EditDir(miss_mtime.clone()));
                 }
                 _ => {
-                    conflicts.insert(
-                        name.clone(),
-                        ConflictNode::Leaf(loc_node.clone(), miss_node.clone()),
-                    );
+                    return Err(convtoacterr(
+                        AbstPath::single(name),
+                        "added or edited incompatible objects",
+                    ));
                 }
             },
         }
     }
-    if conflicts.is_empty() {
-        Ok(necessary_actions)
-    } else {
-        Err(Conflicts(conflicts))
-    }
+    Ok(necessary_actions)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        super::get_delta, add_tree_actions_or_conflicts, get_actions_or_conflicts, Action, Actions,
-        Conflicts, DeltaNode, FSNode, FSTree,
+        super::get_delta, add_tree_actions, get_actions, Action, Actions, Conflicts, DeltaNode,
+        FSNode, FSTree,
     };
     use abst_fs::{AbstPath, Endpoint, Mtime};
     use core::panic;
@@ -630,7 +658,8 @@ mod tests {
         {
             assert_eq!(
                 DeltaNode::leaf(Some(FSNode::file((1665061768, 321204439), "test")), None)
-                    .to_actions(),
+                    .to_actions()
+                    .unwrap(),
                 Actions(vec![remove_file_at("")])
             );
             assert_eq!(
@@ -641,12 +670,14 @@ mod tests {
                     )),
                     None
                 )
-                .to_actions(),
+                .to_actions()
+                .unwrap(),
                 Actions(vec![remove_symlink_at("")])
             );
             assert_eq!(
                 DeltaNode::leaf(Some(FSNode::empty_dir((1665366613, 463960433))), None)
-                    .to_actions(),
+                    .to_actions()
+                    .unwrap(),
                 Actions(vec![remove_dir_at("")])
             );
             assert_eq!(
@@ -658,13 +689,15 @@ mod tests {
                     })),
                     None
                 )
-                .to_actions(),
+                .to_actions()
+                .unwrap(),
                 Actions(vec![remove_dir_at("")])
             );
 
             assert_eq!(
                 DeltaNode::leaf(None, Some(FSNode::file((1665061768, 321204439), "test")))
-                    .to_actions(),
+                    .to_actions()
+                    .unwrap(),
                 Actions(vec![add_file_at("", (1665061768, 321204439), "test")])
             );
             assert_eq!(
@@ -675,7 +708,8 @@ mod tests {
                         "path/to/somewhere"
                     ))
                 )
-                .to_actions(),
+                .to_actions()
+                .unwrap(),
                 Actions(vec![add_symlink_at(
                     "",
                     (1665233109, 187394758),
@@ -684,7 +718,8 @@ mod tests {
             );
             assert_eq!(
                 DeltaNode::leaf(None, Some(FSNode::empty_dir((1665366613, 463960433))))
-                    .to_actions(),
+                    .to_actions()
+                    .unwrap(),
                 Actions(vec![
                     add_dir_at(""),
                     edit_dir_at("", (1665366613, 463960433))
@@ -699,7 +734,8 @@ mod tests {
                         t.add_empty_dir("some-dir", (1665531191, 5096258));
                     })),
                 )
-                .to_actions(),
+                .to_actions()
+                .unwrap(),
                 Actions(vec![
                     add_dir_at(""),
                     add_file_at("some-file", (1665369992, 703846649), "aaa"),
@@ -715,7 +751,8 @@ mod tests {
                     Some(FSNode::file((1665639893, 998839999), "mao")),
                     Some(FSNode::file((1665646546, 757770519), "bau"))
                 )
-                .to_actions(),
+                .to_actions()
+                .unwrap(),
                 Actions(vec![edit_file_at("", (1665646546, 757770519), Some("bau"))])
             );
             assert_eq!(
@@ -723,7 +760,8 @@ mod tests {
                     Some(FSNode::file((1665639893, 998839999), "mao")),
                     Some(FSNode::file((1665639893, 998839999), "bau"))
                 )
-                .to_actions(),
+                .to_actions()
+                .unwrap(),
                 Actions(vec![edit_file_at("", (1665639893, 998839999), Some("bau"))])
             );
             assert_eq!(
@@ -731,7 +769,8 @@ mod tests {
                     Some(FSNode::file((1665639893, 998839999), "mao")),
                     Some(FSNode::file((1665646546, 757770519), "mao"))
                 )
-                .to_actions(),
+                .to_actions()
+                .unwrap(),
                 Actions(vec![edit_file_at(
                     "",
                     (1665646546, 757770519),
@@ -744,7 +783,8 @@ mod tests {
                     Some(FSNode::symlink((1665875820, 923687114), "some/path")),
                     Some(FSNode::symlink((1665952290, 714857838), "different/path"))
                 )
-                .to_actions(),
+                .to_actions()
+                .unwrap(),
                 Actions(vec![edit_symlink_at(
                     "",
                     (1665952290, 714857838),
@@ -756,7 +796,8 @@ mod tests {
                     Some(FSNode::symlink((1665875820, 923687114), "some/path")),
                     Some(FSNode::symlink((1665875820, 923687114), "different/path"))
                 )
-                .to_actions(),
+                .to_actions()
+                .unwrap(),
                 Actions(vec![edit_symlink_at(
                     "",
                     (1665875820, 923687114),
@@ -768,7 +809,8 @@ mod tests {
                     Some(FSNode::symlink((1665875820, 923687114), "some/path")),
                     Some(FSNode::symlink((1665952290, 714857838), "some/path"))
                 )
-                .to_actions(),
+                .to_actions()
+                .unwrap(),
                 Actions(vec![edit_symlink_at(
                     "",
                     (1665952290, 714857838),
@@ -814,7 +856,8 @@ mod tests {
                     //     )
                     // });
                 })
-                .to_actions(),
+                .to_actions()
+                .unwrap(),
                 Actions(vec![
                     edit_file_at("some-file", (1669428322, 884592525), Some("content")),
                     remove_file_at("deleted-file"),
@@ -877,7 +920,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_tree_actions_or_conflicts() {
+    fn test_add_tree_actions() {
         // Correct scenario
         {
             let loc_tree = FSTree::gen_from(|t| {
@@ -951,7 +994,7 @@ mod tests {
             });
 
             assert_eq!(
-                add_tree_actions_or_conflicts(&loc_tree, &miss_tree).unwrap(),
+                add_tree_actions(&loc_tree, &miss_tree).unwrap(),
                 Actions(vec![
                     add_file_at("miss-file", (1667440088, 512796633), "qzerty"),
                     edit_file_at("both-file", (1667457760, 877447014), None::<String>),
@@ -1054,7 +1097,7 @@ mod tests {
                 let miss_tree = FSTree::gen_from(|t| {
                     t.add_file("file", (1667371999, 105275068), "content 2");
                 });
-                assert!(add_tree_actions_or_conflicts(&loc_tree, &miss_tree).is_err());
+                assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
 
                 let loc_tree = FSTree::gen_from(|t| {
                     t.add_dir("dir", (1667388032, 851120567), |t| {
@@ -1066,7 +1109,7 @@ mod tests {
                         t.add_file("file", (1667397348, 246346603), "content 2");
                     })
                 });
-                assert!(add_tree_actions_or_conflicts(&loc_tree, &miss_tree).is_err());
+                assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
 
                 let loc_tree = FSTree::gen_from(|t| {
                     t.add_dir("dir", (1667561496, 117629802), |t| {
@@ -1082,7 +1125,7 @@ mod tests {
                         });
                     })
                 });
-                assert!(add_tree_actions_or_conflicts(&loc_tree, &miss_tree).is_err());
+                assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
             }
 
             // Incompatible symlinks
@@ -1093,7 +1136,7 @@ mod tests {
                 let miss_tree = FSTree::gen_from(|t| {
                     t.add_symlink("symlink", (1667944404, 882227232), "some/path/2");
                 });
-                assert!(add_tree_actions_or_conflicts(&loc_tree, &miss_tree).is_err());
+                assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
 
                 let loc_tree = FSTree::gen_from(|t| {
                     t.add_dir("dir", (1668123900, 611195248), |t| {
@@ -1105,7 +1148,7 @@ mod tests {
                         t.add_symlink("symlink", (1668161075, 810573263), "some/path/2");
                     });
                 });
-                assert!(add_tree_actions_or_conflicts(&loc_tree, &miss_tree).is_err());
+                assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
 
                 let loc_tree = FSTree::gen_from(|t| {
                     t.add_dir("dir", (1668294682, 959268366), |t| {
@@ -1121,12 +1164,12 @@ mod tests {
                         });
                     });
                 });
-                assert!(add_tree_actions_or_conflicts(&loc_tree, &miss_tree).is_err());
+                assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
             }
         }
     }
 
-    fn test_get_actions_or_conflicts() {
+    fn test_get_actions() {
         let original_tree = FSTree::gen_from(|t| {
             t.add_file("untouched-file", (1664618719, 438929376), "content 0");
             t.add_symlink("untouched-symlink", (1664647562, 210607085), "path/0");
@@ -1376,7 +1419,7 @@ mod tests {
         ]);
 
         assert_eq!(
-            get_actions_or_conflicts(&local_delta, &missed_delta).unwrap(),
+            get_actions(&local_delta, &missed_delta).unwrap(),
             supposed_actions
         );
     }

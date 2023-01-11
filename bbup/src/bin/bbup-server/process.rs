@@ -34,8 +34,9 @@ async fn pull(
         .await
         .context("could not send update id")?;
 
+    let actions = delta.to_actions()?;
     let mut queryables = Vec::new();
-    for (path, action) in &delta.to_actions() {
+    for (path, action) in actions {
         match action {
             Action::AddFile(_, _)
             | Action::EditFile(_, Some(_))
@@ -74,8 +75,9 @@ async fn push(
         .context("could not get delta from client")?;
 
     // Get all files that need to be uploaded from client
+    let actions = local_delta.to_actions()?;
     let mut queries = Vec::new();
-    for (path, action) in &local_delta.to_actions() {
+    for (path, action) in &actions {
         match action {
             Action::AddFile(_, hash) | Action::EditFile(_, Some(hash)) => {
                 queries.push((Queryable::File, path.clone(), hash.clone()))
@@ -99,9 +101,8 @@ async fn push(
     let rebased_delta = local_delta.rebase_from_tree_at_endpoint(&state.archive_tree, &endpoint)?;
     let mut updated_archive_tree = state.archive_tree.clone();
     updated_archive_tree.apply_delta(&rebased_delta)?;
-    // updated_archive_tree.apply_delta_at_endpoint(&local_delta, endpoint.clone())?;
 
-    for (path, action) in local_delta.to_actions() {
+    for (path, action) in &actions {
         let to_path = config.archive_root.append(endpoint).append(&path);
         let from_temp_path = config
             .archive_root

@@ -74,31 +74,11 @@ impl CommitList {
             if commit.commit_id.eq(&lkc) {
                 break;
             }
-            // let mut delta = commit.delta.clone();
-            // let mut commit_endpoint = commit.endpoint.clone();
-            // let mut curr_endpoint = endpoint.clone();
-
             if let Some(delta_at_endpoint) = commit.delta.get_subdelta_tree_copy(&endpoint) {
                 if let Err(err) = output.merge_prec(&delta_at_endpoint) {
                     return Err(GetUpdError(commit.commit_id.clone(), err));
                 }
             }
-
-            // for component in endpoint {
-            //     match commit_endpoint.get(0) {
-            //         Some(comp) if component == comp => {
-            //             commit_endpoint = commit_endpoint.strip_first();
-            //             curr_endpoint = curr_endpoint.strip_first();
-            //         }
-            //         Some(_) => continue 'commit_loop,
-            //         None => break,
-            //     }
-            // }
-            // for component in commit_endpoint.into_iter().rev() {
-            //     let node = DeltaNode::Branch(None, delta);
-            //     let tree = HashMap::from([(component, node)]);
-            //     delta = Delta(tree)
-            // }
         }
         Ok(output)
     }

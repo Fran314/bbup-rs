@@ -1,6 +1,6 @@
 mod actions;
 pub use actions::{
-    get_actions_or_conflicts,
+    get_actions,
     Action,
     Actions,
     ConflictNode,
