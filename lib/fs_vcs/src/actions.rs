@@ -28,8 +28,8 @@ pub enum Action {
     AddFile(Mtime, Hash),
     AddSymLink(Mtime, Hash),
     EditDir(Mtime),
-    EditFile(Option<Mtime>, Option<Hash>),
-    EditSymLink(Option<Mtime>, Option<Hash>),
+    EditFile(Mtime, Option<Hash>),
+    EditSymLink(Mtime, Option<Hash>),
     RemoveDir,
     RemoveFile,
     RemoveSymLink,
@@ -152,20 +152,18 @@ impl DeltaNode {
                 panic!("trying to flat an unshaken delta");
             }
             DeltaNode::Leaf(Some(FSNode::File(m0, h0)), Some(FSNode::File(m1, h1))) => {
-                let optm = if m0.ne(m1) { Some(m1.clone()) } else { None };
-                let opth = if h0.ne(h1) { Some(h1.clone()) } else { None };
-                if optm.is_some() || opth.is_some() {
-                    actions.push(AbstPath::empty(), Action::EditFile(optm, opth));
+                if m0.ne(m1) || h0.ne(h1) {
+                    let opth = if h0.ne(h1) { Some(h1.clone()) } else { None };
+                    actions.push(AbstPath::empty(), Action::EditFile(m1.clone(), opth));
                 } else {
                     // TODO maybe make these errors better?
                     panic!("trying to flat an unshaken delta");
                 }
             }
             DeltaNode::Leaf(Some(FSNode::SymLink(m0, h0)), Some(FSNode::SymLink(m1, h1))) => {
-                let optm = if m0.ne(m1) { Some(m1.clone()) } else { None };
-                let opth = if h0.ne(h1) { Some(h1.clone()) } else { None };
-                if optm.is_some() || opth.is_some() {
-                    actions.push(AbstPath::empty(), Action::EditSymLink(optm, opth));
+                if m0.ne(m1) || h0.ne(h1) {
+                    let opth = if h0.ne(h1) { Some(h1.clone()) } else { None };
+                    actions.push(AbstPath::empty(), Action::EditSymLink(m1.clone(), opth));
                 } else {
                     // TODO maybe make these errors better?
                     panic!("trying to flat an unshaken delta");
@@ -229,16 +227,28 @@ fn add_tree_actions_or_conflicts(
                 let mut add_child_actions = miss_child.to_add_actions().add_prefix(name);
                 necessary_actions.append(&mut add_child_actions);
             }
+            // The reason why we have the `miss_hash == loc_hash` in the branch
+            // guard and the `miss_mtime != loc_mtime` not in the branch guard
+            // but inside the block is because the branch guard is there to
+            // check if the two objects are compatible, ie they don't cause a
+            // conflict. Two files can be compatible and require an action (if
+            // the mtimes are different) or be compatible and not require any
+            // action (if the mtimes are the same). The purpose of the if block
+            // inside is exactly the one just mentioned. Adding that check in
+            // the branch guard would trigger some false positive conflicts
             (Some(FSNode::File(loc_mtime, loc_hash)), FSNode::File(miss_mtime, miss_hash))
                 if miss_hash == loc_hash =>
             {
                 if miss_mtime != loc_mtime {
                     necessary_actions.push(
                         AbstPath::single(name),
-                        Action::EditFile(Some(miss_mtime.clone()), None),
+                        Action::EditFile(miss_mtime.clone(), None),
                     );
                 }
             }
+            // The same as the comment above regarding the different placement
+            // of the `miss_hash == loc_hash` and `miss_mtime != loc_mtime`
+            // checks holds here too
             (
                 Some(FSNode::SymLink(loc_mtime, loc_hash)),
                 FSNode::SymLink(miss_mtime, miss_hash),
@@ -246,7 +256,7 @@ fn add_tree_actions_or_conflicts(
                 if miss_mtime != loc_mtime {
                     necessary_actions.push(
                         AbstPath::single(name),
-                        Action::EditSymLink(Some(miss_mtime.clone()), None),
+                        Action::EditSymLink(miss_mtime.clone(), None),
                     );
                 }
             }
@@ -381,7 +391,7 @@ pub fn get_actions_or_conflicts(
                     if loc_mtime != miss_mtime {
                         necessary_actions.push(
                             AbstPath::single(name),
-                            Action::EditFile(Some(miss_mtime.clone()), None),
+                            Action::EditFile(miss_mtime.clone(), None),
                         );
                     }
                 }
@@ -394,7 +404,7 @@ pub fn get_actions_or_conflicts(
                     if loc_mtime != miss_mtime {
                         necessary_actions.push(
                             AbstPath::single(name),
-                            Action::EditSymLink(Some(miss_mtime.clone()), None),
+                            Action::EditSymLink(miss_mtime.clone(), None),
                         );
                     }
                 }
@@ -487,13 +497,13 @@ mod tests {
 
     fn edit_file_at(
         path: impl AsRef<Path>,
-        optm: Option<(i64, u32)>,
+        mtime: (i64, u32),
         content: Option<impl ToString>,
     ) -> (AbstPath, Action) {
         (
             AbstPath::from(path),
             Action::EditFile(
-                optm.map(|(optsec, optnano)| Mtime::from(optsec, optnano)),
+                Mtime::from(mtime.0, mtime.1),
                 content.map(|val| hasher::hash_bytes(val.to_string().as_bytes())),
             ),
         )
@@ -501,13 +511,13 @@ mod tests {
 
     fn edit_symlink_at(
         path: impl AsRef<Path>,
-        optm: Option<(i64, u32)>,
+        mtime: (i64, u32),
         endpoint: Option<impl ToString>,
     ) -> (AbstPath, Action) {
         (
             AbstPath::from(path),
             Action::EditSymLink(
-                optm.map(|(optsec, optnano)| Mtime::from(optsec, optnano)),
+                Mtime::from(mtime.0, mtime.1),
                 endpoint.map(|val| hasher::hash_bytes(Endpoint::Unix(val.to_string()).as_bytes())),
             ),
         )
@@ -706,11 +716,7 @@ mod tests {
                     Some(FSNode::file((1665646546, 757770519), "bau"))
                 )
                 .to_actions(),
-                Actions(vec![edit_file_at(
-                    "",
-                    Some((1665646546, 757770519)),
-                    Some("bau")
-                )])
+                Actions(vec![edit_file_at("", (1665646546, 757770519), Some("bau"))])
             );
             assert_eq!(
                 DeltaNode::leaf(
@@ -718,7 +724,7 @@ mod tests {
                     Some(FSNode::file((1665639893, 998839999), "bau"))
                 )
                 .to_actions(),
-                Actions(vec![edit_file_at("", None, Some("bau"))])
+                Actions(vec![edit_file_at("", (1665639893, 998839999), Some("bau"))])
             );
             assert_eq!(
                 DeltaNode::leaf(
@@ -728,7 +734,7 @@ mod tests {
                 .to_actions(),
                 Actions(vec![edit_file_at(
                     "",
-                    Some((1665646546, 757770519)),
+                    (1665646546, 757770519),
                     None::<String>
                 )])
             );
@@ -741,7 +747,7 @@ mod tests {
                 .to_actions(),
                 Actions(vec![edit_symlink_at(
                     "",
-                    Some((1665952290, 714857838)),
+                    (1665952290, 714857838),
                     Some("different/path")
                 )])
             );
@@ -751,7 +757,11 @@ mod tests {
                     Some(FSNode::symlink((1665875820, 923687114), "different/path"))
                 )
                 .to_actions(),
-                Actions(vec![edit_symlink_at("", None, Some("different/path"))])
+                Actions(vec![edit_symlink_at(
+                    "",
+                    (1665875820, 923687114),
+                    Some("different/path")
+                )])
             );
             assert_eq!(
                 DeltaNode::leaf(
@@ -761,7 +771,7 @@ mod tests {
                 .to_actions(),
                 Actions(vec![edit_symlink_at(
                     "",
-                    Some((1665952290, 714857838)),
+                    (1665952290, 714857838),
                     None::<String>
                 )])
             );
@@ -806,7 +816,7 @@ mod tests {
                 })
                 .to_actions(),
                 Actions(vec![
-                    edit_file_at("some-file", Some((1669428322, 884592525)), Some("content")),
+                    edit_file_at("some-file", (1669428322, 884592525), Some("content")),
                     remove_file_at("deleted-file"),
                     add_dir_at("added-dir"),
                     add_file_at("added-dir/file", (1669325685, 713803584), "efgh"),
@@ -944,13 +954,9 @@ mod tests {
                 add_tree_actions_or_conflicts(&loc_tree, &miss_tree).unwrap(),
                 Actions(vec![
                     add_file_at("miss-file", (1667440088, 512796633), "qzerty"),
-                    edit_file_at("both-file", Some((1667457760, 877447014)), None::<String>),
+                    edit_file_at("both-file", (1667457760, 877447014), None::<String>),
                     add_symlink_at("miss-symlink", (1667490289, 859903967), "z/x/c/v"),
-                    edit_symlink_at(
-                        "both-symlink",
-                        Some((1667544335, 682787097)),
-                        None::<String>
-                    ),
+                    edit_symlink_at("both-symlink", (1667544335, 682787097), None::<String>),
                     add_dir_at("miss-dir"),
                     add_file_at("miss-dir/subfile", (1667593277, 45544957), "qazwsx"),
                     add_symlink_at(
@@ -976,7 +982,7 @@ mod tests {
                     add_file_at("both-dir/miss-subfile", (1668135999, 659914790), "bla bla"),
                     edit_file_at(
                         "both-dir/both-subfile",
-                        Some((1668142965, 797805445)),
+                        (1668142965, 797805445),
                         None::<String>
                     ),
                     add_symlink_at(
@@ -986,7 +992,7 @@ mod tests {
                     ),
                     edit_symlink_at(
                         "both-dir/both-subsymlink",
-                        Some((1668180274, 853466233)),
+                        (1668180274, 853466233),
                         None::<String>
                     ),
                     add_dir_at("both-dir/miss-subdir"),
@@ -1010,7 +1016,7 @@ mod tests {
                     ),
                     edit_file_at(
                         "both-dir/both-subdir/both-subsubfile",
-                        Some((1668544464, 706471816)),
+                        (1668544464, 706471816),
                         None::<String>
                     ),
                     add_symlink_at(
@@ -1020,7 +1026,7 @@ mod tests {
                     ),
                     edit_symlink_at(
                         "both-dir/both-subdir/both-subsubsymlink",
-                        Some((1668650419, 227402875)),
+                        (1668650419, 227402875),
                         None::<String>
                     ),
                     add_dir_at("both-dir/both-subdir/miss-subsubdir"),

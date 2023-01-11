@@ -133,24 +133,19 @@ async fn push(
             Action::EditDir(mtime) => {
                 fs::set_mtime(&to_path, &mtime).context(errmsg("set mtime of edited directory"))?;
             }
-            Action::EditFile(optm, opth) => {
+            Action::EditFile(mtime, opth) => {
                 if opth.is_some() {
                     fs::rename_file(&from_temp_path, &to_path)
                         .context(errmsg("move edited file from temp"))?;
                 }
-                if let Some(mtime) = optm {
-                    fs::set_mtime(&to_path, &mtime).context(errmsg("set mtime of edited file"))?;
-                }
+                fs::set_mtime(&to_path, &mtime).context(errmsg("set mtime of edited file"))?;
             }
-            Action::EditSymLink(optm, opth) => {
+            Action::EditSymLink(mtime, opth) => {
                 if opth.is_some() {
                     fs::rename_symlink(&from_temp_path, &to_path)
                         .context(errmsg("move edited symlink from temp"))?;
                 }
-                if let Some(mtime) = optm {
-                    fs::set_mtime(&to_path, &mtime)
-                        .context(errmsg("set mtime of edited symlink"))?;
-                }
+                fs::set_mtime(&to_path, &mtime).context(errmsg("set mtime of edited symlink"))?;
             }
             Action::RemoveDir => {
                 // Why remove_dir_all instead of just remove_dir here?
