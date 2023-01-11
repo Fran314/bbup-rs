@@ -96,8 +96,10 @@ async fn push(
     .context("could not query files to apply push")?;
 
     // TODO if fail, send error message to the server
+    let rebased_delta = local_delta.rebase_from_tree_at_endpoint(&state.archive_tree, &endpoint)?;
     let mut updated_archive_tree = state.archive_tree.clone();
-    updated_archive_tree.apply_delta_at_endpoint(&local_delta, endpoint.clone())?;
+    updated_archive_tree.apply_delta(&rebased_delta)?;
+    // updated_archive_tree.apply_delta_at_endpoint(&local_delta, endpoint.clone())?;
 
     for (path, action) in local_delta.to_actions() {
         let to_path = config.archive_root.append(endpoint).append(&path);
@@ -175,8 +177,8 @@ async fn push(
     let commit_id = Commit::gen_valid_id();
     state.commit_list.push(Commit {
         commit_id: commit_id.clone(),
-        endpoint: endpoint.clone(),
-        delta: local_delta.clone(),
+        // endpoint: endpoint.clone(),
+        delta: rebased_delta,
     });
     state.archive_tree = updated_archive_tree;
     state

@@ -1,16 +1,14 @@
-use super::{delta::UnmergeableDelta, Delta, DeltaNode};
+use super::{delta::UnmergeableDelta, Delta};
 
 use abst_fs::AbstPath;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use std::collections::HashMap;
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Commit {
     pub commit_id: String,
-    pub endpoint: AbstPath,
+    // pub endpoint: AbstPath,
     pub delta: Delta,
 }
 impl Commit {
@@ -18,7 +16,7 @@ impl Commit {
     pub fn base_commit() -> Commit {
         Commit {
             commit_id: Commit::gen_null_id(),
-            endpoint: AbstPath::empty(),
+            // endpoint: AbstPath::empty(),
             delta: Delta::empty(),
         }
     }
@@ -72,35 +70,35 @@ impl CommitList {
     pub fn get_update_delta(&self, endpoint: &AbstPath, lkc: String) -> Result<Delta, GetUpdError> {
         let mut output: Delta = Delta::empty();
         let CommitList(list) = self;
-        'commit_loop: for commit in list.iter().rev() {
+        for commit in list.iter().rev() {
             if commit.commit_id.eq(&lkc) {
                 break;
             }
-            let mut delta = commit.delta.clone();
-            let mut commit_endpoint = commit.endpoint.clone();
-            let mut curr_endpoint = endpoint.clone();
+            // let mut delta = commit.delta.clone();
+            // let mut commit_endpoint = commit.endpoint.clone();
+            // let mut curr_endpoint = endpoint.clone();
 
-            for component in endpoint {
-                match commit_endpoint.get(0) {
-                    Some(comp) if component == comp => {
-                        commit_endpoint = commit_endpoint.strip_first();
-                        curr_endpoint = curr_endpoint.strip_first();
-                    }
-                    Some(_) => continue 'commit_loop,
-                    None => break,
-                }
-            }
-            for component in commit_endpoint.into_iter().rev() {
-                let node = DeltaNode::Branch(None, delta);
-                let tree = HashMap::from([(component, node)]);
-                delta = Delta(tree)
-            }
-
-            if let Some(delta_at_endpoint) = delta.get_subdelta_tree_copy(&curr_endpoint) {
+            if let Some(delta_at_endpoint) = commit.delta.get_subdelta_tree_copy(&endpoint) {
                 if let Err(err) = output.merge_prec(&delta_at_endpoint) {
                     return Err(GetUpdError(commit.commit_id.clone(), err));
                 }
             }
+
+            // for component in endpoint {
+            //     match commit_endpoint.get(0) {
+            //         Some(comp) if component == comp => {
+            //             commit_endpoint = commit_endpoint.strip_first();
+            //             curr_endpoint = curr_endpoint.strip_first();
+            //         }
+            //         Some(_) => continue 'commit_loop,
+            //         None => break,
+            //     }
+            // }
+            // for component in commit_endpoint.into_iter().rev() {
+            //     let node = DeltaNode::Branch(None, delta);
+            //     let tree = HashMap::from([(component, node)]);
+            //     delta = Delta(tree)
+            // }
         }
         Ok(output)
     }

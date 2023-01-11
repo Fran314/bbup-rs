@@ -23,6 +23,11 @@ impl FSTree {
         delta: &Delta,
         endpoint: AbstPath,
     ) -> Result<(), InapplicableDelta> {
+        // TODO if this was iterative instead of recursive, the error could be
+        // more esplicit on the precise path of conflict, instad of just giving
+        // the name of the node of conflict
+        // OR MAYBE add a public setup function adn a private recursive function
+        // like for the function below (pub fn apply_delta(self, &Delta))
         match endpoint.get(0) {
             None => self.apply_delta(delta),
             Some(name) => {
@@ -47,6 +52,10 @@ impl FSTree {
             }
         }
     }
+
+    // TODO add public setup function and private recursive function with
+    // additional parameter to make the path of the error more precise (full
+    // path)
     pub fn apply_delta(&mut self, Delta(deltatree): &Delta) -> Result<(), InapplicableDelta> {
         use std::collections::hash_map::Entry::{Occupied, Vacant};
         use DeltaNode::{Branch, Leaf};
@@ -110,38 +119,38 @@ impl FSTree {
                         ));
                     }
                 },
-                Branch(optm, subdelta) => match fstree.entry(name.clone()) {
-                    Occupied(mut entry) => match entry.get_mut() {
-                        FSNode::Dir(mtime, hash, subtree) => {
-                            if let Some((premtime, postmtime)) = optm {
+                Branch((premtime, postmtime), subdelta) => {
+                    match fstree.entry(name.clone()) {
+                        Occupied(mut entry) => match entry.get_mut() {
+                            FSNode::Dir(mtime, hash, subtree) => {
                                 if mtime != premtime {
                                     return Err(inapperr(&AbstPath::single(name), "mtime of directory does not match old mtime of delta branch"));
                                 }
                                 *mtime = postmtime.clone();
+                                subtree.apply_delta(subdelta).map_err(push_inapp(name))?;
+                                *hash = hash_tree(subtree);
                             }
-                            subtree.apply_delta(subdelta).map_err(push_inapp(name))?;
-                            *hash = hash_tree(subtree);
-                        }
-                        FSNode::File(_, _) => {
-                            return Err(inapperr(
+                            FSNode::File(_, _) => {
+                                return Err(inapperr(
                                 &AbstPath::single(name),
                                 "delta claims this node is a directory, but it is a file in tree",
                             ));
-                        }
-                        FSNode::SymLink(_, _) => {
-                            return Err(inapperr(
+                            }
+                            FSNode::SymLink(_, _) => {
+                                return Err(inapperr(
 								&AbstPath::single(name),
 								"delta claims this node is a directory, but it is a symlink in tree",
 							));
-                        }
-                    },
-                    Vacant(_) => {
-                        return Err(inapperr(
+                            }
+                        },
+                        Vacant(_) => {
+                            return Err(inapperr(
                             &AbstPath::single(name),
                             "delta claims this node is a directory, but it does not exist in tree",
                         ));
+                        }
                     }
-                },
+                }
             }
         }
         Ok(())
@@ -209,38 +218,38 @@ impl FSTree {
                         ));
                     }
                 },
-                Branch(optm, subdelta) => match fstree.entry(name.clone()) {
-                    Occupied(mut entry) => match entry.get_mut() {
-                        FSNode::Dir(mtime, hash, subtree) => {
-                            if let Some((premtime, postmtime)) = optm {
+                Branch((premtime, postmtime), subdelta) => {
+                    match fstree.entry(name.clone()) {
+                        Occupied(mut entry) => match entry.get_mut() {
+                            FSNode::Dir(mtime, hash, subtree) => {
                                 if mtime != postmtime {
                                     return Err(inapperr(&AbstPath::single(name), "mtime of directory does not match new mtime of delta branch"));
                                 }
                                 *mtime = premtime.clone();
+                                subtree.undo_delta(subdelta).map_err(push_inapp(name))?;
+                                *hash = hash_tree(subtree);
                             }
-                            subtree.undo_delta(subdelta).map_err(push_inapp(name))?;
-                            *hash = hash_tree(subtree);
-                        }
-                        FSNode::File(_, _) => {
-                            return Err(inapperr(
+                            FSNode::File(_, _) => {
+                                return Err(inapperr(
                                 &AbstPath::single(name),
                                 "delta claims this node is a directory, but it is a file in tree",
                             ));
-                        }
-                        FSNode::SymLink(_, _) => {
-                            return Err(inapperr(
+                            }
+                            FSNode::SymLink(_, _) => {
+                                return Err(inapperr(
 									&AbstPath::single(name),
 									"delta claims this node is a directory, but it is a symlink in tree",
 								));
-                        }
-                    },
-                    Vacant(_) => {
-                        return Err(inapperr(
+                            }
+                        },
+                        Vacant(_) => {
+                            return Err(inapperr(
                             &AbstPath::single(name),
                             "delta claims this node is a directory, but it does not exist in tree",
                         ));
+                        }
                     }
-                },
+                }
             }
         }
         Ok(())
@@ -408,7 +417,7 @@ mod tests {
                 let delta = Delta::gen_from(|d| {
                     d.add_branch(
                         "dir",
-                        Some(((504127312, 850809910), (894310328, 379690596))),
+                        ((504127312, 850809910), (894310328, 379690596)),
                         |d| {
                             d.add_leaf(
                                 "file",
@@ -431,10 +440,7 @@ mod tests {
                     });
                 });
                 let delta = Delta::gen_from(|d| {
-                    d.add_empty_branch(
-                        "dir",
-                        Some(((1140615005, 566816009), (1151990024, 189224283))),
-                    );
+                    d.add_empty_branch("dir", ((1140615005, 566816009), (1151990024, 189224283)));
                 });
 
                 assert!(tree.apply_delta(&delta).is_err());
@@ -443,7 +449,7 @@ mod tests {
             // Branch on wrong node
             {
                 let delta = Delta::gen_from(|d| {
-                    d.add_empty_branch("dir", None);
+                    d.add_empty_branch("dir", ((772556155, 27466130), (772556155, 27466130)));
                 });
 
                 // on file
@@ -545,7 +551,7 @@ mod tests {
                 let delta = Delta::gen_from(|d| {
                     d.add_branch(
                         "dir",
-                        Some(((943474742, 242156167), (522369369, 121597026))),
+                        ((943474742, 242156167), (522369369, 121597026)),
                         |d| {
                             d.add_leaf(
                                 "file",
@@ -568,10 +574,7 @@ mod tests {
                     });
                 });
                 let delta = Delta::gen_from(|d| {
-                    d.add_empty_branch(
-                        "dir",
-                        Some(((931306566, 389992216), (1170146405, 763554716))),
-                    );
+                    d.add_empty_branch("dir", ((931306566, 389992216), (1170146405, 763554716)));
                 });
                 assert!(tree.undo_delta(&delta).is_err());
             }
@@ -579,7 +582,7 @@ mod tests {
             // Branch on wrong node
             {
                 let delta = Delta::gen_from(|d| {
-                    d.add_empty_branch("dir", None);
+                    d.add_empty_branch("dir", ((1111032689, 805260693), (1111032689, 805260693)));
                 });
 
                 // on file
@@ -590,7 +593,7 @@ mod tests {
 
                 // on symlink
                 let mut tree = FSTree::gen_from(|t| {
-                    t.add_symlink("dir", (1546349176, 863048823), "path/that/leads/to");
+                    t.add_symlink("dir", (1111032689, 805260693), "path/that/leads/to");
                 });
                 assert!(tree.undo_delta(&delta).is_err());
 

@@ -113,10 +113,10 @@ fn deltafstree_to_stringtree<S: std::string::ToString>(
         children: children
             .into_iter()
             .flat_map(|(name, child)| match child {
-                Branch(optm, subdelta) => {
-                    let color = match optm {
-                        Some(_) => "yellow",
-                        None => "",
+                Branch((premtime, postmtime), subdelta) => {
+                    let color = match premtime != postmtime {
+                        true => "yellow",
+                        false => "",
                     };
                     let Delta(subtree) = subdelta;
                     if !subtree.is_empty() {
