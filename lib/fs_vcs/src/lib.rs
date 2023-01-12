@@ -1,12 +1,5 @@
 mod actions;
-pub use actions::{
-    get_actions,
-    Action,
-    Actions,
-    ConflictNode,
-    Conflicts,
-    //Queries, Query,
-};
+pub use actions::{get_actions, Action, Actions};
 
 mod commit;
 pub use commit::{Commit, CommitList};

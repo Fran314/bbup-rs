@@ -1,4 +1,4 @@
-use super::{ConflictNode, Conflicts, Delta, DeltaNode, FSNode, FSTree};
+use super::{Delta, DeltaNode, FSNode, FSTree};
 
 use colored::Color;
 use colored::Colorize;
@@ -186,74 +186,74 @@ impl std::fmt::Display for Delta {
     }
 }
 
-fn format_leaf_state(val: &Option<FSNode>) -> String {
-    match val {
-        Some(FSNode::File(_, hash)) => {
-            format!("File [h:{}]", hash.to_hex(6),)
-        }
-        Some(FSNode::SymLink(_, hash)) => {
-            format!("SymLink [h:{}]", hash.to_hex(6),)
-        }
-        Some(FSNode::Dir(_, hash, _)) => {
-            format!("Dir [h:{}]", hash.to_hex(6),)
-        }
-        None => String::from("None"),
-    }
-}
-fn format_delta_leaf(val: &DeltaNode) -> String {
-    match val {
-        DeltaNode::Leaf(pre0, post0) => {
-            format!(
-                "{} -> {}",
-                format_leaf_state(pre0),
-                format_leaf_state(post0)
-            )
-        }
-        DeltaNode::Branch(_, _) => String::from("Dir [inner modification]"),
-    }
-}
-fn conflicts_to_stringtree<S: std::string::ToString>(
-    text: S,
-    Conflicts(tree): &Conflicts,
-) -> StringTree {
-    use ConflictNode as CN;
-    use DeltaNode as DN;
-    use FSNode as FN;
-
-    let mut children = tree.iter().collect::<Vec<(&String, &ConflictNode)>>();
-    children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
-
-    StringTree {
-        text: text.to_string(),
-        children: children
-            .into_iter()
-            .map(|(name, child)| match child {
-                CN::Leaf(delta0, delta1) => match (delta0, delta1) {
-                    (DN::Leaf(_, Some(FN::Dir(_, _, _))), DN::Leaf(_, Some(FN::Dir(_, _, _)))) => {
-                        StringTree::leaf(format!(
-                            "{}\n0: {}\n1: {}\nwith incompatible subtrees",
-                            name,
-                            format_delta_leaf(delta0),
-                            format_delta_leaf(delta1)
-                        ))
-                    }
-                    _ => StringTree::leaf(format!(
-                        "{}\n0: {}\n1: {}",
-                        name,
-                        format_delta_leaf(delta0),
-                        format_delta_leaf(delta1)
-                    )),
-                },
-                CN::Branch(subconflicts) => {
-                    conflicts_to_stringtree(format!("{}/", name), subconflicts)
-                }
-            })
-            .collect(),
-    }
-}
-
-impl std::fmt::Display for Conflicts {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", conflicts_to_stringtree(".", self))
-    }
-}
+// fn format_leaf_state(val: &Option<FSNode>) -> String {
+//     match val {
+//         Some(FSNode::File(_, hash)) => {
+//             format!("File [h:{}]", hash.to_hex(6),)
+//         }
+//         Some(FSNode::SymLink(_, hash)) => {
+//             format!("SymLink [h:{}]", hash.to_hex(6),)
+//         }
+//         Some(FSNode::Dir(_, hash, _)) => {
+//             format!("Dir [h:{}]", hash.to_hex(6),)
+//         }
+//         None => String::from("None"),
+//     }
+// }
+// fn format_delta_leaf(val: &DeltaNode) -> String {
+//     match val {
+//         DeltaNode::Leaf(pre0, post0) => {
+//             format!(
+//                 "{} -> {}",
+//                 format_leaf_state(pre0),
+//                 format_leaf_state(post0)
+//             )
+//         }
+//         DeltaNode::Branch(_, _) => String::from("Dir [inner modification]"),
+//     }
+// }
+// fn conflicts_to_stringtree<S: std::string::ToString>(
+//     text: S,
+//     Conflicts(tree): &Conflicts,
+// ) -> StringTree {
+//     use ConflictNode as CN;
+//     use DeltaNode as DN;
+//     use FSNode as FN;
+//
+//     let mut children = tree.iter().collect::<Vec<(&String, &ConflictNode)>>();
+//     children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
+//
+//     StringTree {
+//         text: text.to_string(),
+//         children: children
+//             .into_iter()
+//             .map(|(name, child)| match child {
+//                 CN::Leaf(delta0, delta1) => match (delta0, delta1) {
+//                     (DN::Leaf(_, Some(FN::Dir(_, _, _))), DN::Leaf(_, Some(FN::Dir(_, _, _)))) => {
+//                         StringTree::leaf(format!(
+//                             "{}\n0: {}\n1: {}\nwith incompatible subtrees",
+//                             name,
+//                             format_delta_leaf(delta0),
+//                             format_delta_leaf(delta1)
+//                         ))
+//                     }
+//                     _ => StringTree::leaf(format!(
+//                         "{}\n0: {}\n1: {}",
+//                         name,
+//                         format_delta_leaf(delta0),
+//                         format_delta_leaf(delta1)
+//                     )),
+//                 },
+//                 CN::Branch(subconflicts) => {
+//                     conflicts_to_stringtree(format!("{}/", name), subconflicts)
+//                 }
+//             })
+//             .collect(),
+//     }
+// }
+//
+// impl std::fmt::Display for Conflicts {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "{}", conflicts_to_stringtree(".", self))
+//     }
+// }

@@ -5,10 +5,11 @@ use abst_fs::AbstPath;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+// TODO add tests
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Commit {
     pub commit_id: String,
-    // pub endpoint: AbstPath,
     pub delta: Delta,
 }
 impl Commit {
@@ -16,7 +17,6 @@ impl Commit {
     pub fn base_commit() -> Commit {
         Commit {
             commit_id: Commit::gen_null_id(),
-            // endpoint: AbstPath::empty(),
             delta: Delta::empty(),
         }
     }

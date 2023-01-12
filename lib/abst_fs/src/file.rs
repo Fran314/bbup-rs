@@ -228,6 +228,11 @@ mod tests {
     }
 
     #[tokio::test]
+    // While it is not ideal to have one huge test function testing all the
+    // possible behaviours, given the possibility of danger of these tests it is
+    // better to execute them sequencially in a deliberate order rather than
+    // in parallel or in random order. This is why the tests for this module are
+    // all in one huge function
     async fn async_test() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 

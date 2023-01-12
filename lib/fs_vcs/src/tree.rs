@@ -189,13 +189,56 @@ fn generate_fstree_rec(
 
 #[cfg(test)]
 mod tests {
-
     use super::{
         generate_fstree, generr, hash_tree, inerr, ExcludeList, FSNode, FSTree, FSTreeError,
     };
     use abst_fs::{AbstPath, Endpoint, Mtime};
     use std::collections::HashMap;
+    use std::io::Write;
     use std::path::PathBuf;
+
+    // --- SAFETY MEASURES --- //
+    // Testing this crate is dangerous as an unexpected behaviour could
+    // potentially damage the machine it's ran on. To fix this we uso two safety
+    // measures: we create object and work only inside the `/tmp` folder, and
+    // we make sure that the paths (AbstPath) that we use actually mean what we
+    // think they mean, to avoid situations where we think we're deleting a file
+    // inside /tmp but actually we're deleting a home directory.
+    //
+    // The purpose of `safe_add_last` is to append components to paths while
+    // checking that they still mean what we think they mean.
+    //
+    // `setup_sandbox` and `cleanup_sandbox` create and destroy the sandbox
+    // environments in which the testing will happen. The creation happens only
+    // after having checked that the path didn't get corrupted while being
+    // transformed into an AbstPath
+    trait SafeAdd {
+        fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf);
+    }
+    impl SafeAdd for (AbstPath, PathBuf) {
+        fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf) {
+            let (abst, pb) = self;
+            let new_abst = abst.add_last(suffix.to_string());
+            let new_pb = pb.join(suffix.to_string());
+            //	make sure the path means actually what I think it mean
+            assert_eq!(new_abst.to_path_buf(), new_pb);
+            (new_abst, new_pb)
+        }
+    }
+    fn setup_sandbox(path: impl std::fmt::Display) -> (AbstPath, PathBuf) {
+        let path_bf = PathBuf::from(format!("/tmp/{path}"));
+        assert!(!path_bf.exists());
+        std::fs::create_dir(&path_bf).unwrap();
+
+        let path = (AbstPath::from(&path_bf), path_bf);
+        assert_eq!(path.0.to_path_buf(), path.1); // make sure the path means actually what I think it mean
+        path
+    }
+    fn cleanup_sandbox(path: impl std::fmt::Display) {
+        let path_bf = PathBuf::from(format!("/tmp/{path}"));
+        std::fs::remove_dir_all(&path_bf).unwrap();
+    }
+    // --- --- //
 
     impl FSNode {
         pub fn file(mtime: (i64, u32), content: impl ToString) -> FSNode {
@@ -252,30 +295,10 @@ mod tests {
             let FSTree(tree) = self;
             tree.insert(name.to_string(), FSNode::empty_dir(mtime));
         }
-
-        fn test_default() -> FSTree {
-            FSTree::gen_from(|t| {
-                t.add_file("file", (498705660, 314159265), "this is some test content");
-                t.add_symlink("symlink", (498705720, 271828182), "some/path/to/somewhere");
-                t.add_dir("dir", (498705900, 628318530), |t| {
-                    t.add_file("file1", (498705780, 161803398), "none of your business");
-                    t.add_symlink("symlink1", (498705720, 271828182), "some/other/path");
-                    t.add_empty_dir("dir1", (498705840, 141421356));
-                });
-            })
-        }
     }
 
     #[test]
-    fn test() {
-        errors();
-
-        various();
-
-        generate();
-    }
-
-    fn errors() {
+    fn test_errors() {
         let generic_error = FSTreeError::Generic {
             src: "some source".to_string(),
             err: "some error".to_string(),
@@ -290,95 +313,191 @@ mod tests {
         );
     }
 
-    fn various() {
+    #[test]
+    fn test_node_equality() {
         assert_eq!(FSTree::empty(), FSTree(HashMap::new()));
-        assert_eq!(FSTree::test_default(), FSTree::test_default());
-        assert_ne!(FSTree::empty(), FSTree::test_default());
+        assert_ne!(
+            FSTree::empty(),
+            FSTree::gen_from(|t| {
+                t.add_file("file", (1664650696, 234467902), "content");
+            })
+        );
         assert_eq!(
-            FSNode::file((498705660, 314159265), "this is some test content"),
-            FSNode::file((498705660, 314159265), "this is some test content")
+            FSNode::file((1664717709, 926293437), "this is some test content"),
+            FSNode::file((1664717709, 926293437), "this is some test content")
         );
         assert_ne!(
-            FSNode::file((498705660, 314159265), "this is some test content"),
-            FSNode::file((498705660, 314159265), "this is a different test content")
+            FSNode::file((1664717709, 926293437), "this is some test content"),
+            FSNode::file((1664717709, 926293437), "this is a different test content")
         );
         assert_ne!(
-            FSNode::file((498705660, 314159265), "this is some test content"),
-            FSNode::file((498705660, 0), "this is some test content")
+            FSNode::file((1664717709, 926293437), "this is some test content"),
+            FSNode::file((1664717709, 0), "this is some test content")
         );
 
-        // Only the hash matters
+        // Only mtime and hash matters, not the actual subtree
         assert_eq!(
-            FSNode::empty_dir((498705660, 314159265)),
+            FSNode::empty_dir((1664996516, 439383420)),
             FSNode::Dir(
-                Mtime::from(498705660, 314159265),
+                Mtime::from(1664717709, 926293437),
                 hash_tree(&FSTree::empty()),
-                FSTree::test_default()
+                FSTree::gen_from(|t| { t.add_file("file", (1664840147, 706805147), "content") })
             ),
         );
     }
 
-    fn generate() {
-        let path = PathBuf::from("/tmp/bbup-test-fs_vcs-tree-generate");
-        assert!(!path.exists());
-        std::fs::create_dir(&path).unwrap();
+    #[test]
+    // While it is not ideal to have one huge test function testing all the
+    // possible behaviours, given the possibility of danger of these tests it is
+    // better to execute them sequencially in a deliberate order rather than
+    // in parallel or in random order. This is why the tests for this module are
+    // all in one huge function
+    fn test_generate() {
+        let sandbox = "bbup-test-fs_vcs-tree-generate";
+        let path = setup_sandbox(sandbox);
 
         let result = std::panic::catch_unwind(|| {
-            std::fs::create_dir(path.join("dir")).unwrap();
-            std::fs::create_dir(path.join("dir").join("dir1")).unwrap();
-            abst_fs::set_mtime(
-                &AbstPath::from(path.join("dir").join("dir1")),
-                &Mtime::from(498705840, 141421356),
-            )
-            .unwrap();
-            std::fs::write(path.join("dir").join("file1"), b"none of your business").unwrap();
-            abst_fs::set_mtime(
-                &AbstPath::from(path.join("dir").join("file1")),
-                &Mtime::from(498705780, 161803398),
-            )
-            .unwrap();
-            std::os::unix::fs::symlink("some/other/path", path.join("dir").join("symlink1"))
+            let (file, _) = path.safe_add_last("file");
+            abst_fs::create_file(&file)
+                .unwrap()
+                .write_all(b"content 0")
                 .unwrap();
-            abst_fs::set_mtime(
-                &AbstPath::from(path.join("dir").join("symlink1")),
-                &Mtime::from(498705720, 271828182),
-            )
-            .unwrap();
-            abst_fs::set_mtime(
-                &AbstPath::from(path.join("dir")),
-                &Mtime::from(498705900, 628318530),
-            )
-            .unwrap();
+            abst_fs::set_mtime(&file, &Mtime::from(1665053062, 547894622)).unwrap();
 
-            std::fs::write(path.join("file"), b"this is some test content").unwrap();
-            abst_fs::set_mtime(
-                &AbstPath::from(path.join("file")),
-                &Mtime::from(498705660, 314159265),
-            )
-            .unwrap();
-            std::os::unix::fs::symlink("some/path/to/somewhere", path.join("symlink")).unwrap();
-            abst_fs::set_mtime(
-                &AbstPath::from(path.join("symlink")),
-                &Mtime::from(498705720, 271828182),
-            )
-            .unwrap();
-            std::fs::create_dir(path.join(".bbup")).unwrap();
-            std::fs::write(path.join("excluded-file"), b"this file will be excluded").unwrap();
+            let (symlink, _) = path.safe_add_last("symlink");
+            abst_fs::create_symlink(&symlink, Endpoint::Unix(String::from("path/to/0"))).unwrap();
+            abst_fs::set_mtime(&symlink, &Mtime::from(1665170204, 69478848)).unwrap();
 
-            let exclude_list = ExcludeList::from(&vec![String::from("excluded-file")]).unwrap();
+            let (exc_file, _) = path.safe_add_last("excluded-file");
+            abst_fs::create_file(&exc_file)
+                .unwrap()
+                .write_all(b"content 1")
+                .unwrap();
+            abst_fs::set_mtime(&exc_file, &Mtime::from(1665215589, 640928345)).unwrap();
+
+            let (exc_symlink, _) = path.safe_add_last("excluded-symlink");
+            abst_fs::create_symlink(&exc_symlink, Endpoint::Unix(String::from("path/to/1")))
+                .unwrap();
+            abst_fs::set_mtime(&exc_symlink, &Mtime::from(1665232043, 74272520)).unwrap();
+
+            let dir = path.safe_add_last("dir");
+            abst_fs::create_dir(&dir.0).unwrap();
+            {
+                let (subfile, _) = dir.safe_add_last("subfile");
+                abst_fs::create_file(&subfile)
+                    .unwrap()
+                    .write_all(b"content 2")
+                    .unwrap();
+                abst_fs::set_mtime(&subfile, &Mtime::from(1665270936, 217169000)).unwrap();
+
+                let (subsymlink, _) = dir.safe_add_last("subsymlink");
+                abst_fs::create_symlink(&subsymlink, Endpoint::Unix(String::from("path/to/2")))
+                    .unwrap();
+                abst_fs::set_mtime(&subsymlink, &Mtime::from(1665300913, 716103834)).unwrap();
+
+                let (exc_subfile, _) = dir.safe_add_last("excluded-subfile");
+                abst_fs::create_file(&exc_subfile)
+                    .unwrap()
+                    .write_all(b"content 3")
+                    .unwrap();
+                abst_fs::set_mtime(&exc_subfile, &Mtime::from(1665302711, 514622712)).unwrap();
+
+                let (exc_subsymlink, _) = dir.safe_add_last("excluded-subsymlink");
+                abst_fs::create_symlink(&exc_subsymlink, Endpoint::Unix(String::from("path/to/3")))
+                    .unwrap();
+                abst_fs::set_mtime(&exc_subsymlink, &Mtime::from(1665327254, 777711742)).unwrap();
+
+                let subdir = dir.safe_add_last("subdir");
+                abst_fs::create_dir(&subdir.0).unwrap();
+                {
+                    let (subsubfile, _) = subdir.safe_add_last("subsubfile");
+                    abst_fs::create_file(&subsubfile)
+                        .unwrap()
+                        .write_all(b"content 4")
+                        .unwrap();
+                    abst_fs::set_mtime(&subsubfile, &Mtime::from(1665302711, 514622712)).unwrap();
+
+                    let (subsubsymlink, _) = subdir.safe_add_last("subsubsymlink");
+                    abst_fs::create_symlink(
+                        &subsubsymlink,
+                        Endpoint::Unix(String::from("path/to/4")),
+                    )
+                    .unwrap();
+                    abst_fs::set_mtime(&subsubsymlink, &Mtime::from(1665327254, 777711742))
+                        .unwrap();
+
+                    let (subsubdir, _) = subdir.safe_add_last("subsubdir");
+                    abst_fs::create_dir(&subsubdir).unwrap();
+                    abst_fs::set_mtime(&subsubdir, &Mtime::from(1665390646, 304112003)).unwrap();
+                }
+                abst_fs::set_mtime(&subdir.0, &Mtime::from(1665541970, 8962068)).unwrap();
+
+                let (exc_subdir, _) = dir.safe_add_last("excluded-subdir");
+                abst_fs::create_dir(&exc_subdir).unwrap();
+                abst_fs::set_mtime(&exc_subdir, &Mtime::from(1665589504, 816358149)).unwrap();
+            }
+            abst_fs::set_mtime(&dir.0, &Mtime::from(1665594782, 877788919)).unwrap();
+
+            let (exc_dir, _) = path.safe_add_last("excluded-dir");
+            abst_fs::create_dir(&exc_dir).unwrap();
+            abst_fs::set_mtime(&exc_dir, &Mtime::from(1665619691, 269349348)).unwrap();
+
+            let full_tree = FSTree::gen_from(|t| {
+                t.add_file("file", (1665053062, 547894622), "content 0");
+                t.add_symlink("symlink", (1665170204, 69478848), "path/to/0");
+                t.add_file("excluded-file", (1665215589, 640928345), "content 1");
+                t.add_symlink("excluded-symlink", (1665232043, 74272520), "path/to/1");
+                t.add_empty_dir("excluded-dir", (1665619691, 269349348));
+
+                t.add_dir("dir", (1665594782, 877788919), |t| {
+                    t.add_file("subfile", (1665270936, 217169000), "content 2");
+                    t.add_symlink("subsymlink", (1665300913, 716103834), "path/to/2");
+                    t.add_file("excluded-subfile", (1665302711, 514622712), "content 3");
+                    t.add_symlink("excluded-subsymlink", (1665327254, 777711742), "path/to/3");
+                    t.add_empty_dir("excluded-subdir", (1665589504, 816358149));
+
+                    t.add_dir("subdir", (1665541970, 8962068), |t| {
+                        t.add_file("subsubfile", (1665302711, 514622712), "content 4");
+                        t.add_symlink("subsubsymlink", (1665327254, 777711742), "path/to/4");
+                        t.add_empty_dir("subsubdir", (1665390646, 304112003));
+                    });
+                });
+            });
+
+            let partial_tree = FSTree::gen_from(|t| {
+                t.add_file("file", (1665053062, 547894622), "content 0");
+                t.add_symlink("symlink", (1665170204, 69478848), "path/to/0");
+
+                t.add_dir("dir", (1665594782, 877788919), |t| {
+                    t.add_file("subfile", (1665270936, 217169000), "content 2");
+                    t.add_symlink("subsymlink", (1665300913, 716103834), "path/to/2");
+
+                    t.add_dir("subdir", (1665541970, 8962068), |t| {
+                        t.add_file("subsubfile", (1665302711, 514622712), "content 4");
+                        t.add_symlink("subsubsymlink", (1665327254, 777711742), "path/to/4");
+                        t.add_empty_dir("subsubdir", (1665390646, 304112003));
+                    });
+                });
+            });
 
             assert_eq!(
-                generate_fstree(&AbstPath::from(&path), &exclude_list).unwrap(),
-                FSTree::test_default()
+                generate_fstree(
+                    &AbstPath::from(&path.1),
+                    &ExcludeList::from(&vec![]).unwrap()
+                )
+                .unwrap(),
+                full_tree
             );
-            assert_ne!(
-                generate_fstree(&AbstPath::from(&path), &ExcludeList::from(&vec![]).unwrap())
-                    .unwrap(),
-                FSTree::test_default()
+
+            let exclude_list = ExcludeList::from(&vec![String::from("excluded-.*")]).unwrap();
+            assert_eq!(
+                generate_fstree(&AbstPath::from(&path.1), &exclude_list).unwrap(),
+                partial_tree
             );
-            assert!(generate_fstree(&AbstPath::from(path.join("file")), &exclude_list).is_err())
         });
-        std::fs::remove_dir_all(&path).unwrap();
+
+        cleanup_sandbox(sandbox);
+
         assert!(result.is_ok())
     }
 }

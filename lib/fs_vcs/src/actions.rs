@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use abst_fs::{AbstPath, Mtime};
 
 use hasher::Hash;
@@ -8,21 +6,21 @@ use super::{Delta, DeltaNode, FSNode, FSTree};
 
 use thiserror::Error;
 
-#[allow(clippy::large_enum_variant)]
-#[derive(PartialEq, Debug)]
-pub enum ConflictNode {
-    Branch(Conflicts),
-    Leaf(DeltaNode, DeltaNode),
-}
-
-#[derive(PartialEq, Debug)]
-pub struct Conflicts(pub HashMap<String, ConflictNode>);
-impl Conflicts {
-    pub fn empty() -> Conflicts {
-        let conflicts = HashMap::new();
-        Conflicts(conflicts)
-    }
-}
+// #[allow(clippy::large_enum_variant)]
+// #[derive(PartialEq, Debug)]
+// pub enum ConflictNode {
+//     Branch(Conflicts),
+//     Leaf(DeltaNode, DeltaNode),
+// }
+//
+// #[derive(PartialEq, Debug)]
+// pub struct Conflicts(pub HashMap<String, ConflictNode>);
+// impl Conflicts {
+//     pub fn empty() -> Conflicts {
+//         let conflicts = HashMap::new();
+//         Conflicts(conflicts)
+//     }
+// }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -93,21 +91,70 @@ impl<'a> IntoIterator for &'a Actions {
     }
 }
 
-#[derive(Error, Debug, PartialEq)]
-#[error("File System Tree Delta Error: unable to convert delta to actions. Delta is not shaken")]
-pub struct ImproperDelta;
+// #[derive(Error, Debug, PartialEq)]
+// pub enum ActionErr {
+//     #[error(
+//         "File System Tree Delta Error: unable to get actions from pair of deltas.\nConflict at path:"
+//     )]
+//     UnshakenDelta(AbstPath, String, DeltaNode),
+//     #[error(
+//         "File System Tree Delta Error: unable to get actions from pair of deltas.\nConflict at path:"
+//     )]
+//     Conflict(AbstPath, String),
+// }
+//
+// fn unshkdelta(path: AbstPath, err: impl ToString, node: DeltaNode) -> ActionErr {
+//     ActionErr::UnshakenDelta(path, err.to_string(), node)
+// }
+// fn conflict(path: AbstPath, err: impl ToString) -> ActionErr {
+//     ActionErr::Conflict(path, err.to_string())
+// }
+// fn push_acterr(parent: impl ToString) -> impl Fn(ActionErr) -> ActionErr {
+//     move |acterr| match acterr {
+//         ActionErr::UnshakenDelta(path, err, node) => {
+//             ActionErr::UnshakenDelta(path.add_first(parent.to_string()), err, node)
+//         }
+//         ActionErr::Conflict(path, err) => {
+//             ActionErr::Conflict(path.add_first(parent.to_string()), err)
+//         }
+//     }
+// }
 
 #[derive(Error, Debug, PartialEq)]
 #[error(
-    "File System Tree Delta Error: unable to get actions from pair of deltas.\nConflict at path: {0}\nError: {1}"
+    "File System Tree Delta Error: unable to convert delta to actions.\nError at path: {0}\nError: {1}"
 )]
-pub struct ConvToActionError(AbstPath, String);
-fn convtoacterr(path: AbstPath, err: impl ToString) -> ConvToActionError {
-    ConvToActionError(path, err.to_string())
+pub struct ToActErr(AbstPath, String);
+fn toacterr(path: AbstPath, err: impl ToString) -> ToActErr {
+    ToActErr(path, err.to_string())
 }
-fn push_converr(parent: impl ToString) -> impl Fn(ConvToActionError) -> ConvToActionError {
-    move |ConvToActionError(path, err)| ConvToActionError(path.add_first(parent.to_string()), err)
+fn push_toacterr(parent: impl ToString) -> impl Fn(ToActErr) -> ToActErr {
+    move |ToActErr(path, err)| ToActErr(path.add_first(parent.to_string()), err)
 }
+
+#[derive(Error, Debug, PartialEq)]
+#[error(
+    "File System Tree Delta Error: unable to convert delta to actions.\nError at path: {0}\nError: {1}"
+)]
+pub struct GetActErr(AbstPath, String);
+fn getacterr(path: AbstPath, err: impl ToString) -> GetActErr {
+    GetActErr(path, err.to_string())
+}
+fn push_getacterr(parent: impl ToString) -> impl Fn(GetActErr) -> GetActErr {
+    move |GetActErr(path, err)| GetActErr(path.add_first(parent.to_string()), err)
+}
+
+// #[derive(Error, Debug, PartialEq)]
+// #[error(
+//     "File System Tree Delta Error: unable to get actions from pair of deltas.\nConflict at path: {0}\nError: {1}"
+// )]
+// pub struct ConvToActionError(AbstPath, String);
+// fn convtoacterr(path: AbstPath, err: impl ToString) -> ConvToActionError {
+//     ConvToActionError(path, err.to_string())
+// }
+// fn push_converr(parent: impl ToString) -> impl Fn(ConvToActionError) -> ConvToActionError {
+//     move |ConvToActionError(path, err)| ConvToActionError(path.add_first(parent.to_string()), err)
+// }
 
 impl FSNode {
     fn to_add_actions(&self) -> Actions {
@@ -146,18 +193,21 @@ impl Delta {
     /// Convert a delta into a series of actions to be performed on the file
     /// system in order to actually apply the delta on the file system and not
     /// just virtually on the fstree
-    pub fn to_actions(&self) -> Result<Actions, ConvToActionError> {
+    pub fn to_actions(&self) -> Result<Actions, ToActErr> {
         let Delta(delta) = self;
         let mut actions = Actions::new();
         for (name, child) in delta {
-            let mut child_actions = child.to_actions()?.add_prefix(name);
+            let mut child_actions = child
+                .to_actions()
+                .map_err(push_toacterr(name))?
+                .add_prefix(name);
             actions.append(&mut child_actions);
         }
         Ok(actions)
     }
 }
 impl DeltaNode {
-    fn to_actions(&self) -> Result<Actions, ConvToActionError> {
+    fn to_actions(&self) -> Result<Actions, ToActErr> {
         let mut actions = Actions::new();
         match self {
             DeltaNode::Branch((_, postmtime), subdelta) => {
@@ -165,13 +215,13 @@ impl DeltaNode {
                 actions.push(AbstPath::empty(), Action::EditDir(postmtime.clone()));
             }
             DeltaNode::Leaf(Some(FSNode::Dir(_, _, _)), Some(FSNode::Dir(_, _, _))) => {
-                return Err(convtoacterr(
+                return Err(toacterr(
                     AbstPath::empty(),
                     "delta is not shaken at path, leaf from dir to dir",
                 ));
             }
             DeltaNode::Leaf(None, None) => {
-                return Err(convtoacterr(
+                return Err(toacterr(
                     AbstPath::empty(),
                     "delta is not shaken at path, leaf from none to none",
                 ));
@@ -181,7 +231,7 @@ impl DeltaNode {
                     let opth = if h0.ne(h1) { Some(h1.clone()) } else { None };
                     actions.push(AbstPath::empty(), Action::EditFile(m1.clone(), opth));
                 } else {
-                    return Err(convtoacterr(
+                    return Err(toacterr(
                         AbstPath::empty(),
                         "delta is not shaken at path, leaf from file to identical file",
                     ));
@@ -192,7 +242,7 @@ impl DeltaNode {
                     let opth = if h0.ne(h1) { Some(h1.clone()) } else { None };
                     actions.push(AbstPath::empty(), Action::EditSymLink(m1.clone(), opth));
                 } else {
-                    return Err(convtoacterr(
+                    return Err(toacterr(
                         AbstPath::empty(),
                         "delta is not shaken at path, leaf from symlink to identical symlink",
                     ));
@@ -248,7 +298,7 @@ impl DeltaNode {
 fn add_tree_actions(
     FSTree(loc_tree): &FSTree,
     FSTree(miss_tree): &FSTree,
-) -> Result<Actions, ConvToActionError> {
+) -> Result<Actions, GetActErr> {
     let mut necessary_actions = Actions::new();
     for (name, miss_child) in miss_tree {
         match (loc_tree.get(name), miss_child) {
@@ -265,7 +315,7 @@ fn add_tree_actions(
                         );
                     }
                 } else {
-                    return Err(convtoacterr(
+                    return Err(getacterr(
                         AbstPath::single(name),
                         "adding incompatible files with different contents",
                     ));
@@ -283,7 +333,7 @@ fn add_tree_actions(
                         );
                     }
                 } else {
-                    return Err(convtoacterr(
+                    return Err(getacterr(
                         AbstPath::single(name),
                         "adding incompatible symlinks with different endpoints",
                     ));
@@ -291,7 +341,7 @@ fn add_tree_actions(
             }
             (Some(FSNode::Dir(_, _, loc_subtree)), FSNode::Dir(miss_mtime, _, miss_subtree)) => {
                 let subadd =
-                    add_tree_actions(loc_subtree, miss_subtree).map_err(push_converr(name))?;
+                    add_tree_actions(loc_subtree, miss_subtree).map_err(push_getacterr(name))?;
                 necessary_actions.append(&mut subadd.add_prefix(name));
 
                 // IMPORTANT: this edit dir action is necessary even if
@@ -301,7 +351,7 @@ fn add_tree_actions(
                 necessary_actions.push(AbstPath::single(name), Action::EditDir(miss_mtime.clone()));
             }
             _ => {
-                return Err(convtoacterr(
+                return Err(getacterr(
                     AbstPath::single(name),
                     "adding incompatible objects",
                 ))
@@ -366,24 +416,22 @@ fn add_tree_actions(
 ///
 /// This function returns `Ok(necessary_actions)` if there is no conflict,
 /// otherwise `Err(conflicts)`
-pub fn get_actions(
-    Delta(local): &Delta,
-    Delta(missed): &Delta,
-) -> Result<Actions, ConvToActionError> {
+pub fn get_actions(Delta(local): &Delta, Delta(missed): &Delta) -> Result<Actions, GetActErr> {
     let mut necessary_actions = Actions::new();
-    // let mut conflicts: HashMap<String, ConflictNode> = HashMap::new();
     for (name, miss_node) in missed {
         match local.get(name) {
             // If this node of the missed update is not present in the local
             //	update, it is a necessary change to be pulled in order to apply
             //	the missed update
-            None => {
-                let mut miss_node_actions = miss_node
-                    .to_actions()
-                    .map_err(push_converr(name))?
-                    .add_prefix(name);
-                necessary_actions.append(&mut miss_node_actions);
-            }
+            None => match miss_node.to_actions() {
+                Ok(actions) => necessary_actions.append(&mut actions.add_prefix(name)),
+                Err(ToActErr(path, err)) => {
+                    return Err(getacterr(
+                        path.add_first(name),
+                        format!("missed delta of locally untouched object is not shaken\n{err}"),
+                    ));
+                }
+            },
 
             // If this node of the missed update is present in the local update,
             //	check whether they are compatible or if it is a conflict
@@ -396,7 +444,7 @@ pub fn get_actions(
                     DeltaNode::Branch((_, miss_postmtime), miss_subdelta),
                 ) => {
                     let subactions =
-                        get_actions(loc_subdelta, miss_subdelta).map_err(push_converr(name))?;
+                        get_actions(loc_subdelta, miss_subdelta).map_err(push_getacterr(name))?;
                     necessary_actions.append(&mut subactions.add_prefix(name));
                     necessary_actions.push(
                         AbstPath::single(name),
@@ -423,7 +471,7 @@ pub fn get_actions(
                             );
                         }
                     } else {
-                        return Err(convtoacterr(
+                        return Err(getacterr(
                             AbstPath::single(name),
                             "added or edited incompatible files with different content",
                         ));
@@ -443,7 +491,7 @@ pub fn get_actions(
                             );
                         }
                     } else {
-                        return Err(convtoacterr(
+                        return Err(getacterr(
                             AbstPath::single(name),
                             "added or edited incompatible symlinks with different endpoints",
                         ));
@@ -455,16 +503,16 @@ pub fn get_actions(
                     DeltaNode::Leaf(_, Some(FSNode::Dir(_, _, loc_subtree))),
                     DeltaNode::Leaf(_, Some(FSNode::Dir(miss_mtime, _, miss_subtree))),
                 ) => {
-                    let subactions =
-                        add_tree_actions(loc_subtree, miss_subtree).map_err(push_converr(name))?;
+                    let subactions = add_tree_actions(loc_subtree, miss_subtree)
+                        .map_err(push_getacterr(name))?;
                     necessary_actions.append(&mut subactions.add_prefix(name));
                     necessary_actions
                         .push(AbstPath::single(name), Action::EditDir(miss_mtime.clone()));
                 }
                 _ => {
-                    return Err(convtoacterr(
+                    return Err(getacterr(
                         AbstPath::single(name),
-                        "added or edited incompatible objects",
+                        "added, edited or deleted incompatible objects",
                     ));
                 }
             },
@@ -476,18 +524,16 @@ pub fn get_actions(
 #[cfg(test)]
 mod tests {
     use super::{
-        super::get_delta, add_tree_actions, get_actions, Action, Actions, Conflicts, DeltaNode,
-        FSNode, FSTree,
+        super::get_delta, add_tree_actions, get_actions, Action, Actions, DeltaNode, FSNode, FSTree,
     };
     use abst_fs::{AbstPath, Endpoint, Mtime};
     use core::panic;
-    use std::{collections::HashMap, path::Path, vec};
+    use std::{path::Path, vec};
 
     //--- UTILITY FUNCTIONS ---//
     fn add_dir_at(path: impl AsRef<Path>) -> (AbstPath, Action) {
         (AbstPath::from(path), Action::AddDir)
     }
-
     fn add_file_at(
         path: impl AsRef<Path>,
         mtime: (i64, u32),
@@ -501,7 +547,6 @@ mod tests {
             ),
         )
     }
-
     fn add_symlink_at(
         path: impl AsRef<Path>,
         mtime: (i64, u32),
@@ -515,14 +560,12 @@ mod tests {
             ),
         )
     }
-
     fn edit_dir_at(path: impl AsRef<Path>, mtime: (i64, u32)) -> (AbstPath, Action) {
         (
             AbstPath::from(path),
             Action::EditDir(Mtime::from(mtime.0, mtime.1)),
         )
     }
-
     fn edit_file_at(
         path: impl AsRef<Path>,
         mtime: (i64, u32),
@@ -536,7 +579,6 @@ mod tests {
             ),
         )
     }
-
     fn edit_symlink_at(
         path: impl AsRef<Path>,
         mtime: (i64, u32),
@@ -550,15 +592,12 @@ mod tests {
             ),
         )
     }
-
     fn remove_dir_at(path: impl AsRef<Path>) -> (AbstPath, Action) {
         (AbstPath::from(path), Action::RemoveDir)
     }
-
     fn remove_file_at(path: impl AsRef<Path>) -> (AbstPath, Action) {
         (AbstPath::from(path), Action::RemoveFile)
     }
-
     fn remove_symlink_at(path: impl AsRef<Path>) -> (AbstPath, Action) {
         (AbstPath::from(path), Action::RemoveSymLink)
     }
@@ -566,8 +605,6 @@ mod tests {
 
     #[test]
     fn various() {
-        assert_eq!(Conflicts::empty(), Conflicts(HashMap::new()));
-
         let action = Action::AddDir;
         let path = AbstPath::from("path/to/somewhere");
         let prefix = "some";
@@ -619,276 +656,359 @@ mod tests {
     }
 
     #[test]
-    fn to_actions() {
-        // FSNode & FSTree
-        {
-            assert_eq!(
-                FSNode::file((1664660949, 951241393), "content").to_add_actions(),
-                Actions(vec![add_file_at("", (1664660949, 951241393), "content")])
-            );
+    fn test_fs_to_actions() {
+        assert_eq!(
+            FSNode::file((1664660949, 951241393), "content").to_add_actions(),
+            Actions(vec![add_file_at("", (1664660949, 951241393), "content")])
+        );
 
-            assert_eq!(
-                FSNode::symlink((1664705309, 842419258), "path/to/somewhere").to_add_actions(),
-                Actions(vec![add_symlink_at(
-                    "",
-                    (1664705309, 842419258),
-                    "path/to/somewhere"
-                )])
-            );
+        assert_eq!(
+            FSNode::symlink((1664705309, 842419258), "path/to/somewhere").to_add_actions(),
+            Actions(vec![add_symlink_at(
+                "",
+                (1664705309, 842419258),
+                "path/to/somewhere"
+            )])
+        );
 
-            assert_eq!(
-                FSNode::dir((1664751233, 523727805), |t| {
-                    t.add_file("some-file", (1664660949, 951241393), "content");
-                    t.add_symlink("some-symlink", (1664705309, 842419258), "path/to/somewhere");
-                    t.add_empty_dir("some-dir", (1664707274, 116078511))
-                })
-                .to_add_actions(),
-                Actions(vec![
-                    add_dir_at(""),
-                    add_file_at("some-file", (1664660949, 951241393), "content"),
-                    add_symlink_at("some-symlink", (1664705309, 842419258), "path/to/somewhere"),
-                    add_dir_at("some-dir"),
-                    edit_dir_at("some-dir", (1664707274, 116078511)),
-                    edit_dir_at("", (1664751233, 523727805))
-                ])
-            );
-        }
+        assert_eq!(
+            FSNode::dir((1664751233, 523727805), |t| {
+                t.add_file("file", (1664660949, 951241393), "content");
+                t.add_symlink("symlink", (1664705309, 842419258), "path/to/somewhere");
+                t.add_empty_dir("dir", (1664707274, 116078511))
+            })
+            .to_add_actions(),
+            Actions(vec![
+                add_dir_at(""),
+                add_file_at("file", (1664660949, 951241393), "content"),
+                add_symlink_at("symlink", (1664705309, 842419258), "path/to/somewhere"),
+                add_dir_at("dir"),
+                edit_dir_at("dir", (1664707274, 116078511)),
+                edit_dir_at("", (1664751233, 523727805))
+            ])
+        );
+    }
 
-        // Delta
-        {
-            assert_eq!(
-                DeltaNode::leaf(Some(FSNode::file((1665061768, 321204439), "test")), None)
-                    .to_actions()
-                    .unwrap(),
-                Actions(vec![remove_file_at("")])
-            );
-            assert_eq!(
-                DeltaNode::leaf(
-                    Some(FSNode::symlink(
-                        (1665233109, 187394758),
-                        "path/to/somewhere"
-                    )),
-                    None
-                )
+    #[test]
+    fn test_delta_remove_to_actions() {
+        assert_eq!(
+            DeltaNode::leaf(Some(FSNode::file((1665061768, 321204439), "test")), None)
                 .to_actions()
                 .unwrap(),
-                Actions(vec![remove_symlink_at("")])
-            );
-            assert_eq!(
-                DeltaNode::leaf(Some(FSNode::empty_dir((1665366613, 463960433))), None)
-                    .to_actions()
-                    .unwrap(),
-                Actions(vec![remove_dir_at("")])
-            );
-            assert_eq!(
-                DeltaNode::leaf(
-                    Some(FSNode::dir((1665602584, 569209276), |t| {
-                        t.add_file("some-file", (1665369992, 703846649), "aaa");
-                        t.add_symlink("some-link", (1665476999, 523534123), "a/b/c");
-                        t.add_empty_dir("some-dir", (1665531191, 5096258));
-                    })),
-                    None
-                )
-                .to_actions()
-                .unwrap(),
-                Actions(vec![remove_dir_at("")])
-            );
-
-            assert_eq!(
-                DeltaNode::leaf(None, Some(FSNode::file((1665061768, 321204439), "test")))
-                    .to_actions()
-                    .unwrap(),
-                Actions(vec![add_file_at("", (1665061768, 321204439), "test")])
-            );
-            assert_eq!(
-                DeltaNode::leaf(
-                    None,
-                    Some(FSNode::symlink(
-                        (1665233109, 187394758),
-                        "path/to/somewhere"
-                    ))
-                )
-                .to_actions()
-                .unwrap(),
-                Actions(vec![add_symlink_at(
-                    "",
+            Actions(vec![remove_file_at("")])
+        );
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::symlink(
                     (1665233109, 187394758),
                     "path/to/somewhere"
-                )])
-            );
-            assert_eq!(
-                DeltaNode::leaf(None, Some(FSNode::empty_dir((1665366613, 463960433))))
-                    .to_actions()
-                    .unwrap(),
-                Actions(vec![
-                    add_dir_at(""),
-                    edit_dir_at("", (1665366613, 463960433))
-                ])
-            );
-            assert_eq!(
-                DeltaNode::leaf(
+                )),
+                None
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![remove_symlink_at("")])
+        );
+        assert_eq!(
+            DeltaNode::leaf(Some(FSNode::empty_dir((1665366613, 463960433))), None)
+                .to_actions()
+                .unwrap(),
+            Actions(vec![remove_dir_at("")])
+        );
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::dir((1665602584, 569209276), |t| {
+                    t.add_file("some-file", (1665369992, 703846649), "content");
+                    t.add_symlink("some-link", (1665476999, 523534123), "path/to/somewhere");
+                    t.add_empty_dir("some-dir", (1665531191, 5096258));
+                })),
+                None
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![remove_dir_at("")])
+        );
+    }
+
+    #[test]
+    fn test_delta_add_actions() {
+        assert_eq!(
+            DeltaNode::leaf(None, Some(FSNode::file((1665061768, 321204439), "content")))
+                .to_actions()
+                .unwrap(),
+            Actions(vec![add_file_at("", (1665061768, 321204439), "content")])
+        );
+        assert_eq!(
+            DeltaNode::leaf(
+                None,
+                Some(FSNode::symlink(
+                    (1665233109, 187394758),
+                    "path/to/somewhere"
+                ))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![add_symlink_at(
+                "",
+                (1665233109, 187394758),
+                "path/to/somewhere"
+            )])
+        );
+        assert_eq!(
+            DeltaNode::leaf(None, Some(FSNode::empty_dir((1665366613, 463960433))))
+                .to_actions()
+                .unwrap(),
+            Actions(vec![
+                add_dir_at(""),
+                edit_dir_at("", (1665366613, 463960433))
+            ])
+        );
+        assert_eq!(
+            DeltaNode::leaf(
+                None,
+                Some(FSNode::dir((1665602584, 569209276), |t| {
+                    t.add_file("some-file", (1665369992, 703846649), "content");
+                    t.add_symlink("some-link", (1665476999, 523534123), "path/to/somewhere");
+                    t.add_empty_dir("some-dir", (1665531191, 5096258));
+                })),
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![
+                add_dir_at(""),
+                add_file_at("some-file", (1665369992, 703846649), "content"),
+                add_symlink_at("some-link", (1665476999, 523534123), "path/to/somewhere"),
+                add_dir_at("some-dir"),
+                edit_dir_at("some-dir", (1665531191, 5096258)),
+                edit_dir_at("", (1665602584, 569209276))
+            ])
+        );
+    }
+
+    #[test]
+    fn test_delta_edit_actions() {
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::file((1665639893, 998839999), "content 0")),
+                Some(FSNode::file((1665646546, 757770519), "content 1"))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![edit_file_at(
+                "",
+                (1665646546, 757770519),
+                Some("content 1")
+            )])
+        );
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::file((1665639893, 998839999), "content 0")),
+                Some(FSNode::file((1665639893, 998839999), "content 1"))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![edit_file_at(
+                "",
+                (1665639893, 998839999),
+                Some("content 1")
+            )])
+        );
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::file((1665639893, 998839999), "content 0")),
+                Some(FSNode::file((1665646546, 757770519), "content 0"))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![edit_file_at(
+                "",
+                (1665646546, 757770519),
+                None::<String>
+            )])
+        );
+
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::symlink((1665875820, 923687114), "some/path")),
+                Some(FSNode::symlink((1665952290, 714857838), "different/path"))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![edit_symlink_at(
+                "",
+                (1665952290, 714857838),
+                Some("different/path")
+            )])
+        );
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::symlink((1665875820, 923687114), "some/path")),
+                Some(FSNode::symlink((1665875820, 923687114), "different/path"))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![edit_symlink_at(
+                "",
+                (1665875820, 923687114),
+                Some("different/path")
+            )])
+        );
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::symlink((1665875820, 923687114), "some/path")),
+                Some(FSNode::symlink((1665952290, 714857838), "some/path"))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![edit_symlink_at(
+                "",
+                (1665952290, 714857838),
+                None::<String>
+            )])
+        );
+    }
+
+    #[test]
+    fn test_delta_mixed_actions() {
+        todo!()
+    }
+
+    #[test]
+    fn test_delta_branch_to_actions() {
+        assert_eq!(
+            DeltaNode::branch(((1665124842, 202898185), (1668146989, 229804914)), |d| {
+                d.add_leaf(
+                    "added-file",
                     None,
-                    Some(FSNode::dir((1665602584, 569209276), |t| {
-                        t.add_file("some-file", (1665369992, 703846649), "aaa");
-                        t.add_symlink("some-link", (1665476999, 523534123), "a/b/c");
-                        t.add_empty_dir("some-dir", (1665531191, 5096258));
+                    Some(FSNode::file((1667446876, 86247824), "content 0")),
+                );
+                d.add_leaf(
+                    "added-symlink",
+                    None,
+                    Some(FSNode::symlink((1667473346, 507069866), "path/to/0")),
+                );
+                d.add_leaf(
+                    "added-dir",
+                    None,
+                    Some(FSNode::dir((1667729035, 126919897), |t| {
+                        t.add_file("some-file", (1667646083, 520484863), "content 1");
+                        t.add_symlink("some-symlink", (1667668744, 385148336), "path/to/1");
+                        t.add_empty_dir("some-dir", (1667696709, 72135293));
                     })),
-                )
-                .to_actions()
-                .unwrap(),
-                Actions(vec![
-                    add_dir_at(""),
-                    add_file_at("some-file", (1665369992, 703846649), "aaa"),
-                    add_symlink_at("some-link", (1665476999, 523534123), "a/b/c"),
-                    add_dir_at("some-dir"),
-                    edit_dir_at("some-dir", (1665531191, 5096258)),
-                    edit_dir_at("", (1665602584, 569209276))
-                ])
-            );
+                );
 
-            assert_eq!(
-                DeltaNode::leaf(
-                    Some(FSNode::file((1665639893, 998839999), "mao")),
-                    Some(FSNode::file((1665646546, 757770519), "bau"))
-                )
-                .to_actions()
-                .unwrap(),
-                Actions(vec![edit_file_at("", (1665646546, 757770519), Some("bau"))])
-            );
-            assert_eq!(
-                DeltaNode::leaf(
-                    Some(FSNode::file((1665639893, 998839999), "mao")),
-                    Some(FSNode::file((1665639893, 998839999), "bau"))
-                )
-                .to_actions()
-                .unwrap(),
-                Actions(vec![edit_file_at("", (1665639893, 998839999), Some("bau"))])
-            );
-            assert_eq!(
-                DeltaNode::leaf(
-                    Some(FSNode::file((1665639893, 998839999), "mao")),
-                    Some(FSNode::file((1665646546, 757770519), "mao"))
-                )
-                .to_actions()
-                .unwrap(),
-                Actions(vec![edit_file_at(
-                    "",
-                    (1665646546, 757770519),
-                    None::<String>
-                )])
-            );
+                d.add_leaf(
+                    "removed-file",
+                    Some(FSNode::file((1664587116, 614197665), "content 2")),
+                    None,
+                );
+                d.add_leaf(
+                    "removed-symlink",
+                    Some(FSNode::symlink((1664596605, 681949735), "path/to/2")),
+                    None,
+                );
+                d.add_leaf(
+                    "removed-dir",
+                    Some(FSNode::dir((1664720919, 551381051), |t| {
+                        t.add_file("some-file", (1664600618, 565746625), "content 3");
+                        t.add_symlink("some-symlink", (1664610876, 343494776), "path/to/3");
+                        t.add_empty_dir("some-dir", (1664629786, 734851188));
+                    })),
+                    None,
+                );
 
-            assert_eq!(
-                DeltaNode::leaf(
-                    Some(FSNode::symlink((1665875820, 923687114), "some/path")),
-                    Some(FSNode::symlink((1665952290, 714857838), "different/path"))
-                )
-                .to_actions()
-                .unwrap(),
-                Actions(vec![edit_symlink_at(
-                    "",
-                    (1665952290, 714857838),
-                    Some("different/path")
-                )])
-            );
-            assert_eq!(
-                DeltaNode::leaf(
-                    Some(FSNode::symlink((1665875820, 923687114), "some/path")),
-                    Some(FSNode::symlink((1665875820, 923687114), "different/path"))
-                )
-                .to_actions()
-                .unwrap(),
-                Actions(vec![edit_symlink_at(
-                    "",
-                    (1665875820, 923687114),
-                    Some("different/path")
-                )])
-            );
-            assert_eq!(
-                DeltaNode::leaf(
-                    Some(FSNode::symlink((1665875820, 923687114), "some/path")),
-                    Some(FSNode::symlink((1665952290, 714857838), "some/path"))
-                )
-                .to_actions()
-                .unwrap(),
-                Actions(vec![edit_symlink_at(
-                    "",
-                    (1665952290, 714857838),
-                    None::<String>
-                )])
-            );
+                d.add_leaf(
+                    "edited-file",
+                    Some(FSNode::file((1664778881, 140200307), "content 4")),
+                    Some(FSNode::file((1667850556, 457134510), "content 5")),
+                );
+                d.add_leaf(
+                    "edited-symlink",
+                    Some(FSNode::symlink((1664825867, 451928681), "path/to/4")),
+                    Some(FSNode::symlink((1667851286, 360603025), "path/to/5")),
+                );
 
-            assert_eq!(
-                DeltaNode::branch(((1667268093, 637205117), (1669572458, 491594172)), |d| {
-                    d.add_leaf(
-                        "some-file",
-                        Some(FSNode::file((1667282846, 383048097), "test")),
-                        Some(FSNode::file((1669428322, 884592525), "content")),
-                    );
-                    d.add_leaf(
-                        "deleted-file",
-                        Some(FSNode::file((1667294005, 666911213), "abcd")),
-                        None,
-                    );
-                    d.add_leaf(
-                        "added-dir",
-                        None,
-                        Some(FSNode::dir((1669349200, 167232626), |t| {
-                            t.add_file("file", (1669325685, 713803584), "efgh");
-                            t.add_empty_dir("dir", (1669147662, 447081397));
-                        })),
-                    );
-                    d.add_leaf(
-                        "removed-dir",
-                        Some(FSNode::dir((1667487391, 496418641), |t| {
-                            t.add_symlink("symlink", (1667493021, 325351570), "some/random/path");
-                            t.add_empty_dir("dir", (1667635937, 649663354));
-                        })),
-                        None,
-                    );
-
-                    // TODO TEST add this when project return stable
-                    // d.add_branch("edited-dir", None, |d| {
-                    //     d.add_leaf(
-                    //         "edited-link",
-                    //         Some(FSNode::symlink((1667655711, 179434555), "also/random/path")),
-                    //         Some(FSNode::symlink((1669125777, 51127077), "different/path")),
-                    //     )
-                    // });
-                })
-                .to_actions()
-                .unwrap(),
-                Actions(vec![
-                    edit_file_at("some-file", (1669428322, 884592525), Some("content")),
-                    remove_file_at("deleted-file"),
-                    add_dir_at("added-dir"),
-                    add_file_at("added-dir/file", (1669325685, 713803584), "efgh"),
-                    add_dir_at("added-dir/dir"),
-                    edit_dir_at("added-dir/dir", (1669147662, 447081397)),
-                    edit_dir_at("added-dir", (1669349200, 167232626)),
-                    remove_dir_at("removed-dir"),
-                    // TODO TEST as the comment above
-                    // edit_symlink_at(
-                    //     "edited-dir/edited-link",
-                    //     Some((1669125777, 51127077)),
-                    //     Some("different/path")
-                    // ),
-                    edit_dir_at("", (1669572458, 491594172))
-                ])
-            );
-        }
+                d.add_branch(
+                    "edited-dir",
+                    ((1665117666, 829531525), (1668132614, 64460061)),
+                    |d| {
+                        d.add_leaf(
+                            "old-file",
+                            Some(FSNode::file((1664865241, 60667757), "content 6")),
+                            None,
+                        );
+                        d.add_leaf(
+                            "old-symlink",
+                            Some(FSNode::symlink((1665039670, 630352010), "path/to/6")),
+                            None,
+                        );
+                        d.add_leaf(
+                            "old-dir",
+                            Some(FSNode::empty_dir((1665110500, 590768331))),
+                            None,
+                        );
+                        d.add_leaf(
+                            "new-file",
+                            None,
+                            Some(FSNode::file((1668036281, 975073138), "content 7")),
+                        );
+                        d.add_leaf(
+                            "new-symlink",
+                            None,
+                            Some(FSNode::symlink((1668083714, 158339310), "path/to/7")),
+                        );
+                        d.add_leaf(
+                            "new-dir",
+                            None,
+                            Some(FSNode::empty_dir((1668094496, 259786048))),
+                        );
+                    },
+                );
+            })
+            .to_actions()
+            .unwrap(),
+            Actions(vec![
+                add_file_at("added-file", (1667446876, 86247824), "content 0"),
+                add_symlink_at("added-symlink", (1667473346, 507069866), "path/to/0"),
+                add_dir_at("added-dir"),
+                add_file_at("added-dir/some-file", (1667646083, 520484863), "content 1"),
+                add_symlink_at(
+                    "added-dir/some-symlink",
+                    (1667668744, 385148336),
+                    "path/to/1"
+                ),
+                add_dir_at("added-dir/some-dir"),
+                edit_dir_at("added-dir/some-dir", (1667696709, 72135293)),
+                edit_dir_at("added-dir", (1667729035, 126919897)),
+                /* */
+                remove_file_at("removed-file"),
+                remove_symlink_at("removed-symlink"),
+                remove_dir_at("removed-dir"),
+                edit_file_at("edited-file", (1667850556, 457134510), Some("content 5")),
+                /* */
+                edit_symlink_at("edited-symlink", (1667851286, 360603025), Some("path/to/5")),
+                remove_file_at("edited-dir/old-file"),
+                remove_symlink_at("edited-dir/old-symlink"),
+                remove_dir_at("edited-dir/old-dir"),
+                add_file_at("edited-dir/new-file", (1668036281, 975073138), "content 7"),
+                add_symlink_at(
+                    "edited-dir/new-symlink",
+                    (1668083714, 158339310),
+                    "path/to/7"
+                ),
+                add_dir_at("edited-dir/new-dir"),
+                edit_dir_at("edited-dir/new-dir", (1668094496, 259786048)),
+                edit_dir_at("edited-dir", (1668132614, 64460061)),
+                edit_dir_at("", (1668146989, 229804914))
+            ])
+        );
     }
 
     #[test]
-    #[should_panic]
-    fn to_actions_none_none_panic() {
-        DeltaNode::Leaf(None, None).to_actions();
-    }
+    fn test_to_actions_error() {
+        assert!(DeltaNode::Leaf(None, None).to_actions().is_err());
 
-    #[test]
-    #[should_panic]
-    fn to_actions_dir_dir_panic() {
-        DeltaNode::Leaf(
+        assert!(DeltaNode::Leaf(
             Some(FSNode::dir((1667282683, 412810936), |t| {
                 t.add_file("file", (1667260690, 931913056), "1234");
             })),
@@ -896,279 +1016,272 @@ mod tests {
                 t.add_file("file", (1667371152, 845893374), "5678")
             })),
         )
-        .to_actions();
-    }
-
-    #[test]
-    #[should_panic]
-    fn to_actions_unshaken_file_panic() {
-        DeltaNode::Leaf(
+        .to_actions()
+        .is_err());
+        assert!(DeltaNode::Leaf(
             Some(FSNode::file((1667674660, 403784885), "ciao")),
             Some(FSNode::file((1667674660, 403784885), "ciao")),
         )
-        .to_actions();
-    }
-
-    #[test]
-    #[should_panic]
-    fn to_actions_unshaken_symlink_panic() {
-        DeltaNode::Leaf(
+        .to_actions()
+        .is_err());
+        assert!(DeltaNode::Leaf(
             Some(FSNode::symlink((1667717248, 635683372), "this/is/a/path")),
             Some(FSNode::symlink((1667717248, 635683372), "this/is/a/path")),
         )
-        .to_actions();
+        .to_actions()
+        .is_err());
     }
 
     #[test]
     fn test_add_tree_actions() {
-        // Correct scenario
-        {
-            let loc_tree = FSTree::gen_from(|t| {
-                t.add_file("local-file", (1667451494, 772117374), "qwerty");
-                t.add_file("both-file", (1667506143, 561334027), "asdf");
-                t.add_symlink("local-symlink", (1667553005, 210771618), "this/is/path");
-                t.add_symlink("both-symlink", (1667555532, 496471440), "random/path");
-                t.add_dir("local-dir", (1667937343, 571153275), |t| {
-                    t.add_file("subfile", (1667561784, 175308734), "aeiou");
-                    t.add_symlink("subsymlink", (1667592909, 802732313), "here/is/path");
-                    t.add_dir("subdir", (1667883595, 837320864), |t| {
-                        t.add_file("subsubfile", (1667614538, 778078254), "subcontent");
-                        t.add_symlink("subsubsymlink", (1667773566, 563855678), "sub/symlink/path");
-                        t.add_empty_dir("subsubdir", (1667871619, 285711170));
-                    });
-                });
-                t.add_dir("both-dir", (1668484659, 516444151), |t| {
-                    t.add_file("local-subfile", (1667997942, 442065997), "marco");
-                    t.add_file("both-subfile", (1668014918, 436747760), "polo");
-                    t.add_symlink("local-subsymlink", (1668019428, 722513569), "q/w/e/r/t/y");
-                    t.add_symlink("both-subsymlink", (1668092665, 858853680), "a/e/i/o/u");
-                    t.add_dir("local-subdir", (1668216014, 599674193), |t| {
-                        t.add_file("subsubfile", (1668097162, 380205), "hello");
-                        t.add_symlink("subsubsymlink", (1668171172, 802211979), "it/s/me");
-                        t.add_empty_dir("subsubdir", (1668185830, 353575525));
-                    });
-                    t.add_dir("both-subdir", (1668477888, 934654008), |t| {
-                        t.add_file("local-subsubfile", (1668219448, 309042254), "content");
-                        t.add_file("both-subsubfile", (1668225374, 874901505), "content2");
-                        t.add_symlink("local-subsubsymlink", (1668338032, 654301301), "a/s/d/f");
-                        t.add_symlink("both-subsubsymlink", (1668426639, 321572981), "g/h/j/k");
-                        t.add_empty_dir("local-subsubdir", (1668459225, 672123212));
-                        t.add_empty_dir("both-subsubdir", (1668461882, 992686858));
-                    });
+        let loc_tree = FSTree::gen_from(|t| {
+            t.add_file("local-file", (1667451494, 772117374), "content 0");
+            t.add_file("both-file", (1667506143, 561334027), "content 1");
+            t.add_symlink("local-symlink", (1667553005, 210771618), "path/to/2");
+            t.add_symlink("both-symlink", (1667555532, 496471440), "path/to/3");
+            t.add_dir("local-dir", (1667937343, 571153275), |t| {
+                t.add_file("subfile", (1667561784, 175308734), "content 4");
+                t.add_symlink("subsymlink", (1667592909, 802732313), "path/to/5");
+                t.add_dir("subdir", (1667883595, 837320864), |t| {
+                    t.add_file("subsubfile", (1667614538, 778078254), "content 6");
+                    t.add_symlink("subsubsymlink", (1667773566, 563855678), "path/to/7");
+                    t.add_empty_dir("subsubdir", (1667871619, 285711170));
                 });
             });
-
-            let miss_tree = FSTree::gen_from(|t| {
-                t.add_file("miss-file", (1667440088, 512796633), "qzerty");
-                t.add_file("both-file", (1667457760, 877447014), "asdf");
-                t.add_symlink("miss-symlink", (1667490289, 859903967), "z/x/c/v");
-                t.add_symlink("both-symlink", (1667544335, 682787097), "random/path");
-                t.add_dir("miss-dir", (1668078841, 677425226), |t| {
-                    t.add_file("subfile", (1667593277, 45544957), "qazwsx");
-                    t.add_symlink("subsymlink", (1667714924, 279596273), "this/is/path/too");
-                    t.add_dir("subdir", (1668030817, 816952290), |t| {
-                        t.add_file("subsubfile", (1667861206, 21826977), "subsubqzerty");
-                        t.add_symlink("subsubsymlink", (1667952070, 348725997), "p/a/t/h");
-                        t.add_empty_dir("subsubdir", (1668004688, 520576083));
-                    });
+            t.add_dir("both-dir", (1668484659, 516444151), |t| {
+                t.add_file("local-subfile", (1667997942, 442065997), "content 8");
+                t.add_file("both-subfile", (1668014918, 436747760), "content 9");
+                t.add_symlink("local-subsymlink", (1668019428, 722513569), "path/to/10");
+                t.add_symlink("both-subsymlink", (1668092665, 858853680), "path/to/11");
+                t.add_dir("local-subdir", (1668216014, 599674193), |t| {
+                    t.add_file("subsubfile", (1668097162, 380205), "content 12");
+                    t.add_symlink("subsubsymlink", (1668171172, 802211979), "path/to/13");
+                    t.add_empty_dir("subsubdir", (1668185830, 353575525));
                 });
-                t.add_dir("both-dir", (1668876296, 362301779), |t| {
-                    t.add_file("miss-subfile", (1668135999, 659914790), "bla bla");
-                    t.add_file("both-subfile", (1668142965, 797805445), "polo");
-                    t.add_symlink("miss-subsymlink", (1668152547, 534614451), "u/i/o/p");
-                    t.add_symlink("both-subsymlink", (1668180274, 853466233), "a/e/i/o/u");
-                    t.add_dir("miss-subdir", (1668458383, 978304854), |t| {
-                        t.add_file("subsubfile", (1668291079, 678179687), "waaaaaa");
-                        t.add_symlink("subsubsymlink", (1668330452, 223848021), "w/a/a/a");
-                        t.add_empty_dir("subsubdir", (1668368203, 10780309));
-                    });
-                    t.add_dir("both-subdir", (1668833003, 271190518), |t| {
-                        t.add_file("miss-subsubfile", (1668509459, 862724084), "content3");
-                        t.add_file("both-subsubfile", (1668544464, 706471816), "content2");
-                        t.add_symlink("miss-subsubsymlink", (1668619831, 556739023), "v/b/n/m");
-                        t.add_symlink("both-subsubsymlink", (1668650419, 227402875), "g/h/j/k");
-                        t.add_empty_dir("miss-subsubdir", (1668743388, 316319405));
-                        t.add_empty_dir("both-subsubdir", (1668758218, 914715759));
-                    });
+                t.add_dir("both-subdir", (1668477888, 934654008), |t| {
+                    t.add_file("local-subsubfile", (1668219448, 309042254), "content 14");
+                    t.add_file("both-subsubfile", (1668225374, 874901505), "content 15");
+                    t.add_symlink("local-subsubsymlink", (1668338032, 654301301), "path/to/16");
+                    t.add_symlink("both-subsubsymlink", (1668426639, 321572981), "path/to/17");
+                    t.add_empty_dir("local-subsubdir", (1668459225, 672123212));
+                    t.add_empty_dir("both-subsubdir", (1668461882, 992686858));
                 });
             });
+        });
 
-            assert_eq!(
-                add_tree_actions(&loc_tree, &miss_tree).unwrap(),
-                Actions(vec![
-                    add_file_at("miss-file", (1667440088, 512796633), "qzerty"),
-                    edit_file_at("both-file", (1667457760, 877447014), None::<String>),
-                    add_symlink_at("miss-symlink", (1667490289, 859903967), "z/x/c/v"),
-                    edit_symlink_at("both-symlink", (1667544335, 682787097), None::<String>),
-                    add_dir_at("miss-dir"),
-                    add_file_at("miss-dir/subfile", (1667593277, 45544957), "qazwsx"),
-                    add_symlink_at(
-                        "miss-dir/subsymlink",
-                        (1667714924, 279596273),
-                        "this/is/path/too"
-                    ),
-                    add_dir_at("miss-dir/subdir"),
-                    add_file_at(
-                        "miss-dir/subdir/subsubfile",
-                        (1667861206, 21826977),
-                        "subsubqzerty"
-                    ),
-                    add_symlink_at(
-                        "miss-dir/subdir/subsubsymlink",
-                        (1667952070, 348725997),
-                        "p/a/t/h"
-                    ),
-                    add_dir_at("miss-dir/subdir/subsubdir"),
-                    edit_dir_at("miss-dir/subdir/subsubdir", (1668004688, 520576083)),
-                    edit_dir_at("miss-dir/subdir", (1668030817, 816952290)),
-                    edit_dir_at("miss-dir", (1668078841, 677425226)),
-                    add_file_at("both-dir/miss-subfile", (1668135999, 659914790), "bla bla"),
-                    edit_file_at(
-                        "both-dir/both-subfile",
-                        (1668142965, 797805445),
-                        None::<String>
-                    ),
-                    add_symlink_at(
-                        "both-dir/miss-subsymlink",
-                        (1668152547, 534614451),
-                        "u/i/o/p"
-                    ),
-                    edit_symlink_at(
-                        "both-dir/both-subsymlink",
-                        (1668180274, 853466233),
-                        None::<String>
-                    ),
-                    add_dir_at("both-dir/miss-subdir"),
-                    add_file_at(
-                        "both-dir/miss-subdir/subsubfile",
-                        (1668291079, 678179687),
-                        "waaaaaa"
-                    ),
-                    add_symlink_at(
-                        "both-dir/miss-subdir/subsubsymlink",
-                        (1668330452, 223848021),
-                        "w/a/a/a"
-                    ),
-                    add_dir_at("both-dir/miss-subdir/subsubdir"),
-                    edit_dir_at("both-dir/miss-subdir/subsubdir", (1668368203, 10780309)),
-                    edit_dir_at("both-dir/miss-subdir", (1668458383, 978304854)),
-                    add_file_at(
-                        "both-dir/both-subdir/miss-subsubfile",
-                        (1668509459, 862724084),
-                        "content3"
-                    ),
-                    edit_file_at(
-                        "both-dir/both-subdir/both-subsubfile",
-                        (1668544464, 706471816),
-                        None::<String>
-                    ),
-                    add_symlink_at(
-                        "both-dir/both-subdir/miss-subsubsymlink",
-                        (1668619831, 556739023),
-                        "v/b/n/m"
-                    ),
-                    edit_symlink_at(
-                        "both-dir/both-subdir/both-subsubsymlink",
-                        (1668650419, 227402875),
-                        None::<String>
-                    ),
-                    add_dir_at("both-dir/both-subdir/miss-subsubdir"),
-                    edit_dir_at(
-                        "both-dir/both-subdir/miss-subsubdir",
-                        (1668743388, 316319405)
-                    ),
-                    edit_dir_at(
-                        "both-dir/both-subdir/both-subsubdir",
-                        (1668758218, 914715759)
-                    ),
-                    edit_dir_at("both-dir/both-subdir", (1668833003, 271190518)),
-                    edit_dir_at("both-dir", (1668876296, 362301779))
-                ])
-            );
-        }
+        let miss_tree = FSTree::gen_from(|t| {
+            t.add_file("miss-file", (1667440088, 512796633), "content 18");
+            t.add_file("both-file", (1667457760, 877447014), "content 1");
+            t.add_symlink("miss-symlink", (1667490289, 859903967), "path/to/19");
+            t.add_symlink("both-symlink", (1667544335, 682787097), "path/to/3");
+            t.add_dir("miss-dir", (1668078841, 677425226), |t| {
+                t.add_file("subfile", (1667593277, 45544957), "content 20");
+                t.add_symlink("subsymlink", (1667714924, 279596273), "path/to/21");
+                t.add_dir("subdir", (1668030817, 816952290), |t| {
+                    t.add_file("subsubfile", (1667861206, 21826977), "content 22");
+                    t.add_symlink("subsubsymlink", (1667952070, 348725997), "path/to/23");
+                    t.add_empty_dir("subsubdir", (1668004688, 520576083));
+                });
+            });
+            t.add_dir("both-dir", (1668876296, 362301779), |t| {
+                t.add_file("miss-subfile", (1668135999, 659914790), "content 24");
+                t.add_file("both-subfile", (1668142965, 797805445), "content 9");
+                t.add_symlink("miss-subsymlink", (1668152547, 534614451), "path/to/25");
+                t.add_symlink("both-subsymlink", (1668180274, 853466233), "path/to/11");
+                t.add_dir("miss-subdir", (1668458383, 978304854), |t| {
+                    t.add_file("subsubfile", (1668291079, 678179687), "content 26");
+                    t.add_symlink("subsubsymlink", (1668330452, 223848021), "path/to/27");
+                    t.add_empty_dir("subsubdir", (1668368203, 10780309));
+                });
+                t.add_dir("both-subdir", (1668833003, 271190518), |t| {
+                    t.add_file("miss-subsubfile", (1668509459, 862724084), "content 28");
+                    t.add_file("both-subsubfile", (1668544464, 706471816), "content 15");
+                    t.add_symlink("miss-subsubsymlink", (1668619831, 556739023), "path/to/29");
+                    t.add_symlink("both-subsubsymlink", (1668650419, 227402875), "path/to/17");
+                    t.add_empty_dir("miss-subsubdir", (1668743388, 316319405));
+                    t.add_empty_dir("both-subsubdir", (1668758218, 914715759));
+                });
+            });
+        });
 
-        // Incorrect scenarios
-        {
-            // Incompatible files
-            {
-                let loc_tree = FSTree::gen_from(|t| {
-                    t.add_file("file", (1667317389, 591254846), "content 1");
-                });
-                let miss_tree = FSTree::gen_from(|t| {
-                    t.add_file("file", (1667371999, 105275068), "content 2");
-                });
-                assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
-
-                let loc_tree = FSTree::gen_from(|t| {
-                    t.add_dir("dir", (1667388032, 851120567), |t| {
-                        t.add_file("file", (1667379354, 670238243), "content 1");
-                    })
-                });
-                let miss_tree = FSTree::gen_from(|t| {
-                    t.add_dir("dir", (1667436647, 747771086), |t| {
-                        t.add_file("file", (1667397348, 246346603), "content 2");
-                    })
-                });
-                assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
-
-                let loc_tree = FSTree::gen_from(|t| {
-                    t.add_dir("dir", (1667561496, 117629802), |t| {
-                        t.add_dir("subdir", (1667474682, 640275839), |t| {
-                            t.add_file("file", (1667468050, 995570173), "content 1");
-                        });
-                    })
-                });
-                let miss_tree = FSTree::gen_from(|t| {
-                    t.add_dir("dir", (1667846654, 36544421), |t| {
-                        t.add_dir("subdir", (1667796732, 450055995), |t| {
-                            t.add_file("file", (1667796104, 208959501), "content 2");
-                        });
-                    })
-                });
-                assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
-            }
-
-            // Incompatible symlinks
-            {
-                let loc_tree = FSTree::gen_from(|t| {
-                    t.add_symlink("symlink", (1667878697, 159485180), "some/path/1");
-                });
-                let miss_tree = FSTree::gen_from(|t| {
-                    t.add_symlink("symlink", (1667944404, 882227232), "some/path/2");
-                });
-                assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
-
-                let loc_tree = FSTree::gen_from(|t| {
-                    t.add_dir("dir", (1668123900, 611195248), |t| {
-                        t.add_symlink("symlink", (1668034380, 842232587), "some/path/1");
-                    });
-                });
-                let miss_tree = FSTree::gen_from(|t| {
-                    t.add_dir("dir", (1668171604, 892383389), |t| {
-                        t.add_symlink("symlink", (1668161075, 810573263), "some/path/2");
-                    });
-                });
-                assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
-
-                let loc_tree = FSTree::gen_from(|t| {
-                    t.add_dir("dir", (1668294682, 959268366), |t| {
-                        t.add_dir("subdir", (1668269796, 368947589), |t| {
-                            t.add_symlink("symlink", (1668211342, 57892937), "some/path/1");
-                        });
-                    });
-                });
-                let miss_tree = FSTree::gen_from(|t| {
-                    t.add_dir("dir", (1668481091, 875126077), |t| {
-                        t.add_dir("subdir", (1668411639, 562698339), |t| {
-                            t.add_symlink("symlink", (1668389605, 240974274), "some/path/2");
-                        });
-                    });
-                });
-                assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
-            }
-        }
+        assert_eq!(
+            add_tree_actions(&loc_tree, &miss_tree).unwrap(),
+            Actions(vec![
+                add_file_at("miss-file", (1667440088, 512796633), "content 18"),
+                edit_file_at("both-file", (1667457760, 877447014), None::<String>),
+                add_symlink_at("miss-symlink", (1667490289, 859903967), "path/to/19"),
+                edit_symlink_at("both-symlink", (1667544335, 682787097), None::<String>),
+                add_dir_at("miss-dir"),
+                add_file_at("miss-dir/subfile", (1667593277, 45544957), "content 20"),
+                add_symlink_at("miss-dir/subsymlink", (1667714924, 279596273), "path/to/21"),
+                add_dir_at("miss-dir/subdir"),
+                add_file_at(
+                    "miss-dir/subdir/subsubfile",
+                    (1667861206, 21826977),
+                    "content 22"
+                ),
+                add_symlink_at(
+                    "miss-dir/subdir/subsubsymlink",
+                    (1667952070, 348725997),
+                    "path/to/23"
+                ),
+                add_dir_at("miss-dir/subdir/subsubdir"),
+                edit_dir_at("miss-dir/subdir/subsubdir", (1668004688, 520576083)),
+                edit_dir_at("miss-dir/subdir", (1668030817, 816952290)),
+                edit_dir_at("miss-dir", (1668078841, 677425226)),
+                add_file_at(
+                    "both-dir/miss-subfile",
+                    (1668135999, 659914790),
+                    "content 24"
+                ),
+                edit_file_at(
+                    "both-dir/both-subfile",
+                    (1668142965, 797805445),
+                    None::<String>
+                ),
+                add_symlink_at(
+                    "both-dir/miss-subsymlink",
+                    (1668152547, 534614451),
+                    "path/to/25"
+                ),
+                edit_symlink_at(
+                    "both-dir/both-subsymlink",
+                    (1668180274, 853466233),
+                    None::<String>
+                ),
+                add_dir_at("both-dir/miss-subdir"),
+                add_file_at(
+                    "both-dir/miss-subdir/subsubfile",
+                    (1668291079, 678179687),
+                    "content 26"
+                ),
+                add_symlink_at(
+                    "both-dir/miss-subdir/subsubsymlink",
+                    (1668330452, 223848021),
+                    "path/to/27"
+                ),
+                add_dir_at("both-dir/miss-subdir/subsubdir"),
+                edit_dir_at("both-dir/miss-subdir/subsubdir", (1668368203, 10780309)),
+                edit_dir_at("both-dir/miss-subdir", (1668458383, 978304854)),
+                add_file_at(
+                    "both-dir/both-subdir/miss-subsubfile",
+                    (1668509459, 862724084),
+                    "content 28"
+                ),
+                edit_file_at(
+                    "both-dir/both-subdir/both-subsubfile",
+                    (1668544464, 706471816),
+                    None::<String>
+                ),
+                add_symlink_at(
+                    "both-dir/both-subdir/miss-subsubsymlink",
+                    (1668619831, 556739023),
+                    "path/to/29"
+                ),
+                edit_symlink_at(
+                    "both-dir/both-subdir/both-subsubsymlink",
+                    (1668650419, 227402875),
+                    None::<String>
+                ),
+                add_dir_at("both-dir/both-subdir/miss-subsubdir"),
+                edit_dir_at(
+                    "both-dir/both-subdir/miss-subsubdir",
+                    (1668743388, 316319405)
+                ),
+                edit_dir_at(
+                    "both-dir/both-subdir/both-subsubdir",
+                    (1668758218, 914715759)
+                ),
+                edit_dir_at("both-dir/both-subdir", (1668833003, 271190518)),
+                edit_dir_at("both-dir", (1668876296, 362301779))
+            ])
+        );
     }
 
+    #[test]
+    fn test_add_tree_actions_incompatible_files() {
+        let loc_tree = FSTree::gen_from(|t| {
+            t.add_file("file", (1667317389, 591254846), "content 1");
+        });
+        let miss_tree = FSTree::gen_from(|t| {
+            t.add_file("file", (1667371999, 105275068), "content 2");
+        });
+        assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
+
+        let loc_tree = FSTree::gen_from(|t| {
+            t.add_dir("dir", (1667388032, 851120567), |t| {
+                t.add_file("file", (1667379354, 670238243), "content 1");
+            })
+        });
+        let miss_tree = FSTree::gen_from(|t| {
+            t.add_dir("dir", (1667436647, 747771086), |t| {
+                t.add_file("file", (1667397348, 246346603), "content 2");
+            })
+        });
+        assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
+
+        let loc_tree = FSTree::gen_from(|t| {
+            t.add_dir("dir", (1667561496, 117629802), |t| {
+                t.add_dir("subdir", (1667474682, 640275839), |t| {
+                    t.add_file("file", (1667468050, 995570173), "content 1");
+                });
+            })
+        });
+        let miss_tree = FSTree::gen_from(|t| {
+            t.add_dir("dir", (1667846654, 36544421), |t| {
+                t.add_dir("subdir", (1667796732, 450055995), |t| {
+                    t.add_file("file", (1667796104, 208959501), "content 2");
+                });
+            })
+        });
+        assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
+    }
+
+    #[test]
+    fn test_add_tree_actions_incompatible_symlinks() {
+        let loc_tree = FSTree::gen_from(|t| {
+            t.add_symlink("symlink", (1667878697, 159485180), "some/path/1");
+        });
+        let miss_tree = FSTree::gen_from(|t| {
+            t.add_symlink("symlink", (1667944404, 882227232), "some/path/2");
+        });
+        assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
+
+        let loc_tree = FSTree::gen_from(|t| {
+            t.add_dir("dir", (1668123900, 611195248), |t| {
+                t.add_symlink("symlink", (1668034380, 842232587), "some/path/1");
+            });
+        });
+        let miss_tree = FSTree::gen_from(|t| {
+            t.add_dir("dir", (1668171604, 892383389), |t| {
+                t.add_symlink("symlink", (1668161075, 810573263), "some/path/2");
+            });
+        });
+        assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
+
+        let loc_tree = FSTree::gen_from(|t| {
+            t.add_dir("dir", (1668294682, 959268366), |t| {
+                t.add_dir("subdir", (1668269796, 368947589), |t| {
+                    t.add_symlink("symlink", (1668211342, 57892937), "some/path/1");
+                });
+            });
+        });
+        let miss_tree = FSTree::gen_from(|t| {
+            t.add_dir("dir", (1668481091, 875126077), |t| {
+                t.add_dir("subdir", (1668411639, 562698339), |t| {
+                    t.add_symlink("symlink", (1668389605, 240974274), "some/path/2");
+                });
+            });
+        });
+        assert!(add_tree_actions(&loc_tree, &miss_tree).is_err());
+    }
+
+    #[test]
+    fn test_add_tree_actions_incompatible_objects() {
+        todo!()
+    }
+
+    #[test]
     fn test_get_actions() {
         let original_tree = FSTree::gen_from(|t| {
             t.add_file("untouched-file", (1664618719, 438929376), "content 0");
@@ -1195,37 +1308,37 @@ mod tests {
                 t.add_empty_dir("subdir", (1665452633, 478075251));
             });
 
-            // t.add_file("both-removed-file", (1665520430, 728538033), "content 6");
-            // t.add_symlink("both-removed-symlink", (1665560731, 907733727), "path/6");
-            // t.add_dir("both-removed-dir", (1665683917,  17572896), |t| {
-            //     t.add_file("subdir", (1665660604, 837176848), "content 7");
-            //     t.add_symlink("subsymlink", (1665675529, 200000766), "path/7");
-            //     t.add_empty_dir("subdir", (1665681160, 941706584));
-            // });
+            t.add_file("both-removed-file", (1665520430, 728538033), "content 6");
+            t.add_symlink("both-removed-symlink", (1665560731, 907733727), "path/6");
+            t.add_dir("both-removed-dir", (1665683917, 17572896), |t| {
+                t.add_file("subdir", (1665660604, 837176848), "content 7");
+                t.add_symlink("subsymlink", (1665675529, 200000766), "path/7");
+                t.add_empty_dir("subdir", (1665681160, 941706584));
+            });
 
-            // t.add_file("local-edited-file", (1665703624,  19884496), "content 8");
-            // t.add_symlink("local-edited-symlink", (1665747291, 452955016), "path/8");
-            // t.add_dir("local-edited-dir", (1665907509, 919419725), |t| {
-            //     t.add_file("old-file", (1665777913,  98881941), "content 9");
-            //     t.add_symlink("old-symlink", (1665789660, 602339612), "path/9");
-            //     t.add_empty_dir("old-dir", (1665805210, 199579966));
-            // });
+            t.add_file("local-edited-file", (1665703624, 19884496), "content 8");
+            t.add_symlink("local-edited-symlink", (1665747291, 452955016), "path/8");
+            t.add_dir("local-edited-dir", (1665907509, 919419725), |t| {
+                t.add_file("old-file", (1665777913, 98881941), "content 9");
+                t.add_symlink("old-symlink", (1665789660, 602339612), "path/9");
+                t.add_empty_dir("old-dir", (1665805210, 199579966));
+            });
 
-            // t.add_file("missed-edited-file", (1665985641, 303939722), "content 10");
-            // t.add_symlink("missed-edited-symlink", (1666043231,  29982267), "path/10");
-            // t.add_dir("missed-edited-dir", (1666133096, 870109680), |t| {
-            //     t.add_file("old-file", (1666054457, 506859804), "content 11");
-            //     t.add_symlink("old-symlink", (1666062938, 717667145), "path/11");
-            //     t.add_empty_dir("old-dir", (1666069431, 961199155));
-            // });
+            t.add_file("missed-edited-file", (1665985641, 303939722), "content 10");
+            t.add_symlink("missed-edited-symlink", (1666043231, 29982267), "path/10");
+            t.add_dir("missed-edited-dir", (1666133096, 870109680), |t| {
+                t.add_file("old-file", (1666054457, 506859804), "content 11");
+                t.add_symlink("old-symlink", (1666062938, 717667145), "path/11");
+                t.add_empty_dir("old-dir", (1666069431, 961199155));
+            });
 
-            // t.add_file("both-edited-file", (1666180069, 318510756), "content 12");
-            // t.add_symlink("both-edited-symlink", (1666207184, 416305699), "path/12");
-            // t.add_dir("both-edited-dir", (1666241874,     50376), |t| {
-            //     t.add_file("old-file", (1666210815, 195733470), "content 13");
-            //     t.add_symlink("old-symlink", (1666226084, 482584832), "path/13");
-            //     t.add_empty_dir("old-dir", (1666233174, 152383869));
-            // });
+            t.add_file("both-edited-file", (1666180069, 318510756), "content 12");
+            t.add_symlink("both-edited-symlink", (1666207184, 416305699), "path/12");
+            t.add_dir("both-edited-dir", (1666241874, 50376), |t| {
+                t.add_file("old-file", (1666210815, 195733470), "content 13");
+                t.add_symlink("old-symlink", (1666226084, 482584832), "path/13");
+                t.add_empty_dir("old-dir", (1666233174, 152383869));
+            });
         });
 
         let local_tree = FSTree::gen_from(|t| {
@@ -1256,34 +1369,34 @@ mod tests {
             t.add_file("both-added-file", (1667624266, 805140546), "content 16");
             t.add_symlink("both-added-symlink", (1667646560, 638616903), "path/16");
             t.add_dir("both-added-dir", (1667759241, 483275199), |t| {
-                //     t.add_file("subdir", (1667674703, 972416754), "content 17");
-                //     t.add_symlink("subsymlink", (1667715624, 937813631), "path/17");
-                //     t.add_empty_dir("subdir", (1667742157, 769758628));
+                t.add_file("subfile", (1667674703, 972416754), "content 17");
+                t.add_symlink("subsymlink", (1667715624, 937813631), "path/17");
+                t.add_empty_dir("subdir", (1667742157, 769758628));
             });
 
-            // t.add_file("local-edited-file", (1667791301, 659357526), "content 18");
-            // t.add_symlink("local-edited-symlink", (1667856728, 649963249), "path/18");
-            // t.add_dir("local-edited-dir", (1667947748, 931134182), |t| {
-            //     t.add_file("new-file", (1667858496, 748193565), "content 19");
-            //     t.add_symlink("new-symlink", (1667864547, 496070096), "path/19");
-            //     t.add_empty_dir("new-dir", (1667904471, 681801560));
-            // });
+            t.add_file("local-edited-file", (1667791301, 659357526), "content 18");
+            t.add_symlink("local-edited-symlink", (1667856728, 649963249), "path/18");
+            t.add_dir("local-edited-dir", (1667947748, 931134182), |t| {
+                t.add_file("new-file", (1667858496, 748193565), "content 19");
+                t.add_symlink("new-symlink", (1667864547, 496070096), "path/19");
+                t.add_empty_dir("new-dir", (1667904471, 681801560));
+            });
 
-            // t.add_file("missed-edited-file", (1665985641, 303939722), "content 10");
-            // t.add_symlink("missed-edited-symlink", (1666043231,  29982267), "path/10");
-            // t.add_dir("missed-edited-dir", (1666133096, 870109680), |t| {
-            //     t.add_file("old-file", (1666054457, 506859804), "content 11");
-            //     t.add_symlink("old-symlink", (1666062938, 717667145), "path/11");
-            //     t.add_empty_dir("old-dir", (1666069431, 961199155));
-            // });
+            t.add_file("missed-edited-file", (1665985641, 303939722), "content 10");
+            t.add_symlink("missed-edited-symlink", (1666043231, 29982267), "path/10");
+            t.add_dir("missed-edited-dir", (1666133096, 870109680), |t| {
+                t.add_file("old-file", (1666054457, 506859804), "content 11");
+                t.add_symlink("old-symlink", (1666062938, 717667145), "path/11");
+                t.add_empty_dir("old-dir", (1666069431, 961199155));
+            });
 
-            // t.add_file("both-edited-file", (1667951134, 121908092), "content 20");
-            // t.add_symlink("both-edited-symlink", (1667960130, 717688659), "path/20");
-            // t.add_dir("both-edited-dir", (1668024924, 991053051), |t| {
-            //     t.add_file("old-file", (1667982527, 287017570), "content 21");
-            //     t.add_symlink("old-symlink", (1667996499, 627515435), "path/21");
-            //     t.add_empty_dir("old-dir", (1667999054, 767863400));
-            // });
+            t.add_file("both-edited-file", (1667951134, 121908092), "content 20");
+            t.add_symlink("both-edited-symlink", (1667960130, 717688659), "path/20");
+            t.add_dir("both-edited-dir", (1668024924, 991053051), |t| {
+                t.add_file("new-file", (1667982527, 287017570), "content 21");
+                t.add_symlink("new-symlink", (1667996499, 627515435), "path/21");
+                t.add_empty_dir("new-dir", (1667999054, 767863400));
+            });
         });
 
         let missed_tree = FSTree::gen_from(|t| {
@@ -1303,77 +1416,45 @@ mod tests {
                 t.add_empty_dir("subdir", (1665228487, 499369740));
             });
 
-            // t.add_file("missed-added-file", (1667273753, 118529591), "content 22");
-            // t.add_symlink("missed-added-symlink", (1667303887, 464385710), "path/22");
-            // t.add_dir("missed-added-dir", (1667550383, 256444912), |t| {
-            //     t.add_file("subfile", (1667347766, 173666311), "content 23");
-            //     t.add_symlink("subsymlink", (1667404817, 801485522), "path/23");
-            //     t.add_empty_dir("subdir", (1667414556, 329098761));
-            // });
-
-            // t.add_file("both-added-file", (1667624227, 866162085), "content 16");
-            // t.add_symlink("both-added-symlink", (1667652496, 335642493), "path/16");
-            // t.add_dir("both-added-dir", (1667736237, 102383002), |t| {
-            //     t.add_file("subfile", (1667669963, 626480240), "content 17");
-            //     t.add_symlink("subsymlink", (1667681110, 459222078), "path/17");
-            //     t.add_empty_dir("subdir", (1667705278, 500975522));
-            // });
-
-            // t.add_file("local-edited-file", (1665703624,  19884496), "content 8");
-            // t.add_symlink("local-edited-symlink", (1665747291, 452955016), "path/8");
-            // t.add_dir("local-edited-dir", (1665907509, 919419725), |t| {
-            //     t.add_file("old-file", (1665777913,  98881941), "content 9");
-            //     t.add_symlink("old-symlink", (1665789660, 602339612), "path/9");
-            //     t.add_empty_dir("old-dir", (1665805210, 199579966));
-            // });
-
-            // t.add_file("missed-edited-file", (1667758112, 316412296), "content 24");
-            // t.add_symlink("missed-edited-symlink", (1667772261, 321012663), "path/24");
-            // t.add_dir("missed-edited-dir", (1667875880, 241898761), |t| {
-            //     t.add_file("new-file", (1667824433, 642334672), "content 25");
-            //     t.add_symlink("new-symlink", (1667865024, 181735718), "path/25");
-            //     t.add_empty_dir("new-dir", (1667869683, 832041657));
-            // });
-
-            // t.add_file("both-edited-file", (1667959532,  32950243), "content 20");
-            // t.add_symlink("both-edited-symlink", (1667992821,  16282390), "path/20");
-            // t.add_dir("both-edited-dir", (1668038371, 400185901), |t| {
-            //     t.add_file("new-file", (1668116249, 559633309), "content 21");
-            //     t.add_symlink("new-symlink", (1668222709, 666338650), "path/21");
-            //     t.add_empty_dir("new-dir", (1668279333, 510631155));
-            // });
-
-            t.add_file("both-added-file", (1667624266, 805140546), "content 16");
-            t.add_symlink("both-added-symlink", (1667646560, 638616903), "path/16");
-            t.add_dir("both-added-dir", (1667759241, 483275199), |t| {
-                //     t.add_file("subdir", (1667674703, 972416754), "content 17");
-                //     t.add_symlink("subsymlink", (1667715624, 937813631), "path/17");
-                //     t.add_empty_dir("subdir", (1667742157, 769758628));
+            t.add_file("missed-added-file", (1667273753, 118529591), "content 22");
+            t.add_symlink("missed-added-symlink", (1667303887, 464385710), "path/22");
+            t.add_dir("missed-added-dir", (1667550383, 256444912), |t| {
+                t.add_file("subfile", (1667347766, 173666311), "content 23");
+                t.add_symlink("subsymlink", (1667404817, 801485522), "path/23");
+                t.add_empty_dir("subdir", (1667414556, 329098761));
             });
 
-            // t.add_file("local-edited-file", (1667791301, 659357526), "content 18");
-            // t.add_symlink("local-edited-symlink", (1667856728, 649963249), "path/18");
-            // t.add_dir("local-edited-dir", (1667947748, 931134182), |t| {
-            //     t.add_file("new-file", (1667858496, 748193565), "content 19");
-            //     t.add_symlink("new-symlink", (1667864547, 496070096), "path/19");
-            //     t.add_empty_dir("new-dir", (1667904471, 681801560));
-            // });
+            t.add_file("both-added-file", (1667624227, 866162085), "content 16");
+            t.add_symlink("both-added-symlink", (1667652496, 335642493), "path/16");
+            t.add_dir("both-added-dir", (1667736237, 102383002), |t| {
+                t.add_file("subfile", (1667669963, 626480240), "content 17");
+                t.add_symlink("subsymlink", (1667681110, 459222078), "path/17");
+                t.add_empty_dir("subdir", (1667705278, 500975522));
+            });
 
-            // t.add_file("missed-edited-file", (1665985641, 303939722), "content 10");
-            // t.add_symlink("missed-edited-symlink", (1666043231,  29982267), "path/10");
-            // t.add_dir("missed-edited-dir", (1666133096, 870109680), |t| {
-            //     t.add_file("old-file", (1666054457, 506859804), "content 11");
-            //     t.add_symlink("old-symlink", (1666062938, 717667145), "path/11");
-            //     t.add_empty_dir("old-dir", (1666069431, 961199155));
-            // });
+            t.add_file("local-edited-file", (1665703624, 19884496), "content 8");
+            t.add_symlink("local-edited-symlink", (1665747291, 452955016), "path/8");
+            t.add_dir("local-edited-dir", (1665907509, 919419725), |t| {
+                t.add_file("old-file", (1665777913, 98881941), "content 9");
+                t.add_symlink("old-symlink", (1665789660, 602339612), "path/9");
+                t.add_empty_dir("old-dir", (1665805210, 199579966));
+            });
 
-            // t.add_file("both-edited-file", (1667951134, 121908092), "content 20");
-            // t.add_symlink("both-edited-symlink", (1667960130, 717688659), "path/20");
-            // t.add_dir("both-edited-dir", (1668024924, 991053051), |t| {
-            //     t.add_file("old-file", (1667982527, 287017570), "content 21");
-            //     t.add_symlink("old-symlink", (1667996499, 627515435), "path/21");
-            //     t.add_empty_dir("old-dir", (1667999054, 767863400));
-            // });
+            t.add_file("missed-edited-file", (1667758112, 316412296), "content 24");
+            t.add_symlink("missed-edited-symlink", (1667772261, 321012663), "path/24");
+            t.add_dir("missed-edited-dir", (1667875880, 241898761), |t| {
+                t.add_file("new-file", (1667824433, 642334672), "content 25");
+                t.add_symlink("new-symlink", (1667865024, 181735718), "path/25");
+                t.add_empty_dir("new-dir", (1667869683, 832041657));
+            });
+
+            t.add_file("both-edited-file", (1667959532, 32950243), "content 20");
+            t.add_symlink("both-edited-symlink", (1667992821, 16282390), "path/20");
+            t.add_dir("both-edited-dir", (1668038371, 400185901), |t| {
+                t.add_file("new-file", (1668116249, 559633309), "content 21");
+                t.add_symlink("new-symlink", (1668222709, 666338650), "path/21");
+                t.add_empty_dir("new-dir", (1668279333, 510631155));
+            });
         });
 
         let local_delta = get_delta(&original_tree, &local_tree);
@@ -1383,44 +1464,94 @@ mod tests {
             remove_file_at("missed-removed-file"),
             remove_symlink_at("missed-removed-symlink"),
             remove_dir_at("missed-removed-dir"),
-            // add_file_at("missed-added-file", (1667273753, 118529591), "content 22"),
-            // add_symlink_at("missed-added-symlink", (1667303887, 464385710), "path/22"),
-            // add_dir_at("missed-added-dir"),
-            // add_file_at("missed-added-dir/subfile", (1667347766, 173666311), "content 23"),
-            // add_symlink_at("missed-added-dir/subsymlink", (1667404817, 801485522), "path/23"),
-            // add_dir_at("missed-added-dir/subdir"),
-            // edit_dir_at("missed-added-dir/subdir", (1667414556, 329098761)),
-            // edit_dir_at("missed-added-dir", (1667550383, 256444912)),
-
-            // edit_file_at("both-added-file", Some((1667624227, 866162085)), None::<String>),
-            // edit_symlink_at("both-added-symlink", Some((1667652496, 335642493)), None::<String>),
-            // edit_file_at("both-added-dir/subfile", Some((1667669963, 626480240)), None::<String>),
-            // edit_symlink_at("both-added-dir/subsymlink", Some((1667681110, 459222078)), None::<String>),
-            // edit_dir_at("both-added-dir/subdir", (1667705278, 500975522)),
-            // edit_dir_at("both-added-dir", (1667736237, 102383002)),
-
-            // edit_file_at("missed-edited-file", Some((1667758112, 316412296)), Some("content 24")),
-            // edit_symlink_at("missed-edited-symlink", Some((1667772261, 321012663)), Some("path/24")),
-            // remove_file_at("missed-edited-dir/old-file"),
-            // remove_symlink_at("missed-edited-dir/old-symlink"),
-            // remove_dir_at("missed-edited-dir/old-dir"),
-            // add_file_at("missed-edited-dir/new-file", (1667824433, 642334672), "content 25"),
-            // add_symlink_at("missed-edited-dir/new-symlink", (1667865024, 181735718), "path/25"),
-            // add_dir_at("missed-edited-dir/new-dir"),
-            // edit_dir_at("missed-edited-dir/new-dir", (1667869683, 832041657)),
-            // edit_dir_at("missed-edited-dir", (1667875880, 241898761)),
-
-            // edit_file_at("both-edited-file", Some((1667959532,  32950243)), None::<String>),
-            // edit_symlink_at("both-edited-symlink", Some((1667992821,  16282390)), None::<String>),
-            // edit_file_at("both-edited-dir/new-file", Some((1668116249, 559633309)), None::<String>),
-            // edit_symlink_at("both-edited-dir/new-symlink", Some((1668222709, 666338650)), None::<String>),
-            // edit_dir_at("both-edited-dir/new-dir", (1668279333, 510631155)),
-            // edit_dir_at("both-edited-dir", (1668038371, 400185901))
+            add_file_at("missed-added-file", (1667273753, 118529591), "content 22"),
+            add_symlink_at("missed-added-symlink", (1667303887, 464385710), "path/22"),
+            add_dir_at("missed-added-dir"),
+            add_file_at(
+                "missed-added-dir/subfile",
+                (1667347766, 173666311),
+                "content 23",
+            ),
+            add_symlink_at(
+                "missed-added-dir/subsymlink",
+                (1667404817, 801485522),
+                "path/23",
+            ),
+            add_dir_at("missed-added-dir/subdir"),
+            edit_dir_at("missed-added-dir/subdir", (1667414556, 329098761)),
+            edit_dir_at("missed-added-dir", (1667550383, 256444912)),
+            edit_file_at("both-added-file", (1667624227, 866162085), None::<String>),
+            edit_symlink_at(
+                "both-added-symlink",
+                (1667652496, 335642493),
+                None::<String>,
+            ),
+            edit_file_at(
+                "both-added-dir/subfile",
+                (1667669963, 626480240),
+                None::<String>,
+            ),
+            edit_symlink_at(
+                "both-added-dir/subsymlink",
+                (1667681110, 459222078),
+                None::<String>,
+            ),
+            edit_dir_at("both-added-dir/subdir", (1667705278, 500975522)),
+            edit_dir_at("both-added-dir", (1667736237, 102383002)),
+            edit_file_at(
+                "missed-edited-file",
+                (1667758112, 316412296),
+                Some("content 24"),
+            ),
+            edit_symlink_at(
+                "missed-edited-symlink",
+                (1667772261, 321012663),
+                Some("path/24"),
+            ),
+            remove_file_at("missed-edited-dir/old-file"),
+            remove_symlink_at("missed-edited-dir/old-symlink"),
+            remove_dir_at("missed-edited-dir/old-dir"),
+            add_file_at(
+                "missed-edited-dir/new-file",
+                (1667824433, 642334672),
+                "content 25",
+            ),
+            add_symlink_at(
+                "missed-edited-dir/new-symlink",
+                (1667865024, 181735718),
+                "path/25",
+            ),
+            add_dir_at("missed-edited-dir/new-dir"),
+            edit_dir_at("missed-edited-dir/new-dir", (1667869683, 832041657)),
+            edit_dir_at("missed-edited-dir", (1667875880, 241898761)),
+            edit_file_at("both-edited-file", (1667959532, 32950243), None::<String>),
+            edit_symlink_at(
+                "both-edited-symlink",
+                (1667992821, 16282390),
+                None::<String>,
+            ),
+            edit_file_at(
+                "both-edited-dir/new-file",
+                (1668116249, 559633309),
+                None::<String>,
+            ),
+            edit_symlink_at(
+                "both-edited-dir/new-symlink",
+                (1668222709, 666338650),
+                None::<String>,
+            ),
+            edit_dir_at("both-edited-dir/new-dir", (1668279333, 510631155)),
+            edit_dir_at("both-edited-dir", (1668038371, 400185901)),
         ]);
 
         assert_eq!(
             get_actions(&local_delta, &missed_delta).unwrap(),
             supposed_actions
         );
+    }
+
+    #[test]
+    fn test_get_actions_error() {
+        todo!()
     }
 }
