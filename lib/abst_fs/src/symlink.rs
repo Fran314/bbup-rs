@@ -103,7 +103,7 @@ pub fn read_link(path: &AbstPath) -> Result<Endpoint, Error> {
                 .read_line(&mut String::new())
                 .map_err(inerr(errctx("read abstract symlink header")))?;
 
-            let mut os = String::nw();
+            let mut os = String::new();
             reader
                 .read_line(&mut os)
                 .map_err(inerr(errctx("read abstract symlink os")))?;
