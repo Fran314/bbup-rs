@@ -170,6 +170,9 @@ mod tests {
     // in parallel or in random order. This is why the tests for this module are
     // all in one huge function
     fn test() {
+        #[cfg(not(unix))]
+        panic!("this test is meant to be ran on a Unix system");
+
         use std::io::{BufReader, Read, Write};
         let sandbox = "bbup-test-abst_fs-file";
         let path = setup_sandbox(sandbox);

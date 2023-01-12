@@ -103,7 +103,7 @@ pub fn read_link(path: &AbstPath) -> Result<Endpoint, Error> {
                 .read_line(&mut String::new())
                 .map_err(inerr(errctx("read abstract symlink header")))?;
 
-            let mut os = String::new();
+            let mut os = String::nw();
             reader
                 .read_line(&mut os)
                 .map_err(inerr(errctx("read abstract symlink os")))?;
@@ -263,12 +263,7 @@ mod tests {
     // --- --- //
 
     #[test]
-    // While it is not ideal to have one huge test function testing all the
-    // possible behaviours, given the possibility of danger of these tests it is
-    // better to execute them sequencially in a deliberate order rather than
-    // in parallel or in random order. This is why the tests for this module are
-    // all in one huge function
-    fn test() {
+    fn test_trim_newline() {
         let mut text = String::from("no new line");
         trim_newline(&mut text);
         assert_eq!(text, String::from("no new line"));
@@ -288,6 +283,17 @@ mod tests {
         text = String::from("multiline\ntext");
         trim_newline(&mut text);
         assert_eq!(text, String::from("multiline\ntext"));
+    }
+
+    #[test]
+    // While it is not ideal to have one huge test function testing all the
+    // possible behaviours, given the possibility of danger of these tests it is
+    // better to execute them sequencially in a deliberate order rather than
+    // in parallel or in random order. This is why the tests for this module are
+    // all in one huge function
+    fn test() {
+        #[cfg(not(unix))]
+        panic!("this test is meant to be ran on a Unix system");
 
         let sandbox = "bbup-test-abst_fs-symlink";
         let path = setup_sandbox(sandbox);

@@ -248,7 +248,7 @@ mod tests {
     use std::collections::VecDeque;
 
     #[test]
-    fn force_to_string() {
+    fn test_force_to_string() {
         use super::ForceToString;
         use std::ffi::OsStr;
         use std::path::{Path, PathBuf};
@@ -260,12 +260,12 @@ mod tests {
     }
 
     #[test]
-    fn empty() {
+    fn test_empty() {
         assert_eq!(AbstPath(VecDeque::from([])), AbstPath::empty());
     }
 
     #[test]
-    fn single() {
+    fn test_single() {
         assert_eq!(
             AbstPath(VecDeque::from([String::from("test")])),
             AbstPath::single("test")
@@ -279,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn from() {
+    fn test_from() {
         assert_eq!(
             AbstPath(VecDeque::from([
                 String::from("path"),
@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn to_path_buf() {
+    fn test_to_path_buf() {
         use std::path::PathBuf;
         let path = "/home/user/Desktop/something";
         assert_eq!(AbstPath::from(path).to_path_buf(), PathBuf::from(path));
@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn len() {
+    fn test_len() {
         assert_eq!(AbstPath::empty().len(), 0);
         assert_eq!(AbstPath::single("a/b/c/d/e/f").len(), 1);
         assert_eq!(AbstPath::from("a/b/c/d/e/f").len(), 6);
@@ -348,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn is_empty() {
+    fn test_is_empty() {
         assert!(AbstPath::empty().is_empty());
         assert!(AbstPath::from("").is_empty());
 
@@ -357,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn get() {
+    fn test_get() {
         let first = String::from("first");
         let second = String::from("second");
         let third = String::from("third");
@@ -382,7 +382,7 @@ mod tests {
     }
 
     #[test]
-    fn add_first() {
+    fn test_add_first() {
         use std::path::PathBuf;
 
         // add first on middle path
@@ -426,7 +426,7 @@ mod tests {
     }
 
     #[test]
-    fn add_last() {
+    fn test_add_last() {
         use std::path::PathBuf;
 
         let path = "some/path/to/somewhere";
@@ -446,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn strip_first() {
+    fn test_strip_first() {
         use std::path::PathBuf;
 
         let path = "some/path/to/somewhere";
@@ -471,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn strip_last() {
+    fn test_strip_last() {
         use std::path::PathBuf;
 
         let path = "some/path/to/somewhere";
@@ -496,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn append() {
+    fn test_append() {
         use std::path::PathBuf;
 
         let parent = "some/path/to/somewhere";
@@ -527,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn parent() {
+    fn test_parent() {
         let path = "path/to/somewhere";
         let child = "child";
         assert_eq!(
@@ -537,14 +537,14 @@ mod tests {
     }
 
     #[test]
-    fn file_name() {
+    fn test_file_name() {
         let file = "supersecretpassword.txt";
         let path = format!("path/to/somewhere/{file}");
         assert_eq!(AbstPath::from(path).file_name().unwrap().as_str(), file);
     }
 
     #[test]
-    fn extension() {
+    fn test_extension() {
         let path = "path/to/some/file.txt";
         assert_eq!(AbstPath::from(path).extension(), Some("txt"));
 
@@ -559,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn into_iter() {
+    fn test_into_iter() {
         let vec = VecDeque::from([
             String::from("path"),
             String::from("to"),
@@ -581,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn into_iter_ref() {
+    fn test_into_iter_ref() {
         let vec = VecDeque::from([
             String::from("path"),
             String::from("to"),
@@ -603,7 +603,7 @@ mod tests {
     }
 
     #[test]
-    fn to_string() {
+    fn test_to_string() {
         let path = "/home/user/Desktop/something";
         assert_eq!(AbstPath::from(path).to_string().as_str(), path);
 
@@ -622,9 +622,28 @@ mod tests {
     }
 
     #[test]
-    fn exists_and_type() {
+    fn test_exists_and_type() {
+        #[cfg(not(unix))]
+        panic!("this test is meant to be ran on a Unix system");
+
         use super::{ObjectType, ABST_OBJ_HEADER};
         use std::path::PathBuf;
+
+        // --- SAFETY MEASURES --- //
+        // Testing this crate is dangerous as an unexpected behaviour could
+        // potentially damage the machine it's ran on. To fix this we uso two safety
+        // measures: we create object and work only inside the `/tmp` folder, and
+        // we make sure that the paths (AbstPath) that we use actually mean what we
+        // think they mean, to avoid situations where we think we're deleting a file
+        // inside /tmp but actually we're deleting a home directory.
+        //
+        // The purpose of `safe_add_last` is to append components to paths while
+        // checking that they still mean what we think they mean.
+        //
+        // `setup_sandbox` and `cleanup_sandbox` create and destroy the sandbox
+        // environments in which the testing will happen. The creation happens only
+        // after having checked that the path didn't get corrupted while being
+        // transformed into an AbstPath
         trait SafeAdd {
             fn safe_add_last<S: std::string::ToString>(&self, suffix: S) -> (AbstPath, PathBuf);
         }
@@ -638,13 +657,23 @@ mod tests {
                 (new_abst, new_pb)
             }
         }
+        fn setup_sandbox(path: impl std::fmt::Display) -> (AbstPath, PathBuf) {
+            let path_bf = PathBuf::from(format!("/tmp/{path}"));
+            assert!(!path_bf.exists());
+            std::fs::create_dir(&path_bf).unwrap();
 
-        let path_bf = PathBuf::from("/tmp/bbup-test-abst_fs-path-exists");
-        let path = (AbstPath::from(&path_bf), path_bf);
-        //	make sure the path means actually what I think it mean
-        assert_eq!(path.0.to_path_buf(), path.1);
-        assert!(!path.1.exists());
-        std::fs::create_dir(&path.1).unwrap();
+            let path = (AbstPath::from(&path_bf), path_bf);
+            assert_eq!(path.0.to_path_buf(), path.1); // make sure the path means actually what I think it mean
+            path
+        }
+        fn cleanup_sandbox(path: impl std::fmt::Display) {
+            let path_bf = PathBuf::from(format!("/tmp/{path}"));
+            std::fs::remove_dir_all(&path_bf).unwrap();
+        }
+        // --- --- //
+
+        let sandbox = "bbup-test-abst_fs-path-exists";
+        let path = setup_sandbox(sandbox);
 
         let result = std::panic::catch_unwind(|| {
             let file = path.safe_add_last("file.txt");
@@ -680,13 +709,13 @@ mod tests {
             assert_eq!(abst_symlink.0.object_type(), Some(ObjectType::SymLink));
         });
 
-        std::fs::remove_dir_all(&path.1).unwrap();
+        cleanup_sandbox(sandbox);
 
         assert!(result.is_ok())
     }
 
     #[test]
-    fn as_bytes() {
+    fn test_as_bytes() {
         assert_ne!(
             Endpoint::Unix(String::from("some/path/to/somewhere")).as_bytes(),
             Endpoint::Unix(String::from("path/to/somewhere/else")).as_bytes()
