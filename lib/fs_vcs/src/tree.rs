@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(
             FSNode::empty_dir((1664996516, 439383420)),
             FSNode::Dir(
-                Mtime::from(1664717709, 926293437),
+                Mtime::from(1664996516, 439383420),
                 hash_tree(&FSTree::empty()),
                 FSTree::gen_from(|t| { t.add_file("file", (1664840147, 706805147), "content") })
             ),

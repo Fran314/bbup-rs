@@ -6,22 +6,6 @@ use super::{Delta, DeltaNode, FSNode, FSTree};
 
 use thiserror::Error;
 
-// #[allow(clippy::large_enum_variant)]
-// #[derive(PartialEq, Debug)]
-// pub enum ConflictNode {
-//     Branch(Conflicts),
-//     Leaf(DeltaNode, DeltaNode),
-// }
-//
-// #[derive(PartialEq, Debug)]
-// pub struct Conflicts(pub HashMap<String, ConflictNode>);
-// impl Conflicts {
-//     pub fn empty() -> Conflicts {
-//         let conflicts = HashMap::new();
-//         Conflicts(conflicts)
-//     }
-// }
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     AddDir,
@@ -91,35 +75,6 @@ impl<'a> IntoIterator for &'a Actions {
     }
 }
 
-// #[derive(Error, Debug, PartialEq)]
-// pub enum ActionErr {
-//     #[error(
-//         "File System Tree Delta Error: unable to get actions from pair of deltas.\nConflict at path:"
-//     )]
-//     UnshakenDelta(AbstPath, String, DeltaNode),
-//     #[error(
-//         "File System Tree Delta Error: unable to get actions from pair of deltas.\nConflict at path:"
-//     )]
-//     Conflict(AbstPath, String),
-// }
-//
-// fn unshkdelta(path: AbstPath, err: impl ToString, node: DeltaNode) -> ActionErr {
-//     ActionErr::UnshakenDelta(path, err.to_string(), node)
-// }
-// fn conflict(path: AbstPath, err: impl ToString) -> ActionErr {
-//     ActionErr::Conflict(path, err.to_string())
-// }
-// fn push_acterr(parent: impl ToString) -> impl Fn(ActionErr) -> ActionErr {
-//     move |acterr| match acterr {
-//         ActionErr::UnshakenDelta(path, err, node) => {
-//             ActionErr::UnshakenDelta(path.add_first(parent.to_string()), err, node)
-//         }
-//         ActionErr::Conflict(path, err) => {
-//             ActionErr::Conflict(path.add_first(parent.to_string()), err)
-//         }
-//     }
-// }
-
 #[derive(Error, Debug, PartialEq)]
 #[error(
     "File System Tree Delta Error: unable to convert delta to actions.\nError at path: {0}\nError: {1}"
@@ -143,18 +98,6 @@ fn getacterr(path: AbstPath, err: impl ToString) -> GetActErr {
 fn push_getacterr(parent: impl ToString) -> impl Fn(GetActErr) -> GetActErr {
     move |GetActErr(path, err)| GetActErr(path.add_first(parent.to_string()), err)
 }
-
-// #[derive(Error, Debug, PartialEq)]
-// #[error(
-//     "File System Tree Delta Error: unable to get actions from pair of deltas.\nConflict at path: {0}\nError: {1}"
-// )]
-// pub struct ConvToActionError(AbstPath, String);
-// fn convtoacterr(path: AbstPath, err: impl ToString) -> ConvToActionError {
-//     ConvToActionError(path, err.to_string())
-// }
-// fn push_converr(parent: impl ToString) -> impl Fn(ConvToActionError) -> ConvToActionError {
-//     move |ConvToActionError(path, err)| ConvToActionError(path.add_first(parent.to_string()), err)
-// }
 
 impl FSNode {
     fn to_add_actions(&self) -> Actions {
@@ -408,7 +351,7 @@ fn add_tree_actions(
 /// This function assumes that both deltas have the same assumptions on the
 /// previous state, ie: if they both have a node (`loc_pre -> loc_post`) &
 /// (`miss_pre -> miss_post`), it does not check if `loc_pre == miss_pre`, as
-/// this check will be done later when trying to apply the `necessary_delta`.
+/// this check will be done later when trying to apply the `missed_delta`.
 ///
 /// This function assumes to be working on shaken deltas and will not work as
 /// expected otherwise. It does not check if the deltas are shaken for sake of
@@ -524,7 +467,8 @@ pub fn get_actions(Delta(local): &Delta, Delta(missed): &Delta) -> Result<Action
 #[cfg(test)]
 mod tests {
     use super::{
-        super::get_delta, add_tree_actions, get_actions, Action, Actions, DeltaNode, FSNode, FSTree,
+        super::get_delta, add_tree_actions, get_actions, Action, Actions, Delta, DeltaNode, FSNode,
+        FSTree,
     };
     use abst_fs::{AbstPath, Endpoint, Mtime};
     use core::panic;
@@ -690,7 +634,7 @@ mod tests {
     }
 
     #[test]
-    fn test_delta_remove_to_actions() {
+    fn test_delta_remove_actions() {
         assert_eq!(
             DeltaNode::leaf(Some(FSNode::file((1665061768, 321204439), "test")), None)
                 .to_actions()
@@ -870,7 +814,115 @@ mod tests {
 
     #[test]
     fn test_delta_mixed_actions() {
-        todo!()
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::file((1664807099, 335977847), "content")),
+                Some(FSNode::symlink(
+                    (1664809667, 879274895),
+                    "path/to/somewhere"
+                ))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![
+                remove_file_at(""),
+                add_symlink_at("", (1664809667, 879274895), "path/to/somewhere")
+            ])
+        );
+
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::symlink(
+                    (1664825242, 747002925),
+                    "path/to/somewhere"
+                )),
+                Some(FSNode::file((1664957485, 518696027), "content"))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![
+                remove_symlink_at(""),
+                add_file_at("", (1664957485, 518696027), "content")
+            ])
+        );
+
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::file((1664957563, 520202425), "content 0")),
+                Some(FSNode::dir((1665140704, 387057676), |t| {
+                    t.add_file("file", (1665095557, 417992966), "content 1");
+                    t.add_symlink("symlink", (1665109107, 135095944), "path/to/1");
+                    t.add_empty_dir("dir", (1665117581, 211417004));
+                }))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![
+                remove_file_at(""),
+                add_dir_at(""),
+                add_file_at("file", (1665095557, 417992966), "content 1"),
+                add_symlink_at("symlink", (1665109107, 135095944), "path/to/1"),
+                add_dir_at("dir"),
+                edit_dir_at("dir", (1665117581, 211417004)),
+                edit_dir_at("", (1665140704, 387057676))
+            ])
+        );
+
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::dir((1665373712, 119785857), |t| {
+                    t.add_file("file", (1665302765, 574647081), "content 0");
+                    t.add_symlink("symlink", (1665364925, 204697891), "path/to/0");
+                    t.add_empty_dir("dir", (1665371147, 119546766));
+                })),
+                Some(FSNode::file((1665375981, 162851756), "content 1"))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![
+                remove_dir_at(""),
+                add_file_at("", (1665375981, 162851756), "content 1")
+            ])
+        );
+
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::symlink((1665379776, 876227613), "path/to/0")),
+                Some(FSNode::dir((1665529202, 763408268), |t| {
+                    t.add_file("file", (1665476739, 612391171), "content 1");
+                    t.add_symlink("symlink", (1665491861, 186840443), "path/to/1");
+                    t.add_empty_dir("dir", (1665523158, 944955427));
+                }))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![
+                remove_symlink_at(""),
+                add_dir_at(""),
+                add_file_at("file", (1665476739, 612391171), "content 1"),
+                add_symlink_at("symlink", (1665491861, 186840443), "path/to/1"),
+                add_dir_at("dir"),
+                edit_dir_at("dir", (1665523158, 944955427)),
+                edit_dir_at("", (1665529202, 763408268))
+            ])
+        );
+
+        assert_eq!(
+            DeltaNode::leaf(
+                Some(FSNode::dir((1665642349, 362913905), |t| {
+                    t.add_file("file", (1665541722, 958679428), "content 0");
+                    t.add_symlink("symlink", (1665568082, 508646130), "path/to/0");
+                    t.add_empty_dir("dir", (1665602418, 612036588));
+                })),
+                Some(FSNode::symlink((1665679053, 88025572), "path/to/1"))
+            )
+            .to_actions()
+            .unwrap(),
+            Actions(vec![
+                remove_dir_at(""),
+                add_symlink_at("", (1665679053, 88025572), "path/to/1")
+            ])
+        );
     }
 
     #[test]
@@ -980,12 +1032,10 @@ mod tests {
                 add_dir_at("added-dir/some-dir"),
                 edit_dir_at("added-dir/some-dir", (1667696709, 72135293)),
                 edit_dir_at("added-dir", (1667729035, 126919897)),
-                /* */
                 remove_file_at("removed-file"),
                 remove_symlink_at("removed-symlink"),
                 remove_dir_at("removed-dir"),
                 edit_file_at("edited-file", (1667850556, 457134510), Some("content 5")),
-                /* */
                 edit_symlink_at("edited-symlink", (1667851286, 360603025), Some("path/to/5")),
                 remove_file_at("edited-dir/old-file"),
                 remove_symlink_at("edited-dir/old-symlink"),
@@ -1010,24 +1060,38 @@ mod tests {
 
         assert!(DeltaNode::Leaf(
             Some(FSNode::dir((1667282683, 412810936), |t| {
-                t.add_file("file", (1667260690, 931913056), "1234");
+                t.add_file("file", (1667260690, 931913056), "content 0");
             })),
             Some(FSNode::dir((1667459385, 384123107), |t| {
-                t.add_file("file", (1667371152, 845893374), "5678")
+                t.add_file("file", (1667371152, 845893374), "content 1")
             })),
         )
         .to_actions()
         .is_err());
+
         assert!(DeltaNode::Leaf(
-            Some(FSNode::file((1667674660, 403784885), "ciao")),
-            Some(FSNode::file((1667674660, 403784885), "ciao")),
+            Some(FSNode::file((1667674660, 403784885), "content")),
+            Some(FSNode::file((1667674660, 403784885), "content")),
         )
         .to_actions()
         .is_err());
+
         assert!(DeltaNode::Leaf(
-            Some(FSNode::symlink((1667717248, 635683372), "this/is/a/path")),
-            Some(FSNode::symlink((1667717248, 635683372), "this/is/a/path")),
+            Some(FSNode::symlink(
+                (1667717248, 635683372),
+                "path/to/somewhere"
+            )),
+            Some(FSNode::symlink(
+                (1667717248, 635683372),
+                "path/to/somewhere"
+            )),
         )
+        .to_actions()
+        .is_err());
+
+        assert!(Delta::gen_from(|d| {
+            d.add_leaf("non-existing-object", None, None);
+        })
         .to_actions()
         .is_err());
     }
@@ -1278,7 +1342,35 @@ mod tests {
 
     #[test]
     fn test_add_tree_actions_incompatible_objects() {
-        todo!()
+        let incompatible_pairs = vec![
+            (
+                FSTree::gen_from(|t| {
+                    t.add_file("object", (1664589312, 364269268), "content/that/is/path");
+                }),
+                FSTree::gen_from(|t| {
+                    t.add_symlink("object", (1664589312, 364269268), "content/that/is/path");
+                }),
+            ),
+            (
+                FSTree::gen_from(|t| {
+                    t.add_file("object", (1664656449, 979169705), "content");
+                }),
+                FSTree::gen_from(|t| {
+                    t.add_empty_dir("object", (1664656449, 979169705));
+                }),
+            ),
+            (
+                FSTree::gen_from(|t| {
+                    t.add_symlink("object", (1664673363, 54893229), "path/to/somewhere");
+                }),
+                FSTree::gen_from(|t| t.add_empty_dir("object", (1664673363, 54893229))),
+            ),
+        ];
+
+        for (tree_a, tree_b) in incompatible_pairs {
+            assert!(add_tree_actions(&tree_a, &tree_b).is_err());
+            assert!(add_tree_actions(&tree_b, &tree_a).is_err());
+        }
     }
 
     #[test]
@@ -1551,7 +1643,461 @@ mod tests {
     }
 
     #[test]
-    fn test_get_actions_error() {
-        todo!()
+    fn test_get_actions_incompatible_add() {
+        // incompatible file with different contents added
+        let local_delta = Delta::gen_from(|d| {
+            d.add_leaf(
+                "added-file",
+                None,
+                Some(FSNode::file((1664603545, 885795420), "content 0")),
+            );
+        });
+        let missed_delta = Delta::gen_from(|d| {
+            d.add_leaf(
+                "added-file",
+                None,
+                Some(FSNode::file((1664649428, 822180989), "content 1")),
+            );
+        });
+        assert!(get_actions(&local_delta, &missed_delta).is_err());
+
+        // incompatible symlink with different endpoints added
+        let local_delta = Delta::gen_from(|d| {
+            d.add_leaf(
+                "added-symlink",
+                None,
+                Some(FSNode::symlink((1664683403, 241602514), "path/to/0")),
+            );
+        });
+        let missed_delta = Delta::gen_from(|d| {
+            d.add_leaf(
+                "added-symlink",
+                None,
+                Some(FSNode::symlink((1664690880, 473009283), "path/to/1")),
+            );
+        });
+        assert!(get_actions(&local_delta, &missed_delta).is_err());
+
+        // incompatible dir with incompatible subtrees added
+        let local_delta = Delta::gen_from(|d| {
+            d.add_leaf(
+                "added-dir",
+                None,
+                Some(FSNode::dir((1664736282, 915421406), |t| {
+                    t.add_file("file", (1664708191, 552506218), "content 0")
+                })),
+            );
+        });
+        let missed_delta = Delta::gen_from(|d| {
+            d.add_leaf(
+                "added-dir",
+                None,
+                Some(FSNode::dir((1664788583, 147174387), |t| {
+                    t.add_file("file", (1664753867, 965442226), "content 1")
+                })),
+            );
+        });
+        assert!(get_actions(&local_delta, &missed_delta).is_err());
+    }
+
+    #[test]
+    fn test_get_actions_incompatible_removed_edited() {
+        // file removed in one delta and edited in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "file",
+                Some(FSNode::file((1665063299, 285607992), "content 0")),
+                None,
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "file",
+                Some(FSNode::file((1665063299, 285607992), "content 0")),
+                Some(FSNode::file((1665090622, 597598751), "content 1")),
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+
+        // symlink removed in one delta and edited in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "symlink",
+                Some(FSNode::symlink((1665196940, 119162612), "path/to/0")),
+                None,
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "symlink",
+                Some(FSNode::symlink((1665196940, 119162612), "path/to/0")),
+                Some(FSNode::symlink((1665223273, 760578799), "path/to/1")),
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+
+        // directory removed in one delta and edited in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "dir",
+                Some(FSNode::dir((1665331950, 471877562), |t| {
+                    t.add_file("file", (1665263460, 590921524), "content 0");
+                    t.add_symlink("old-symlink", (1665301507, 187973255), "path/to/0");
+                })),
+                None,
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_branch(
+                "dir",
+                ((1665331950, 471877562), (1665402229, 55735766)),
+                |d| {
+                    d.add_leaf(
+                        "file",
+                        Some(FSNode::file((1665263460, 590921524), "content 0")),
+                        Some(FSNode::file((1665363002, 677215165), "content 1")),
+                    );
+                    d.add_leaf(
+                        "old-symlink",
+                        Some(FSNode::symlink((1665301507, 187973255), "path/to/0")),
+                        None,
+                    );
+                    d.add_leaf(
+                        "new-symlink",
+                        None,
+                        Some(FSNode::symlink((1665394458, 120284), "path/to/1")),
+                    );
+                },
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+    }
+
+    #[test]
+    fn test_get_actions_incompatible_removed_transmuted() {
+        // file removed in one delta and transmuted to symlink in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::file((1665478902, 93299644), "content")),
+                None,
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::file((1665478902, 93299644), "content")),
+                Some(FSNode::symlink(
+                    (1665514202, 772612222),
+                    "path/to/somewhere",
+                )),
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+
+        // file removed in one delta and transmuted to dir in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::file((1665561302, 495615752), "content 0")),
+                None,
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::file((1665561302, 495615752), "content 0")),
+                Some(FSNode::dir((1665651032, 835157963), |t| {
+                    t.add_file("file", (1665580596, 827336505), "content 1");
+                    t.add_symlink("symlink", (1665602521, 458444935), "path/to/1");
+                    t.add_empty_dir("dir", (1665626429, 78139615));
+                })),
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+
+        // symlink removed in one delta and transmuted to file in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::symlink(
+                    (1665657237, 433270969),
+                    "path/to/somewhere",
+                )),
+                None,
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::symlink(
+                    (1665657237, 433270969),
+                    "path/to/somewhere",
+                )),
+                Some(FSNode::file((1665673849, 235576552), "content")),
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+
+        // symlink removed in one delta and transmuted to dir in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::symlink((1665702117, 763912389), "path/to/0")),
+                None,
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::symlink((1665702117, 763912389), "path/to/0")),
+                Some(FSNode::dir((1665816272, 227262844), |t| {
+                    t.add_file("file", (1665719233, 186279280), "content 1");
+                    t.add_symlink("symlink", (1665745566, 924656978), "path/to/1");
+                    t.add_empty_dir("dir", (1665785494, 838031762));
+                })),
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+
+        // dir removed in one delta and transmuted to file in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::dir((1665918603, 271333372), |t| {
+                    t.add_file("file", (1665839770, 938267177), "content 1");
+                    t.add_symlink("symlink", (1665867159, 374669586), "path/to/1");
+                    t.add_empty_dir("dir", (1665910959, 156274683));
+                })),
+                None,
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::dir((1665918603, 271333372), |t| {
+                    t.add_file("file", (1665839770, 938267177), "content 1");
+                    t.add_symlink("symlink", (1665867159, 374669586), "path/to/1");
+                    t.add_empty_dir("dir", (1665910959, 156274683));
+                })),
+                Some(FSNode::file((1665928508, 128117502), "content")),
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+
+        // dir removed in one delta and transmuted to symlink in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::dir((1666249983, 748990368), |t| {
+                    t.add_file("file", (1665942771, 544580287), "content 1");
+                    t.add_symlink("symlink", (1665948940, 30221650), "path/to/1");
+                    t.add_empty_dir("dir", (1666228141, 634730726));
+                })),
+                None,
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::dir((1666249983, 748990368), |t| {
+                    t.add_file("file", (1665942771, 544580287), "content 1");
+                    t.add_symlink("symlink", (1665948940, 30221650), "path/to/1");
+                    t.add_empty_dir("dir", (1666228141, 634730726));
+                })),
+                Some(FSNode::symlink(
+                    (1666289673, 190610684),
+                    "path/to/somewhere",
+                )),
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+    }
+
+    #[test]
+    fn test_get_actions_incompatible_edited_transmuted() {
+        // file edited in one delta and transmuted to symlink in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::file((1666308496, 7434939), "content 0")),
+                Some(FSNode::file((1666325737, 819621176), "content 1")),
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::file((1666308496, 7434939), "content 0")),
+                Some(FSNode::symlink((1666343124, 606726773), "path/to/1")),
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+
+        // file edited in one delta and transmuted to dir in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::file((1666390089, 911974343), "content 0")),
+                Some(FSNode::file((1666427602, 476224360), "content 1")),
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::file((1666390089, 911974343), "content 0")),
+                Some(FSNode::dir((1666514773, 515712216), |t| {
+                    t.add_file("file", (1666477568, 32287767), "contet 2");
+                    t.add_symlink("symlink", (1666483069, 736884486), "path/to/2");
+                    t.add_empty_dir("dir", (1666502790, 842881410));
+                })),
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+
+        // symlink edited in one delta and transmuted to file in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::symlink((1666561667, 807783399), "path/to/0")),
+                Some(FSNode::symlink((1666609819, 158459424), "path/to/1")),
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::symlink((1666561667, 807783399), "path/to/0")),
+                Some(FSNode::file((1666617070, 849204390), "content 1")),
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+
+        // symlink edited in one delta and transmuted to dir in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::symlink((1666658977, 599996092), "path/to/0")),
+                Some(FSNode::symlink((1666667185, 127792820), "path/to/1")),
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::symlink((1666658977, 599996092), "path/to/0")),
+                Some(FSNode::dir((1666802421, 937157190), |t| {
+                    t.add_file("file", (1666710573, 139243791), "content 2");
+                    t.add_symlink("symlink", (1666758818, 22536578), "path/to/2");
+                    t.add_empty_dir("dir", (1666790954, 71823044));
+                })),
+            );
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+
+        // dir edited in one delta and transmute to file in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_branch(
+                "object",
+                ((1666874148, 320740614), (1666914869, 444762343)),
+                |d| {
+                    d.add_leaf(
+                        "file",
+                        Some(FSNode::file((1666831953, 370167403), "content 0")),
+                        None,
+                    );
+                },
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::dir((1666874148, 320740614), |t| {
+                    t.add_file("file", (1666831953, 370167403), "content 0");
+                })),
+                Some(FSNode::file((1666930691, 687284154), "content 1")),
+            )
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+
+        // dir edited in one delta and transmute to symlink in the other
+        let delta_a = Delta::gen_from(|d| {
+            d.add_branch(
+                "object",
+                ((1666968301, 117225472), (1667012757, 884956853)),
+                |d| {
+                    d.add_leaf(
+                        "file",
+                        Some(FSNode::file((1666939577, 238422267), "content 0")),
+                        None,
+                    );
+                },
+            );
+        });
+        let delta_b = Delta::gen_from(|d| {
+            d.add_leaf(
+                "object",
+                Some(FSNode::dir((1666968301, 117225472), |t| {
+                    t.add_file("file", (1666939577, 238422267), "content 0");
+                })),
+                Some(FSNode::symlink((1667027833, 689918590), "path/to/1")),
+            )
+        });
+        assert!(get_actions(&delta_a, &delta_b).is_err());
+        assert!(get_actions(&delta_b, &delta_a).is_err());
+    }
+
+    #[test]
+    fn test_get_actions_incompatible_other() {
+        // missed delta has locally-unchanged object but is not shaken
+        let local_delta = Delta::empty();
+        let missed_delta = Delta::gen_from(|d| {
+            d.add_leaf(
+                "unshaken-leaf",
+                Some(FSNode::file((1664597221, 990157477), "content")),
+                Some(FSNode::file((1664597221, 990157477), "content")),
+            );
+        });
+        assert!(get_actions(&local_delta, &missed_delta).is_err());
+
+        // nested error
+        let local_delta = Delta::gen_from(|d| {
+            d.add_branch(
+                "edited-dir",
+                ((1664925082, 715961036), (1664973763, 621623329)),
+                |d| {
+                    d.add_leaf(
+                        "added-file",
+                        None,
+                        Some(FSNode::file((1664942343, 812950714), "content 0")),
+                    );
+                },
+            );
+        });
+        let missed_delta = Delta::gen_from(|d| {
+            d.add_branch(
+                "edited-dir",
+                ((1664925082, 715961036), (1665046376, 720283471)),
+                |d| {
+                    d.add_leaf(
+                        "added-file",
+                        None,
+                        Some(FSNode::file((1665014258, 471772924), "content 1")),
+                    )
+                },
+            );
+        });
+        assert!(get_actions(&local_delta, &missed_delta).is_err());
     }
 }

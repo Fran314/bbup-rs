@@ -58,21 +58,13 @@ mod tests {
     use abst_fs::AbstPath;
     use regex::Regex;
 
-    #[test]
-    fn test() {
-        error();
-
-        from();
-
-        join();
-
-        should_exclude();
-    }
-
     fn assert_lists_eq(
         ExcludeList(list_a): ExcludeList,
         ExcludeList(list_b): ExcludeList,
     ) -> Result<(), Box<dyn std::any::Any + Send>> {
+        // We wrap the assert in a catch_unwind and return a result so that
+        // later we can be sure on which unwrapped call of this function failed
+        // the assertion
         std::panic::catch_unwind(|| {
             assert_eq!(
                 list_a
@@ -87,7 +79,8 @@ mod tests {
         })
     }
 
-    fn error() {
+    #[test]
+    fn test_error() {
         let invalid_rule = "BOOM\\";
         let err = Regex::new(invalid_rule).unwrap_err();
         assert_eq!(
@@ -99,7 +92,8 @@ mod tests {
         )
     }
 
-    fn from() {
+    #[test]
+    fn test_from() {
         assert_lists_eq(
             ExcludeList::from(&vec![]).unwrap(),
             ExcludeList(vec![Regex::new("\\.bbup/").unwrap()]),
@@ -123,7 +117,8 @@ mod tests {
         .unwrap();
     }
 
-    fn join() {
+    #[test]
+    fn test_join() {
         assert_lists_eq(
             ExcludeList::from(&vec![String::from("[0-9]?[0-9]:[0-9][0-9]")])
                 .unwrap()
@@ -142,7 +137,8 @@ mod tests {
         .unwrap();
     }
 
-    fn should_exclude() {
+    #[test]
+    fn test_should_exclude() {
         let exclude_list = ExcludeList::from(&vec![
             String::from("some-directory/"),
             String::from("some-name"),
