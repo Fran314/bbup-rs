@@ -24,8 +24,9 @@ pub struct Actions(Vec<(AbstPath, Action)>);
 impl PartialEq for Actions {
     fn eq(&self, other: &Self) -> bool {
         self.0.len() == other.0.len()
-            && (&self.0).iter().all(|(path, action)| {
-                (&other.0)
+            && self.0.iter().all(|(path, action)| {
+                other
+                    .0
                     .iter()
                     .any(|(other_path, other_action)| path == other_path && action == other_action)
             })

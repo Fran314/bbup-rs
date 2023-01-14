@@ -98,17 +98,17 @@ async fn push(
     .context("could not query files to apply push")?;
 
     // TODO if fail, send error message to the server
-    let rebased_delta = local_delta.rebase_from_tree_at_endpoint(&state.archive_tree, &endpoint)?;
+    let rebased_delta = local_delta.rebase_from_tree_at_endpoint(&state.archive_tree, endpoint)?;
     let mut updated_archive_tree = state.archive_tree.clone();
     updated_archive_tree.apply_delta(&rebased_delta)?;
 
     for (path, action) in &actions {
-        let to_path = config.archive_root.append(endpoint).append(&path);
+        let to_path = config.archive_root.append(endpoint).append(path);
         let from_temp_path = config
             .archive_root
             .add_last(".bbup")
             .add_last("temp")
-            .append(&path);
+            .append(path);
 
         let errmsg = |msg: &str| -> String {
             format!(
@@ -124,29 +124,29 @@ async fn push(
             Action::AddFile(mtime, _) => {
                 fs::rename_file(&from_temp_path, &to_path)
                     .context(errmsg("move added file from temp"))?;
-                fs::set_mtime(&to_path, &mtime).context(errmsg("set mtime of added file"))?;
+                fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of added file"))?;
             }
             Action::AddSymLink(mtime, _) => {
                 fs::rename_symlink(&from_temp_path, &to_path)
                     .context(errmsg("move added symlink from temp"))?;
-                fs::set_mtime(&to_path, &mtime).context(errmsg("set mtime of added symlink"))?;
+                fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of added symlink"))?;
             }
             Action::EditDir(mtime) => {
-                fs::set_mtime(&to_path, &mtime).context(errmsg("set mtime of edited directory"))?;
+                fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of edited directory"))?;
             }
             Action::EditFile(mtime, opth) => {
                 if opth.is_some() {
                     fs::rename_file(&from_temp_path, &to_path)
                         .context(errmsg("move edited file from temp"))?;
                 }
-                fs::set_mtime(&to_path, &mtime).context(errmsg("set mtime of edited file"))?;
+                fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of edited file"))?;
             }
             Action::EditSymLink(mtime, opth) => {
                 if opth.is_some() {
                     fs::rename_symlink(&from_temp_path, &to_path)
                         .context(errmsg("move edited symlink from temp"))?;
                 }
-                fs::set_mtime(&to_path, &mtime).context(errmsg("set mtime of edited symlink"))?;
+                fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of edited symlink"))?;
             }
             Action::RemoveDir => {
                 // Why remove_dir_all instead of just remove_dir here?

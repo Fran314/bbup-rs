@@ -14,7 +14,7 @@ pub fn create_symlink(path: &AbstPath, endpoint: Endpoint) -> Result<(), Error> 
     #[cfg(unix)]
     match endpoint {
         Endpoint::Unix(endpath) => {
-            std::os::unix::fs::symlink(&endpath, path.to_path_buf())
+            std::os::unix::fs::symlink(endpath, path.to_path_buf())
                 .map_err(inerr(errctx("create unix symlink")))?;
         }
 
@@ -258,7 +258,7 @@ mod tests {
     }
     fn cleanup_sandbox(path: impl std::fmt::Display) {
         let path_bf = PathBuf::from(format!("/tmp/{path}"));
-        std::fs::remove_dir_all(&path_bf).unwrap();
+        std::fs::remove_dir_all(path_bf).unwrap();
     }
     // --- --- //
 

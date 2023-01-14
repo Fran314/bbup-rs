@@ -153,18 +153,10 @@ mod tests {
     }
 
     #[test]
-    fn test() {
-        delta_node_impl();
-
-        delta_empty();
-        delta_shake();
-        get();
-    }
-
-    fn delta_node_impl() {
-        let dir = FSNode::empty_dir((1116035390, 33410985));
-        let file = FSNode::file((667486944, 259193403), "");
-        let symlink = FSNode::symlink((1007746624, 413934774), "some/original/interesting/path");
+    fn test_delta_node_impl() {
+        let dir = FSNode::empty_dir((1664594150, 542369486));
+        let file = FSNode::file((1664644025, 939049994), "content");
+        let symlink = FSNode::symlink((1664668347, 992255623), "path/to/somewhere");
 
         assert_eq!(
             DeltaNode::remove(&dir),
@@ -231,36 +223,48 @@ mod tests {
         );
     }
 
-    fn delta_empty() {
+    #[test]
+    fn test_delta_empty() {
         assert_eq!(Delta::empty(), Delta(HashMap::from([])));
         assert!(Delta::empty().is_empty());
 
-        let mock_file_node = FSNode::file((1120127351, 306920486), "");
-        let mock_delta_node = DeltaNode::add(&mock_file_node);
-        let non_empty_delta = Delta(HashMap::from([(String::from("file"), mock_delta_node)]));
-        assert!(!non_empty_delta.is_empty());
+        assert!(!Delta::gen_from(|d| {
+            d.add_leaf(
+                "file",
+                None,
+                Some(FSNode::file((1664680553, 751496381), "content")),
+            );
+        })
+        .is_empty());
     }
 
-    fn delta_shake() {
-        // TODO rewrite this test in standardized name and content form
+    #[test]
+    fn test_delta_shake() {
         let mut unshaken_delta = Delta::gen_from(|d| {
             d.add_empty_branch(
-                "branch1",
-                ((1664579039, 891307232), (1664579039, 891307232)),
+                "branch-1",
+                ((1664705868, 929253071), (1664705868, 929253071)),
             );
             d.add_branch(
-                "branch2",
-                ((1664595484, 947041845), (1664595484, 947041845)),
+                "branch-2",
+                ((1664747701, 103956932), (1664747701, 103956932)),
                 |d| {
-                    let dir = FSNode::empty_dir((1664614263, 371254296));
-                    let file = FSNode::file((1664644221, 832021560), "");
-                    let symlink =
-                        FSNode::symlink((1664808823, 723934215), "some/original/interesting/path");
-
-                    d.add_leaf("leaf1", None, None);
-                    d.add_leaf("leaf2", Some(dir.clone()), Some(dir));
-                    d.add_leaf("leaf3", Some(file.clone()), Some(file));
-                    d.add_leaf("leaf4", Some(symlink.clone()), Some(symlink));
+                    d.add_leaf("leaf-1", None, None);
+                    d.add_leaf(
+                        "leaf-2",
+                        Some(FSNode::empty_dir((1664768608, 801663767))),
+                        Some(FSNode::empty_dir((1664768608, 801663767))),
+                    );
+                    d.add_leaf(
+                        "leaf-3",
+                        Some(FSNode::file((1664802672, 795514), "content 0")),
+                        Some(FSNode::file((1664802672, 795514), "content 0")),
+                    );
+                    d.add_leaf(
+                        "leaf-4",
+                        Some(FSNode::symlink((1664830393, 665533664), "path/to/0")),
+                        Some(FSNode::symlink((1664830393, 665533664), "path/to/0")),
+                    );
                     d.add_empty_branch(
                         "branch",
                         ((1664866042, 747401141), (1664866042, 747401141)),
@@ -270,10 +274,10 @@ mod tests {
             d.add_leaf(
                 "leaf",
                 Some(FSNode::dir((1664876366, 977774592), |t| {
-                    t.add_file("file.txt", (1664905600, 230037082), "file with content");
+                    t.add_file("file-1", (1664905600, 230037082), "content 1");
                 })),
                 Some(FSNode::dir((1664935601, 700740412), |t| {
-                    t.add_file("other-file.txt", (1664916387, 189221502), "different file");
+                    t.add_file("file-2", (1664916387, 189221502), "content 2");
                 })),
             );
         });
@@ -284,14 +288,14 @@ mod tests {
                 ((1664876366, 977774592), (1664935601, 700740412)),
                 |d| {
                     d.add_leaf(
-                        "file.txt",
-                        Some(FSNode::file((1664905600, 230037082), "file with content")),
+                        "file-1",
+                        Some(FSNode::file((1664905600, 230037082), "content 1")),
                         None,
                     );
                     d.add_leaf(
-                        "other-file.txt",
+                        "file-2",
                         None,
-                        Some(FSNode::file((1664916387, 189221502), "different file")),
+                        Some(FSNode::file((1664916387, 189221502), "content 2")),
                     );
                 },
             );
@@ -301,231 +305,419 @@ mod tests {
         assert_eq!(unshaken_delta, shaken_delta);
     }
 
-    fn get() {
-        // TODO rewrite this test in standardized name and content form
-        let mock_dir_content = |t: &mut FSTree| {
-            t.add_file("file", (997012509, 922451121), "mock content");
-            t.add_symlink("symlink", (808926076, 398339329), "mock/path/to/nowhere");
-            t.add_dir("dir", (1364181678, 477789959), |t| {
-                t.add_file("file2", (1598728573, 546351705), "mock content 2");
-                t.add_symlink("symlink2", (1598728573, 546351705), "mock/path/2");
-                t.add_empty_dir("dir2", (590816735, 667223352));
-            })
-        };
-
+    #[test]
+    fn test_get_delta() {
         let pre_fstree = FSTree::gen_from(|t| {
-            t.add_empty_dir("mtime-edit-dir", (667322229, 283834161));
-            t.add_dir("content-edit-dir", (995819275, 864246209), |t| {
-                t.add_dir("both-edit-dir", (820956170, 426474588), |t| {
-                    t.add_file("removed-file", (1213260096, 785625266), "some content");
-                    t.add_symlink("removed-symlink", (808926076, 398339329), "some/fake/path");
-                    t.add_dir("removed-dir", (1364181678, 477789959), mock_dir_content);
+            t.add_file("untouched-file", (1664593215, 129813725), "content 0");
+            t.add_symlink("untouched-symlink", (1664638936, 489785707), "path/to/0");
+            t.add_dir("untouched-dir", (1664839418, 456172131), |t| {
+                t.add_file("some-file", (1664659645, 469489956), "content 1");
+                t.add_symlink("some-symlink", (1664685202, 499366060), "path/to/1");
+                t.add_dir("some-dir", (1664820056, 176682064), |t| {
+                    t.add_file("some-subfile", (1664730750, 77149506), "content 2");
+                    t.add_symlink("some-subsymlink", (1664773722, 691287467), "path/to/2");
+                    t.add_empty_dir("some-subdir", (1664807510, 362072320));
+                });
+            });
 
-                    t.add_file("mtime-edit-file", (1611850953, 971525938), "fixed content");
-                    t.add_file(
-                        "content-edit-file",
-                        (1245890614, 586345017),
-                        "changed content",
-                    );
-                    t.add_file(
-                        "both-edit-file",
-                        (1245890614, 586345017),
-                        "changed content and mtime",
-                    );
+            t.add_file("removed-file", (1664844899, 952880867), "content 3");
+            t.add_symlink("removed-symlink", (1664866516, 799949137), "path/to/3");
+            t.add_dir("removed-dir", (1665080760, 125873632), |t| {
+                t.add_file("some-file", (1664904983, 225354006), "content 4");
+                t.add_symlink("some-symlink", (1664931292, 707636324), "path/to/4");
+                t.add_dir("some-dir", (1665051015, 728013427), |t| {
+                    t.add_file("some-subsfile", (1664969116, 618383875), "content 5");
+                    t.add_symlink("some-subsymlink", (1665009784, 973406400), "path/to/5");
+                    t.add_empty_dir("some-subdir", (1665020782, 554599289));
+                });
+            });
 
-                    t.add_symlink("mtime-edit-symlink", (1245890614, 586345017), "fixed/path");
-                    t.add_symlink(
-                        "endpoint-edit-symlink",
-                        (1397507428, 322887183),
-                        "changed/path",
-                    );
-                    t.add_symlink(
-                        "both-edit-symlink",
-                        (547336108, 262002124),
-                        "changed/path/and/mtime",
-                    );
+            t.add_file("mtime-edit-file", (1665128681, 479153113), "content 6");
+            t.add_symlink("mtime-edit-symlink", (1665223326, 633517793), "path/to/6");
+            t.add_dir("mtime-edit-dir", (1665231730, 757614747), |t| {
+                t.add_file("some-file", (1665246903, 757311754), "content 7");
+                t.add_symlink("some-symlink", (1665267994, 243823157), "path/to/7");
+                t.add_dir("some-dir", (1665382767, 244824259), |t| {
+                    t.add_file("some-subfile", (1665320210, 926569705), "content 8");
+                    t.add_symlink("some-subsymlink", (1665331146, 202356737), "path/to/8");
+                    t.add_empty_dir("some-subdir", (1665361211, 62943599));
+                });
+            });
 
-                    t.add_file("file-to-dir", (547336108, 262002124), "mock content");
-                    t.add_file("file-to-symlink", (1396993467, 652868396), "fake content");
+            t.add_file("content-edit-file", (1665403797, 984813446), "content 9");
+            t.add_symlink("content-edit-symlink", (1665492280, 294042651), "path/to/9");
+            t.add_dir("content-edit-dir", (1665653391, 583942877), |t| {
+                t.add_file("old-file", (1665537545, 274720731), "content 10");
+                t.add_symlink("old-symlink", (1665578089, 400706450), "path/to/10");
+                t.add_dir("old-dir", (1665616031, 855387955), |t| {
+                    t.add_file("some-file", (1665593626, 191212804), "content 11");
+                    t.add_symlink("some-symlink", (1665602011, 364167939), "path/to/11");
+                    t.add_empty_dir("some-dir", (1665609609, 381366620));
+                });
+            });
 
-                    t.add_symlink("symlink-to-file", (776329648, 625499475), "random/path");
-                    t.add_symlink("symlink-to-dir", (1493041434, 347743433), "fake/path");
-                    t.add_dir("dir-to-file", (1364181678, 477789959), mock_dir_content);
-                    t.add_dir("dir-to-symlink", (1364181678, 477789959), mock_dir_content);
+            t.add_file("both-edit-file", (1665658948, 294056682), "content 12");
+            t.add_symlink("both-edit-symlink", (1665706590, 498424292), "path/to/12");
+            t.add_dir("both-edit-dir", (1665857459, 273562674), |t| {
+                t.add_file("old-file", (1665721719, 759507069), "content 13");
+                t.add_symlink("old-symlink", (1665742729, 864183276), "path/to/13");
+                t.add_dir("old-dir", (1665823151, 430141738), |t| {
+                    t.add_file("some-file", (1665753800, 479487453), "content 14");
+                    t.add_symlink("some-symlink", (1665799314, 73687095), "path/to/14");
+                    t.add_empty_dir("some-dir", (1665816185, 637073506));
+                });
+            });
+
+            t.add_file("file-to-symlink", (1665878934, 122842597), "content 15");
+            t.add_symlink("symlink-to-file", (1665925952, 816940720), "path/to/15");
+            t.add_file("file-to-dir", (1665952861, 367324405), "content 16");
+            t.add_dir("dir-to-file", (1666112742, 844333980), |t| {
+                t.add_file("some-file", (1665980032, 483481851), "content 17");
+                t.add_symlink("some-symlink", (1665989441, 197429024), "path/to/17");
+                t.add_dir("some-dir", (1666091840, 265768979), |t| {
+                    t.add_file("some-subfile", (1666003479, 80356802), "content 18");
+                    t.add_symlink("some-subsymlink", (1666009206, 612314999), "path/to/18");
+                    t.add_empty_dir("some-subdir", (1666057999, 808033458))
+                });
+            });
+            t.add_symlink("symlink-to-dir", (1666150895, 596092504), "path/to/19");
+            t.add_dir("dir-to-symlink", (1666619883, 311193088), |t| {
+                t.add_file("some-file", (1666160237, 675128780), "content 20");
+                t.add_symlink("some-symlink", (1666226534, 830436513), "path/to/20");
+                t.add_dir("some-dir", (1666556719, 684833087), |t| {
+                    t.add_file("some-subfile", (1666307759, 331079248), "content 21");
+                    t.add_symlink("some-subsymlink", (1666367800, 117412925), "path/to/21");
+                    t.add_empty_dir("some-subdir", (1666467991, 57155305));
                 });
             });
         });
-
         let post_fstree = FSTree::gen_from(|t| {
-            t.add_empty_dir("mtime-edit-dir", (1428359331, 168489967));
-            t.add_dir("content-edit-dir", (995819275, 864246209), |t| {
-                t.add_dir("both-edit-dir", (1535927666, 535018497), |t| {
-                    t.add_file("added-file", (1029314114, 210225767), "added content");
-                    t.add_symlink("added-symlink", (999001645, 810306108), "new/fake/path");
-                    t.add_dir("added-dir", (1364181678, 477789959), mock_dir_content);
-
-                    t.add_file("mtime-edit-file", (1048587011, 445332193), "fixed content");
-                    t.add_file(
-                        "content-edit-file",
-                        (1245890614, 586345017),
-                        "content has changed",
-                    );
-                    t.add_file(
-                        "both-edit-file",
-                        (815892169, 640255056),
-                        "content and mtime have changed",
-                    );
-
-                    t.add_symlink("mtime-edit-symlink", (692432309, 274032817), "fixed/path");
-                    t.add_symlink(
-                        "endpoint-edit-symlink",
-                        (1397507428, 322887183),
-                        "path/did/change",
-                    );
-                    t.add_symlink(
-                        "both-edit-symlink",
-                        (1274175004, 906839206),
-                        "path/and/mtime/did/change/",
-                    );
-
-                    t.add_dir("file-to-dir", (1364181678, 477789959), mock_dir_content);
-                    t.add_symlink("file-to-symlink", (616276621, 81572476), "fake/new/path");
-
-                    t.add_file("symlink-to-file", (1538377515, 691983830), "this is file");
-                    t.add_dir("symlink-to-dir", (1364181678, 477789959), mock_dir_content);
-
-                    t.add_file("dir-to-file", (1602277549, 958804909), "not dir anymore");
-                    t.add_symlink("dir-to-symlink", (1122800412, 992618853), "also/not/dir");
+            t.add_file("untouched-file", (1664593215, 129813725), "content 0");
+            t.add_symlink("untouched-symlink", (1664638936, 489785707), "path/to/0");
+            t.add_dir("untouched-dir", (1664839418, 456172131), |t| {
+                t.add_file("some-file", (1664659645, 469489956), "content 1");
+                t.add_symlink("some-symlink", (1664685202, 499366060), "path/to/1");
+                t.add_dir("some-dir", (1664820056, 176682064), |t| {
+                    t.add_file("some-subfile", (1664730750, 77149506), "content 2");
+                    t.add_symlink("some-subsymlink", (1664773722, 691287467), "path/to/2");
+                    t.add_empty_dir("some-subdir", (1664807510, 362072320));
                 });
             });
+
+            t.add_file("added-file", (1667291618, 49665399), "content 22");
+            t.add_symlink("added-symlink", (1667299371, 392444127), "path/to/22");
+            t.add_dir("added-dir", (1667458204, 617921196), |t| {
+                t.add_file("some-file", (1667344231, 62151406), "content 23");
+                t.add_symlink("some-symlink", (1667386471, 512939450), "path/to/23");
+                t.add_dir("some-dir", (1667452610, 239738758), |t| {
+                    t.add_file("some-subsfile", (1667413109, 643123620), "content 24");
+                    t.add_symlink("some-subsymlink", (1667430861, 703560783), "path/to/24");
+                    t.add_empty_dir("some-subdir", (1667436674, 904022684));
+                });
+            });
+
+            t.add_file("mtime-edit-file", (1667491403, 52601873), "content 6");
+            t.add_symlink("mtime-edit-symlink", (1667512489, 728838837), "path/to/6");
+            t.add_dir("mtime-edit-dir", (1667527639, 27312686), |t| {
+                t.add_file("some-file", (1665246903, 757311754), "content 7");
+                t.add_symlink("some-symlink", (1665267994, 243823157), "path/to/7");
+                t.add_dir("some-dir", (1665382767, 244824259), |t| {
+                    t.add_file("some-subfile", (1665320210, 926569705), "content 8");
+                    t.add_symlink("some-subsymlink", (1665331146, 202356737), "path/to/8");
+                    t.add_empty_dir("some-subdir", (1665361211, 62943599));
+                });
+            });
+
+            t.add_file("content-edit-file", (1665403797, 984813446), "content 25");
+            t.add_symlink(
+                "content-edit-symlink",
+                (1665492280, 294042651),
+                "path/to/25",
+            );
+            t.add_dir("content-edit-dir", (1665653391, 583942877), |t| {
+                t.add_file("new-file", (1667565223, 544854425), "content 26");
+                t.add_symlink("new-symlink", (1667606671, 756872113), "path/to/26");
+                t.add_dir("new-dir", (1667690533, 790228724), |t| {
+                    t.add_file("some-file", (1667654446, 52879214), "content 27");
+                    t.add_symlink("some-symlink", (1667660746, 340510588), "path/to/27");
+                    t.add_empty_dir("some-dir", (1667666855, 573555324));
+                });
+            });
+
+            t.add_file("both-edit-file", (1667700076, 989692858), "content 28");
+            t.add_symlink("both-edit-symlink", (1667744237, 161786498), "path/to/28");
+            t.add_dir("both-edit-dir", (1667979024, 483039443), |t| {
+                t.add_file("new-file", (1667786823, 846244395), "content 29");
+                t.add_symlink("new-symlink", (1667827505, 675050268), "path/to/29");
+                t.add_dir("new-dir", (1667971390, 870864659), |t| {
+                    t.add_file("some-file", (1667868245, 278758645), "content 30");
+                    t.add_symlink("some-symlink", (1667907662, 970681147), "path/to/30");
+                    t.add_empty_dir("some-dir", (1667932481, 458833587));
+                });
+            });
+
+            t.add_symlink("file-to-symlink", (1667989833, 799488495), "path/to/31");
+            t.add_file("symlink-to-file", (1668019367, 534284745), "content 31");
+            t.add_dir("file-to-dir", (1668255717, 149282922), |t| {
+                t.add_file("some-file", (1668066544, 615520517), "content 32");
+                t.add_symlink("some-symlink", (1668116001, 308689102), "path/to/32");
+                t.add_dir("some-dir", (1668214742, 157637364), |t| {
+                    t.add_file("some-subfile", (1668131352, 951864648), "content 33");
+                    t.add_symlink("some-subsymlink", (1668149860, 566666057), "path/to/33");
+                    t.add_empty_dir("some-subdir", (1668187711, 556826003));
+                });
+            });
+            t.add_file("dir-to-file", (1668348923, 385859136), "content 34");
+            t.add_dir("symlink-to-dir", (1668649280, 308757064), |t| {
+                t.add_file("some-file", (1668452197, 126511533), "content 35");
+                t.add_symlink("some-symlink", (1668491214, 884187985), "path/to/35");
+                t.add_dir("some-dir", (1668612644, 635406011), |t| {
+                    t.add_file("some-subfile", (1668531025, 526845175), "content 36");
+                    t.add_symlink("some-subsymlink", (1668541084, 634088395), "path/to/36");
+                    t.add_empty_dir("some-subdir", (1668566846, 601299229));
+                });
+            });
+            t.add_symlink("dir-to-symlink", (1668676395, 805654992), "path/to/37");
         });
 
         let supposed_delta = Delta::gen_from(|d| {
+            d.add_leaf(
+                "removed-file",
+                Some(FSNode::file((1664844899, 952880867), "content 3")),
+                None,
+            );
+            d.add_leaf(
+                "removed-symlink",
+                Some(FSNode::symlink((1664866516, 799949137), "path/to/3")),
+                None,
+            );
+            d.add_leaf(
+                "removed-dir",
+                Some(FSNode::dir((1665080760, 125873632), |t| {
+                    t.add_file("some-file", (1664904983, 225354006), "content 4");
+                    t.add_symlink("some-symlink", (1664931292, 707636324), "path/to/4");
+                    t.add_dir("some-dir", (1665051015, 728013427), |t| {
+                        t.add_file("some-subsfile", (1664969116, 618383875), "content 5");
+                        t.add_symlink("some-subsymlink", (1665009784, 973406400), "path/to/5");
+                        t.add_empty_dir("some-subdir", (1665020782, 554599289));
+                    });
+                })),
+                None,
+            );
+
+            d.add_leaf(
+                "added-file",
+                None,
+                Some(FSNode::file((1667291618, 49665399), "content 22")),
+            );
+            d.add_leaf(
+                "added-symlink",
+                None,
+                Some(FSNode::symlink((1667299371, 392444127), "path/to/22")),
+            );
+            d.add_leaf(
+                "added-dir",
+                None,
+                Some(FSNode::dir((1667458204, 617921196), |t| {
+                    t.add_file("some-file", (1667344231, 62151406), "content 23");
+                    t.add_symlink("some-symlink", (1667386471, 512939450), "path/to/23");
+                    t.add_dir("some-dir", (1667452610, 239738758), |t| {
+                        t.add_file("some-subsfile", (1667413109, 643123620), "content 24");
+                        t.add_symlink("some-subsymlink", (1667430861, 703560783), "path/to/24");
+                        t.add_empty_dir("some-subdir", (1667436674, 904022684));
+                    });
+                })),
+            );
+
+            d.add_leaf(
+                "mtime-edit-file",
+                Some(FSNode::file((1665128681, 479153113), "content 6")),
+                Some(FSNode::file((1667491403, 52601873), "content 6")),
+            );
+            d.add_leaf(
+                "mtime-edit-symlink",
+                Some(FSNode::symlink((1665223326, 633517793), "path/to/6")),
+                Some(FSNode::symlink((1667512489, 728838837), "path/to/6")),
+            );
             d.add_empty_branch(
                 "mtime-edit-dir",
-                ((667322229, 283834161), (1428359331, 168489967)),
+                ((1665231730, 757614747), (1667527639, 27312686)),
+            );
+
+            d.add_leaf(
+                "content-edit-file",
+                Some(FSNode::file((1665403797, 984813446), "content 9")),
+                Some(FSNode::file((1665403797, 984813446), "content 25")),
+            );
+            d.add_leaf(
+                "content-edit-symlink",
+                Some(FSNode::symlink((1665492280, 294042651), "path/to/9")),
+                Some(FSNode::symlink((1665492280, 294042651), "path/to/25")),
             );
             d.add_branch(
                 "content-edit-dir",
-                ((995819275, 864246209), (995819275, 864246209)),
+                ((1665653391, 583942877), (1665653391, 583942877)),
                 |d| {
-                    d.add_branch(
-                        "both-edit-dir",
-                        ((820956170, 426474588), (1535927666, 535018497)),
-                        |d| {
-                            d.add_leaf(
-                                "removed-file",
-                                Some(FSNode::file((1213260096, 785625266), "some content")),
-                                None,
-                            );
-                            d.add_leaf(
-                                "removed-symlink",
-                                Some(FSNode::symlink((808926076, 398339329), "some/fake/path")),
-                                None,
-                            );
-                            d.add_leaf(
-                                "removed-dir",
-                                Some(FSNode::dir((1364181678, 477789959), mock_dir_content)),
-                                None,
-                            );
-
-                            d.add_leaf(
-                                "added-file",
-                                None,
-                                Some(FSNode::file((1029314114, 210225767), "added content")),
-                            );
-                            d.add_leaf(
-                                "added-symlink",
-                                None,
-                                Some(FSNode::symlink((999001645, 810306108), "new/fake/path")),
-                            );
-                            d.add_leaf(
-                                "added-dir",
-                                None,
-                                Some(FSNode::dir((1364181678, 477789959), mock_dir_content)),
-                            );
-
-                            d.add_leaf(
-                                "mtime-edit-file",
-                                Some(FSNode::file((1611850953, 971525938), "fixed content")),
-                                Some(FSNode::file((1048587011, 445332193), "fixed content")),
-                            );
-                            d.add_leaf(
-                                "content-edit-file",
-                                Some(FSNode::file((1245890614, 586345017), "changed content")),
-                                Some(FSNode::file((1245890614, 586345017), "content has changed")),
-                            );
-                            d.add_leaf(
-                                "both-edit-file",
-                                Some(FSNode::file(
-                                    (1245890614, 586345017),
-                                    "changed content and mtime",
-                                )),
-                                Some(FSNode::file(
-                                    (815892169, 640255056),
-                                    "content and mtime have changed",
-                                )),
-                            );
-
-                            d.add_leaf(
-                                "mtime-edit-symlink",
-                                Some(FSNode::symlink((1245890614, 586345017), "fixed/path")),
-                                Some(FSNode::symlink((692432309, 274032817), "fixed/path")),
-                            );
-                            d.add_leaf(
-                                "endpoint-edit-symlink",
-                                Some(FSNode::symlink((1397507428, 322887183), "changed/path")),
-                                Some(FSNode::symlink((1397507428, 322887183), "path/did/change")),
-                            );
-                            d.add_leaf(
-                                "both-edit-symlink",
-                                Some(FSNode::symlink(
-                                    (547336108, 262002124),
-                                    "changed/path/and/mtime",
-                                )),
-                                Some(FSNode::symlink(
-                                    (1274175004, 906839206),
-                                    "path/and/mtime/did/change/",
-                                )),
-                            );
-
-                            d.add_leaf(
-                                "file-to-dir",
-                                Some(FSNode::file((547336108, 262002124), "mock content")),
-                                Some(FSNode::dir((1364181678, 477789959), mock_dir_content)),
-                            );
-                            d.add_leaf(
-                                "file-to-symlink",
-                                Some(FSNode::file((1396993467, 652868396), "fake content")),
-                                Some(FSNode::symlink((616276621, 81572476), "fake/new/path")),
-                            );
-                            d.add_leaf(
-                                "symlink-to-file",
-                                Some(FSNode::symlink((776329648, 625499475), "random/path")),
-                                Some(FSNode::file((1538377515, 691983830), "this is file")),
-                            );
-                            d.add_leaf(
-                                "symlink-to-dir",
-                                Some(FSNode::symlink((1493041434, 347743433), "fake/path")),
-                                Some(FSNode::dir((1364181678, 477789959), mock_dir_content)),
-                            );
-                            d.add_leaf(
-                                "dir-to-file",
-                                Some(FSNode::dir((1364181678, 477789959), mock_dir_content)),
-                                Some(FSNode::file((1602277549, 958804909), "not dir anymore")),
-                            );
-                            d.add_leaf(
-                                "dir-to-symlink",
-                                Some(FSNode::dir((1364181678, 477789959), mock_dir_content)),
-                                Some(FSNode::symlink((1122800412, 992618853), "also/not/dir")),
-                            );
-                        },
-                    )
+                    d.add_leaf(
+                        "old-file",
+                        Some(FSNode::file((1665537545, 274720731), "content 10")),
+                        None,
+                    );
+                    d.add_leaf(
+                        "old-symlink",
+                        Some(FSNode::symlink((1665578089, 400706450), "path/to/10")),
+                        None,
+                    );
+                    d.add_leaf(
+                        "old-dir",
+                        Some(FSNode::dir((1665616031, 855387955), |t| {
+                            t.add_file("some-file", (1665593626, 191212804), "content 11");
+                            t.add_symlink("some-symlink", (1665602011, 364167939), "path/to/11");
+                            t.add_empty_dir("some-dir", (1665609609, 381366620));
+                        })),
+                        None,
+                    );
+                    d.add_leaf(
+                        "new-file",
+                        None,
+                        Some(FSNode::file((1667565223, 544854425), "content 26")),
+                    );
+                    d.add_leaf(
+                        "new-symlink",
+                        None,
+                        Some(FSNode::symlink((1667606671, 756872113), "path/to/26")),
+                    );
+                    d.add_leaf(
+                        "new-dir",
+                        None,
+                        Some(FSNode::dir((1667690533, 790228724), |t| {
+                            t.add_file("some-file", (1667654446, 52879214), "content 27");
+                            t.add_symlink("some-symlink", (1667660746, 340510588), "path/to/27");
+                            t.add_empty_dir("some-dir", (1667666855, 573555324));
+                        })),
+                    );
                 },
             );
+
+            d.add_leaf(
+                "both-edit-file",
+                Some(FSNode::file((1665658948, 294056682), "content 12")),
+                Some(FSNode::file((1667700076, 989692858), "content 28")),
+            );
+            d.add_leaf(
+                "both-edit-symlink",
+                Some(FSNode::symlink((1665706590, 498424292), "path/to/12")),
+                Some(FSNode::symlink((1667744237, 161786498), "path/to/28")),
+            );
+            d.add_branch(
+                "both-edit-dir",
+                ((1665857459, 273562674), (1667979024, 483039443)),
+                |d| {
+                    d.add_leaf(
+                        "old-file",
+                        Some(FSNode::file((1665721719, 759507069), "content 13")),
+                        None,
+                    );
+                    d.add_leaf(
+                        "old-symlink",
+                        Some(FSNode::symlink((1665742729, 864183276), "path/to/13")),
+                        None,
+                    );
+                    d.add_leaf(
+                        "old-dir",
+                        Some(FSNode::dir((1665823151, 430141738), |t| {
+                            t.add_file("some-file", (1665753800, 479487453), "content 14");
+                            t.add_symlink("some-symlink", (1665799314, 73687095), "path/to/14");
+                            t.add_empty_dir("some-dir", (1665816185, 637073506));
+                        })),
+                        None,
+                    );
+                    d.add_leaf(
+                        "new-file",
+                        None,
+                        Some(FSNode::file((1667786823, 846244395), "content 29")),
+                    );
+                    d.add_leaf(
+                        "new-symlink",
+                        None,
+                        Some(FSNode::symlink((1667827505, 675050268), "path/to/29")),
+                    );
+                    d.add_leaf(
+                        "new-dir",
+                        None,
+                        Some(FSNode::dir((1667971390, 870864659), |t| {
+                            t.add_file("some-file", (1667868245, 278758645), "content 30");
+                            t.add_symlink("some-symlink", (1667907662, 970681147), "path/to/30");
+                            t.add_empty_dir("some-dir", (1667932481, 458833587));
+                        })),
+                    );
+                },
+            );
+            d.add_leaf(
+                "file-to-symlink",
+                Some(FSNode::file((1665878934, 122842597), "content 15")),
+                Some(FSNode::symlink((1667989833, 799488495), "path/to/31")),
+            );
+            d.add_leaf(
+                "symlink-to-file",
+                Some(FSNode::symlink((1665925952, 816940720), "path/to/15")),
+                Some(FSNode::file((1668019367, 534284745), "content 31")),
+            );
+            d.add_leaf(
+                "file-to-dir",
+                Some(FSNode::file((1665952861, 367324405), "content 16")),
+                Some(FSNode::dir((1668255717, 149282922), |t| {
+                    t.add_file("some-file", (1668066544, 615520517), "content 32");
+                    t.add_symlink("some-symlink", (1668116001, 308689102), "path/to/32");
+                    t.add_dir("some-dir", (1668214742, 157637364), |t| {
+                        t.add_file("some-subfile", (1668131352, 951864648), "content 33");
+                        t.add_symlink("some-subsymlink", (1668149860, 566666057), "path/to/33");
+                        t.add_empty_dir("some-subdir", (1668187711, 556826003));
+                    });
+                })),
+            );
+            d.add_leaf(
+                "dir-to-file",
+                Some(FSNode::dir((1666112742, 844333980), |t| {
+                    t.add_file("some-file", (1665980032, 483481851), "content 17");
+                    t.add_symlink("some-symlink", (1665989441, 197429024), "path/to/17");
+                    t.add_dir("some-dir", (1666091840, 265768979), |t| {
+                        t.add_file("some-subfile", (1666003479, 80356802), "content 18");
+                        t.add_symlink("some-subsymlink", (1666009206, 612314999), "path/to/18");
+                        t.add_empty_dir("some-subdir", (1666057999, 808033458))
+                    });
+                })),
+                Some(FSNode::file((1668348923, 385859136), "content 34")),
+            );
+            d.add_leaf(
+                "symlink-to-dir",
+                Some(FSNode::symlink((1666150895, 596092504), "path/to/19")),
+                Some(FSNode::dir((1668649280, 308757064), |t| {
+                    t.add_file("some-file", (1668452197, 126511533), "content 35");
+                    t.add_symlink("some-symlink", (1668491214, 884187985), "path/to/35");
+                    t.add_dir("some-dir", (1668612644, 635406011), |t| {
+                        t.add_file("some-subfile", (1668531025, 526845175), "content 36");
+                        t.add_symlink("some-subsymlink", (1668541084, 634088395), "path/to/36");
+                        t.add_empty_dir("some-subdir", (1668566846, 601299229));
+                    });
+                })),
+            );
+            d.add_leaf(
+                "dir-to-symlink",
+                Some(FSNode::dir((1666619883, 311193088), |t| {
+                    t.add_file("some-file", (1666160237, 675128780), "content 20");
+                    t.add_symlink("some-symlink", (1666226534, 830436513), "path/to/20");
+                    t.add_dir("some-dir", (1666556719, 684833087), |t| {
+                        t.add_file("some-subfile", (1666307759, 331079248), "content 21");
+                        t.add_symlink("some-subsymlink", (1666367800, 117412925), "path/to/21");
+                        t.add_empty_dir("some-subdir", (1666467991, 57155305));
+                    });
+                })),
+                Some(FSNode::symlink((1668676395, 805654992), "path/to/37")),
+            )
         });
 
-        assert_eq!(supposed_delta, get_delta(&pre_fstree, &post_fstree));
+        assert_eq!(get_delta(&pre_fstree, &post_fstree), supposed_delta);
 
         let mut fstree_to_upgrade = pre_fstree.clone();
         fstree_to_upgrade.apply_delta(&supposed_delta).unwrap();

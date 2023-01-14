@@ -159,7 +159,7 @@ mod tests {
     }
     fn cleanup_sandbox(path: impl std::fmt::Display) {
         let path_bf = PathBuf::from(format!("/tmp/{path}"));
-        std::fs::remove_dir_all(&path_bf).unwrap();
+        std::fs::remove_dir_all(path_bf).unwrap();
     }
     // --- --- //
 

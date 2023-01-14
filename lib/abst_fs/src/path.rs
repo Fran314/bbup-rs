@@ -117,7 +117,7 @@ impl AbstPath {
     }
     pub fn extension(&self) -> Option<&str> {
         let AbstPath(path) = self;
-        let last = path.get(path.len() - 1)?;
+        let last = path.back()?;
         let last_dot_occurrence = last.rfind('.')?;
         let ext = &last[last_dot_occurrence + 1..];
         match ext.is_empty() {
@@ -668,7 +668,7 @@ mod tests {
         }
         fn cleanup_sandbox(path: impl std::fmt::Display) {
             let path_bf = PathBuf::from(format!("/tmp/{path}"));
-            std::fs::remove_dir_all(&path_bf).unwrap();
+            std::fs::remove_dir_all(path_bf).unwrap();
         }
         // --- --- //
 

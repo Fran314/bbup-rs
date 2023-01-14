@@ -59,7 +59,7 @@ impl CommitList {
     pub fn most_recent_commit(&self) -> &Commit {
         let CommitList(list) = self;
         // TODO unwrap here eeeeeeeeeee
-        list.get(list.len() - 1).unwrap()
+        list.last().unwrap()
     }
 
     pub fn push(&mut self, commit: Commit) {
@@ -74,7 +74,7 @@ impl CommitList {
             if commit.commit_id.eq(&lkc) {
                 break;
             }
-            if let Some(delta_at_endpoint) = commit.delta.get_subdelta_tree_copy(&endpoint) {
+            if let Some(delta_at_endpoint) = commit.delta.get_subdelta_tree_copy(endpoint) {
                 if let Err(err) = output.merge_prec(&delta_at_endpoint) {
                     return Err(GetUpdError(commit.commit_id.clone(), err));
                 }
