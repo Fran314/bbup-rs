@@ -140,8 +140,7 @@ fn deltafstree_to_stringtree<S: std::string::ToString>(
                 // I don't really think it's necessary to check that pre != post,
                 //	it's only a display utility function and we """know""" we're
                 //	only working with shaken trees so the only place were this
-                //	could be working on unshaken trees is on malicious code, and
-                //	fuck them.
+                //	could be working on unshaken trees is on malicious code.
                 // Still, I'll leave the pre != post just to be sure
                 Leaf(pre, post) if pre != post => {
                     let mut output = vec![];

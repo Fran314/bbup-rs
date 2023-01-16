@@ -69,209 +69,214 @@ impl Delta {
 
 #[cfg(test)]
 mod tests {
-    // use crate::FSTree;
-    //
-    // use super::{Delta, ExcludeList, FSNode};
+    use crate::FSTree;
 
-    // TODO TEST add this when project returns stable
-    // #[test]
-    // fn test() {
-    //     let exclude_list = ExcludeList::from(&vec![
-    //         String::from("name1/"),
-    //         String::from("name2"),
-    //         String::from("\\./name3"),
-    //     ])
-    //     .unwrap();
-    //
-    //     let unfiltered_delta_gen = |pre: Option<FSNode>, post: Option<FSNode>| {
-    //         let mut delta = Delta::empty();
-    //         delta.add_leaf("name1", pre.clone(), post.clone());
-    //         delta.add_leaf("name2", pre.clone(), post.clone());
-    //         delta.add_leaf("name3", pre.clone(), post.clone());
-    //         delta.add_leaf("name4", pre.clone(), post.clone());
-    //         delta.add_branch("deep", None, |d| {
-    //             d.add_leaf("name1", pre.clone(), post.clone());
-    //             d.add_leaf("name2", pre.clone(), post.clone());
-    //             d.add_leaf("name3", pre.clone(), post.clone());
-    //             d.add_leaf("name4", pre.clone(), post.clone());
-    //         });
-    //         delta
-    //     };
-    //
-    //     // non-dir states
-    //     let old_file = FSNode::file((1443314904, 885035178), "some content");
-    //     let new_file = FSNode::file((1420465793, 406504192), "other content");
-    //     let old_symlink = FSNode::symlink((1443314904, 885035178), "some/fake/path/");
-    //     let new_symlink = FSNode::symlink((1420465793, 406504192), "other/fake/path");
-    //     let non_dir_leaves = [
-    //         (Some(old_file.clone()), None),
-    //         (None, Some(new_file.clone())),
-    //         (Some(old_file), Some(new_file.clone())),
-    //         (Some(old_symlink.clone()), None),
-    //         (None, Some(new_symlink.clone())),
-    //         (Some(old_symlink), Some(new_symlink.clone())),
-    //     ];
-    //     for (pre, post) in non_dir_leaves {
-    //         let mut unfiltered_delta = unfiltered_delta_gen(pre.clone(), post.clone());
-    //         let supposed_filtered_delta = Delta::gen_from(|d| {
-    //             d.add_leaf("name1", pre.clone(), post.clone());
-    //             d.add_leaf("name4", pre.clone(), post.clone());
-    //             d.add_branch("deep", None, |d| {
-    //                 d.add_leaf("name1", pre.clone(), post.clone());
-    //                 d.add_leaf("name3", pre.clone(), post.clone());
-    //                 d.add_leaf("name4", pre.clone(), post.clone());
-    //             });
-    //         });
-    //         unfiltered_delta.filter_out(&exclude_list);
-    //         assert_eq!(unfiltered_delta, supposed_filtered_delta);
-    //     }
-    //
-    //     // dir & None
-    //     let unfiltered_tree_gen = |subtree: &mut FSTree| {
-    //         subtree.add_dir("file", (1512376465, 64263102), |t| {
-    //             t.add_file("name1", (1443314904, 885035178), "some content");
-    //             t.add_file("name2", (1443314904, 885035178), "some content");
-    //             t.add_file("name3", (1443314904, 885035178), "some content");
-    //             t.add_file("name4", (1443314904, 885035178), "some content");
-    //         });
-    //         subtree.add_dir("symlink", (1512376465, 64263102), |t| {
-    //             t.add_symlink("name1", (1443314904, 885035178), "some/fake/path/");
-    //             t.add_symlink("name2", (1443314904, 885035178), "some/fake/path/");
-    //             t.add_symlink("name3", (1443314904, 885035178), "some/fake/path/");
-    //             t.add_symlink("name4", (1443314904, 885035178), "some/fake/path/");
-    //         });
-    //         subtree.add_dir("dir", (1512376465, 64263102), |t| {
-    //             t.add_empty_dir("name1", (1287750559, 427846972));
-    //             t.add_empty_dir("name2", (1287750559, 427846972));
-    //             t.add_empty_dir("name3", (1287750559, 427846972));
-    //             t.add_empty_dir("name4", (1287750559, 427846972));
-    //         });
-    //         subtree.add_empty_dir("name1", (1287750559, 427846972));
-    //         subtree.add_empty_dir("name2", (1287750559, 427846972));
-    //         subtree.add_empty_dir("name3", (1287750559, 427846972));
-    //         subtree.add_empty_dir("name4", (1287750559, 427846972));
-    //     };
-    //     let filtered_tree_gen = |subtree: &mut FSTree| {
-    //         subtree.add_dir("file", (1512376465, 64263102), |t| {
-    //             t.add_file("name1", (1443314904, 885035178), "some content");
-    //             t.add_file("name3", (1443314904, 885035178), "some content");
-    //             t.add_file("name4", (1443314904, 885035178), "some content");
-    //         });
-    //         subtree.add_dir("symlink", (1512376465, 64263102), |t| {
-    //             t.add_symlink("name1", (1443314904, 885035178), "some/fake/path/");
-    //             t.add_symlink("name3", (1443314904, 885035178), "some/fake/path/");
-    //             t.add_symlink("name4", (1443314904, 885035178), "some/fake/path/");
-    //         });
-    //         subtree.add_dir("dir", (1512376465, 64263102), |t| {
-    //             t.add_empty_dir("name3", (1287750559, 427846972));
-    //             t.add_empty_dir("name4", (1287750559, 427846972));
-    //         });
-    //         subtree.add_empty_dir("name3", (1287750559, 427846972));
-    //         subtree.add_empty_dir("name4", (1287750559, 427846972));
-    //     };
-    //
-    //     // dir to None
-    //     {
-    //         let unfiltered_dir = FSNode::dir((1512376465, 64263102), unfiltered_tree_gen);
-    //         let filtered_dir = FSNode::dir((1512376465, 64263102), filtered_tree_gen);
-    //
-    //         let mut unfiltered_delta = unfiltered_delta_gen(Some(unfiltered_dir), None);
-    //         let supposed_filtered_delta = Delta::gen_from(|d| {
-    //             d.add_leaf("name4", Some(filtered_dir.clone()), None);
-    //             d.add_branch("deep", None, |d| {
-    //                 d.add_leaf("name3", Some(filtered_dir.clone()), None);
-    //                 d.add_leaf("name4", Some(filtered_dir.clone()), None);
-    //             });
-    //         });
-    //         unfiltered_delta.filter_out(&exclude_list);
-    //         assert_eq!(unfiltered_delta, supposed_filtered_delta);
-    //     }
-    //     // None to dir
-    //     {
-    //         let unfiltered_dir = FSNode::dir((1512376465, 64263102), unfiltered_tree_gen);
-    //         let filtered_dir = FSNode::dir((1512376465, 64263102), filtered_tree_gen);
-    //
-    //         let mut unfiltered_delta = unfiltered_delta_gen(None, Some(unfiltered_dir));
-    //         let supposed_filtered_delta = Delta::gen_from(|d| {
-    //             d.add_leaf("name4", None, Some(filtered_dir.clone()));
-    //             d.add_branch("deep", None, |d| {
-    //                 d.add_leaf("name3", None, Some(filtered_dir.clone()));
-    //                 d.add_leaf("name4", None, Some(filtered_dir.clone()));
-    //             });
-    //         });
-    //         unfiltered_delta.filter_out(&exclude_list);
-    //         assert_eq!(unfiltered_delta, supposed_filtered_delta);
-    //     }
-    //
-    //     // dir & other
-    //     for other in [new_file, new_symlink] {
-    //         // dir to other
-    //         {
-    //             let unfiltered_dir = FSNode::dir((1512376465, 64263102), unfiltered_tree_gen);
-    //             let filtered_dir = FSNode::dir((1512376465, 64263102), filtered_tree_gen);
-    //
-    //             let mut unfiltered_delta =
-    //                 unfiltered_delta_gen(Some(unfiltered_dir), Some(other.clone()));
-    //             let supposed_filtered_delta = Delta::gen_from(|d| {
-    //                 d.add_leaf("name1", None, Some(other.clone()));
-    //                 d.add_leaf("name4", Some(filtered_dir.clone()), Some(other.clone()));
-    //                 d.add_branch("deep", None, |d| {
-    //                     d.add_leaf("name1", None, Some(other.clone()));
-    //                     d.add_leaf("name3", Some(filtered_dir.clone()), Some(other.clone()));
-    //                     d.add_leaf("name4", Some(filtered_dir.clone()), Some(other.clone()));
-    //                 });
-    //             });
-    //             unfiltered_delta.filter_out(&exclude_list);
-    //             assert_eq!(unfiltered_delta, supposed_filtered_delta);
-    //         }
-    //
-    //         // other to dir
-    //         {
-    //             let unfiltered_dir = FSNode::dir((1512376465, 64263102), unfiltered_tree_gen);
-    //             let filtered_dir = FSNode::dir((1512376465, 64263102), filtered_tree_gen);
-    //
-    //             let mut unfiltered_delta =
-    //                 unfiltered_delta_gen(Some(other.clone()), Some(unfiltered_dir));
-    //             let supposed_filtered_delta = Delta::gen_from(|d| {
-    //                 d.add_leaf("name1", Some(other.clone()), None);
-    //                 d.add_leaf("name4", Some(other.clone()), Some(filtered_dir.clone()));
-    //                 d.add_branch("deep", None, |d| {
-    //                     d.add_leaf("name1", Some(other.clone()), None);
-    //                     d.add_leaf("name3", Some(other.clone()), Some(filtered_dir.clone()));
-    //                     d.add_leaf("name4", Some(other.clone()), Some(filtered_dir.clone()));
-    //                 });
-    //             });
-    //             unfiltered_delta.filter_out(&exclude_list);
-    //             assert_eq!(unfiltered_delta, supposed_filtered_delta);
-    //         }
-    //     }
-    //
-    //     // branch
-    //     {
-    //         let premtime = (1395328184, 869950727);
-    //         let postmtime = (1396487263, 534084134);
-    //         let mut unfiltered_delta = Delta::gen_from(|d| {
-    //             d.add_empty_branch("name1", Some((premtime, postmtime)));
-    //             d.add_empty_branch("name2", Some((premtime, postmtime)));
-    //             d.add_empty_branch("name3", Some((premtime, postmtime)));
-    //             d.add_empty_branch("name4", Some((premtime, postmtime)));
-    //             d.add_branch("deep", None, |d| {
-    //                 d.add_empty_branch("name1", Some((premtime, postmtime)));
-    //                 d.add_empty_branch("name2", Some((premtime, postmtime)));
-    //                 d.add_empty_branch("name3", Some((premtime, postmtime)));
-    //                 d.add_empty_branch("name4", Some((premtime, postmtime)));
-    //             });
-    //         });
-    //         let supposed_filtered_delta = Delta::gen_from(|d| {
-    //             d.add_empty_branch("name4", Some((premtime, postmtime)));
-    //             d.add_branch("deep", None, |d| {
-    //                 d.add_empty_branch("name3", Some((premtime, postmtime)));
-    //                 d.add_empty_branch("name4", Some((premtime, postmtime)));
-    //             });
-    //         });
-    //
-    //         unfiltered_delta.filter_out(&exclude_list);
-    //         assert_eq!(unfiltered_delta, supposed_filtered_delta);
-    //     }
-    // }
+    use super::{Delta, ExcludeList, FSNode};
+
+    #[test]
+    fn test() {
+        let exclude_list = ExcludeList::from(&vec![
+            String::from("name-1/"),
+            String::from("name-2"),
+            String::from("\\./name-3"),
+        ])
+        .unwrap();
+
+        let premtime = (1664616135, 178562318);
+        let postmtime = (1667283442, 650876516);
+        let mtimes = (premtime, postmtime);
+        let unfiltered_delta_gen = |pre: Option<FSNode>, post: Option<FSNode>| {
+            Delta::gen_from(|d| {
+                d.add_leaf("name-1", pre.clone(), post.clone());
+                d.add_leaf("name-2", pre.clone(), post.clone());
+                d.add_leaf("name-3", pre.clone(), post.clone());
+                d.add_leaf("name-4", pre.clone(), post.clone());
+                d.add_branch("deep", mtimes, |d| {
+                    d.add_leaf("name-1", pre.clone(), post.clone());
+                    d.add_leaf("name-2", pre.clone(), post.clone());
+                    d.add_leaf("name-3", pre.clone(), post.clone());
+                    d.add_leaf("name-4", pre.clone(), post.clone());
+                });
+            })
+        };
+        let unfiltered_tree_gen = |subtree: &mut FSTree| {
+            subtree.add_dir("file", premtime, |t| {
+                t.add_file("name-1", premtime, "some content");
+                t.add_file("name-2", premtime, "some content");
+                t.add_file("name-3", premtime, "some content");
+                t.add_file("name-4", premtime, "some content");
+            });
+            subtree.add_dir("symlink", premtime, |t| {
+                t.add_symlink("name-1", premtime, "some/fake/path/");
+                t.add_symlink("name-2", premtime, "some/fake/path/");
+                t.add_symlink("name-3", premtime, "some/fake/path/");
+                t.add_symlink("name-4", premtime, "some/fake/path/");
+            });
+            subtree.add_dir("dir", premtime, |t| {
+                t.add_empty_dir("name-1", postmtime);
+                t.add_empty_dir("name-2", postmtime);
+                t.add_empty_dir("name-3", postmtime);
+                t.add_empty_dir("name-4", postmtime);
+            });
+            subtree.add_empty_dir("name-1", postmtime);
+            subtree.add_empty_dir("name-2", postmtime);
+            subtree.add_empty_dir("name-3", postmtime);
+            subtree.add_empty_dir("name-4", postmtime);
+        };
+        let filtered_tree_gen = |subtree: &mut FSTree| {
+            subtree.add_dir("file", premtime, |t| {
+                t.add_file("name-1", premtime, "some content");
+                t.add_file("name-3", premtime, "some content");
+                t.add_file("name-4", premtime, "some content");
+            });
+            subtree.add_dir("symlink", premtime, |t| {
+                t.add_symlink("name-1", premtime, "some/fake/path/");
+                t.add_symlink("name-3", premtime, "some/fake/path/");
+                t.add_symlink("name-4", premtime, "some/fake/path/");
+            });
+            subtree.add_dir("dir", premtime, |t| {
+                t.add_empty_dir("name-3", postmtime);
+                t.add_empty_dir("name-4", postmtime);
+            });
+            subtree.add_empty_dir("name-3", postmtime);
+            subtree.add_empty_dir("name-4", postmtime);
+        };
+
+        // non-dir state to non-dir state
+        let old_file = FSNode::file(premtime, "some content");
+        let old_symlink = FSNode::symlink(premtime, "some/fake/path/");
+        let new_file = FSNode::file(postmtime, "other content");
+        let new_symlink = FSNode::symlink(postmtime, "other/fake/path");
+        let non_dir_leaves = [
+            (Some(old_file.clone()), None),
+            (None, Some(new_file.clone())),
+            (Some(old_file), Some(new_file.clone())),
+            (Some(old_symlink.clone()), None),
+            (None, Some(new_symlink.clone())),
+            (Some(old_symlink), Some(new_symlink.clone())),
+        ];
+        for (pre, post) in non_dir_leaves {
+            let mut unfiltered_delta = unfiltered_delta_gen(pre.clone(), post.clone());
+            let supposed_filtered_delta = Delta::gen_from(|d| {
+                d.add_leaf("name-1", pre.clone(), post.clone());
+                d.add_leaf("name-4", pre.clone(), post.clone());
+                d.add_branch("deep", mtimes, |d| {
+                    d.add_leaf("name-1", pre.clone(), post.clone());
+                    d.add_leaf("name-3", pre.clone(), post.clone());
+                    d.add_leaf("name-4", pre.clone(), post.clone());
+                });
+            });
+            unfiltered_delta.filter_out(&exclude_list);
+            assert_eq!(unfiltered_delta, supposed_filtered_delta);
+        }
+
+        // dir & None
+        {
+            // dir to None
+            {
+                let unfiltered_dir = FSNode::dir(premtime, unfiltered_tree_gen);
+                let filtered_dir = FSNode::dir(premtime, filtered_tree_gen);
+
+                let mut unfiltered_delta = unfiltered_delta_gen(Some(unfiltered_dir), None);
+                let supposed_filtered_delta = Delta::gen_from(|d| {
+                    d.add_leaf("name-4", Some(filtered_dir.clone()), None);
+                    d.add_branch("deep", mtimes, |d| {
+                        d.add_leaf("name-3", Some(filtered_dir.clone()), None);
+                        d.add_leaf("name-4", Some(filtered_dir.clone()), None);
+                    });
+                });
+                unfiltered_delta.filter_out(&exclude_list);
+                assert_eq!(unfiltered_delta, supposed_filtered_delta);
+            }
+            // None to dir
+            {
+                let unfiltered_dir = FSNode::dir(premtime, unfiltered_tree_gen);
+                let filtered_dir = FSNode::dir(premtime, filtered_tree_gen);
+
+                let mut unfiltered_delta = unfiltered_delta_gen(None, Some(unfiltered_dir));
+                let supposed_filtered_delta = Delta::gen_from(|d| {
+                    d.add_leaf("name-4", None, Some(filtered_dir.clone()));
+                    d.add_branch("deep", mtimes, |d| {
+                        d.add_leaf("name-3", None, Some(filtered_dir.clone()));
+                        d.add_leaf("name-4", None, Some(filtered_dir.clone()));
+                    });
+                });
+                unfiltered_delta.filter_out(&exclude_list);
+                assert_eq!(unfiltered_delta, supposed_filtered_delta);
+            }
+        }
+
+        // dir & other
+        // The for isn't the prettiest solution but the code inside the for has
+        // to be executed both with a file and with a symlink, and it would be
+        // exactly the same except for the node used, so a for like this does
+        // the job
+        for other in [new_file, new_symlink] {
+            // dir to other
+            {
+                let unfiltered_dir = FSNode::dir(premtime, unfiltered_tree_gen);
+                let filtered_dir = FSNode::dir(premtime, filtered_tree_gen);
+
+                let mut unfiltered_delta =
+                    unfiltered_delta_gen(Some(unfiltered_dir), Some(other.clone()));
+                let supposed_filtered_delta = Delta::gen_from(|d| {
+                    d.add_leaf("name-1", None, Some(other.clone()));
+                    d.add_leaf("name-4", Some(filtered_dir.clone()), Some(other.clone()));
+                    d.add_branch("deep", mtimes, |d| {
+                        d.add_leaf("name-1", None, Some(other.clone()));
+                        d.add_leaf("name-3", Some(filtered_dir.clone()), Some(other.clone()));
+                        d.add_leaf("name-4", Some(filtered_dir.clone()), Some(other.clone()));
+                    });
+                });
+                unfiltered_delta.filter_out(&exclude_list);
+                assert_eq!(unfiltered_delta, supposed_filtered_delta);
+            }
+
+            // other to dir
+            {
+                let unfiltered_dir = FSNode::dir(premtime, unfiltered_tree_gen);
+                let filtered_dir = FSNode::dir(premtime, filtered_tree_gen);
+
+                let mut unfiltered_delta =
+                    unfiltered_delta_gen(Some(other.clone()), Some(unfiltered_dir));
+                let supposed_filtered_delta = Delta::gen_from(|d| {
+                    d.add_leaf("name-1", Some(other.clone()), None);
+                    d.add_leaf("name-4", Some(other.clone()), Some(filtered_dir.clone()));
+                    d.add_branch("deep", mtimes, |d| {
+                        d.add_leaf("name-1", Some(other.clone()), None);
+                        d.add_leaf("name-3", Some(other.clone()), Some(filtered_dir.clone()));
+                        d.add_leaf("name-4", Some(other.clone()), Some(filtered_dir.clone()));
+                    });
+                });
+                unfiltered_delta.filter_out(&exclude_list);
+                assert_eq!(unfiltered_delta, supposed_filtered_delta);
+            }
+        }
+
+        // branch
+        {
+            let mut unfiltered_delta = Delta::gen_from(|d| {
+                d.add_empty_branch("name-1", (premtime, postmtime));
+                d.add_empty_branch("name-2", (premtime, postmtime));
+                d.add_empty_branch("name-3", (premtime, postmtime));
+                d.add_empty_branch("name-4", (premtime, postmtime));
+                d.add_branch("deep", (premtime, postmtime), |d| {
+                    d.add_empty_branch("name-1", (premtime, postmtime));
+                    d.add_empty_branch("name-2", (premtime, postmtime));
+                    d.add_empty_branch("name-3", (premtime, postmtime));
+                    d.add_empty_branch("name-4", (premtime, postmtime));
+                });
+            });
+            let supposed_filtered_delta = Delta::gen_from(|d| {
+                d.add_empty_branch("name-4", (premtime, postmtime));
+                d.add_branch("deep", (premtime, postmtime), |d| {
+                    d.add_empty_branch("name-3", (premtime, postmtime));
+                    d.add_empty_branch("name-4", (premtime, postmtime));
+                });
+            });
+
+            unfiltered_delta.filter_out(&exclude_list);
+            assert_eq!(unfiltered_delta, supposed_filtered_delta);
+        }
+    }
 }

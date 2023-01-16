@@ -143,536 +143,483 @@ impl Delta {
     }
 }
 
-// TODO TEST add this back when the project returns stable
-// #[cfg(test)]
-// mod tests {
-//     use abst_fs::AbstPath;
-//
-//     use super::{push_unmerg, unmergerr, Delta, FSNode, UnmergeableDelta};
-//
-//     #[test]
-//     fn test() {
-//         error();
-//
-//         merge();
-//
-//         subdelta_tree();
-//     }
-//
-//     fn error() {
-//         let err = unmergerr(AbstPath::from("name"), "some error");
-//         assert_eq!(
-//             UnmergeableDelta(AbstPath::from("name"), String::from("some error")),
-//             err
-//         );
-//         assert_eq!(
-//             UnmergeableDelta(AbstPath::from("parent/name"), String::from("some error")),
-//             push_unmerg("parent")(err)
-//         );
-//     }
-//
-//     fn merge() {
-//         // Correct
-//         {
-//             let prec_delta = Delta::gen_from(|d| {
-//                 d.add_leaf(
-//                     "only-in-prec",
-//                     None,
-//                     Some(FSNode::file((511296105, 388548694), "also content")),
-//                 );
-//                 d.add_branch(
-//                     "branch1",
-//                     Some(((511296105, 388548694), (514319706, 941690660))),
-//                     |d| {
-//                         d.add_leaf(
-//                             "file2",
-//                             Some(FSNode::file((671604137, 286842258), "some words")),
-//                             Some(FSNode::file((760709528, 559907222), "different words")),
-//                         );
-//                     },
-//                 );
-//                 d.add_branch(
-//                     "branch2",
-//                     Some(((1265546486, 389473436), (1396487263, 534084134))),
-//                     |d| {
-//                         d.add_leaf(
-//                             "file",
-//                             Some(FSNode::file((1211083411, 596465489), "old content")),
-//                             Some(FSNode::file((1363282625, 548908666), "new content")),
-//                         );
-//                     },
-//                 );
-//                 d.add_branch("branch3", None, |d| {
-//                     d.add_leaf(
-//                         "file",
-//                         None,
-//                         Some(FSNode::file((1478623745, 355441118), "some content")),
-//                     );
-//                 });
-//                 d.add_branch("branch4", None, |d| {
-//                     d.add_leaf(
-//                         "file",
-//                         None,
-//                         Some(FSNode::file((897624970, 16191305), "qwertyuiop")),
-//                     );
-//                 });
-//                 d.add_branch("disappearing-branch", None, |d| {
-//                     d.add_leaf(
-//                         "disappearing-file",
-//                         None,
-//                         Some(FSNode::file((1247543129, 922667729), "zxcvbnm")),
-//                     );
-//                 });
-//                 d.add_leaf(
-//                     "leaf-then-branch",
-//                     None,
-//                     Some(FSNode::dir((1013348856, 129427648), |t| {
-//                         t.add_file("file", (1482393259, 727391402), "something");
-//                     })),
-//                 );
-//                 d.add_leaf(
-//                     "leaf-then-branch-and-mtime",
-//                     None,
-//                     Some(FSNode::dir((1325817515, 133346763), |t| {
-//                         t.add_symlink("symlink", (1458719618, 94382097), "path/to/somewhere");
-//                     })),
-//                 );
-//                 d.add_branch(
-//                     "branch-then-leaf",
-//                     Some(((1446120388, 364679759), (1481801479, 584963489))),
-//                     |d| {
-//                         d.add_leaf(
-//                             "dir",
-//                             Some(FSNode::empty_dir((1533247505, 465403976))),
-//                             None,
-//                         );
-//                         d.add_leaf(
-//                             "file",
-//                             Some(FSNode::file((1535512117, 790483817), "text here")),
-//                             Some(FSNode::file((1535751095, 541556742), "text there")),
-//                         );
-//                     },
-//                 );
-//             });
-//             let mut succ_delta = Delta::gen_from(|d| {
-//                 d.add_leaf(
-//                     "only-in-succ",
-//                     None,
-//                     Some(FSNode::file((936632440, 451303481), "content")),
-//                 );
-//                 d.add_branch(
-//                     "branch1",
-//                     Some(((514319706, 941690660), (926865806, 601491695))),
-//                     |d| {
-//                         d.add_leaf(
-//                             "file1",
-//                             Some(FSNode::file((814015932, 633808148), "other content")),
-//                             None,
-//                         );
-//                     },
-//                 );
-//                 d.add_branch("branch2", None, |d| {
-//                     d.add_leaf(
-//                         "file",
-//                         Some(FSNode::file((1363282625, 548908666), "new content")),
-//                         None,
-//                     );
-//                 });
-//                 d.add_branch(
-//                     "branch3",
-//                     Some(((1274629696, 436917207), (1380380585, 150731897))),
-//                     |d| {
-//                         d.add_leaf(
-//                             "file",
-//                             Some(FSNode::file((1478623745, 355441118), "some content")),
-//                             Some(FSNode::file((1482393259, 727391402), "some content")),
-//                         );
-//                     },
-//                 );
-//                 d.add_branch("branch4", None, |d| {
-//                     d.add_leaf(
-//                         "file",
-//                         Some(FSNode::file((897624970, 16191305), "qwertyuiop")),
-//                         Some(FSNode::file((897624970, 16191305), "asdfghjkl")),
-//                     );
-//                 });
-//                 d.add_branch("disappearing-branch", None, |d| {
-//                     d.add_leaf(
-//                         "disappearing-file",
-//                         Some(FSNode::file((1247543129, 922667729), "zxcvbnm")),
-//                         None,
-//                     );
-//                 });
-//                 d.add_branch("leaf-then-branch", None, |d| {
-//                     d.add_leaf(
-//                         "file",
-//                         Some(FSNode::file((1482393259, 727391402), "something")),
-//                         Some(FSNode::file((1370673776, 14576189), "else")),
-//                     )
-//                 });
-//                 d.add_branch(
-//                     "leaf-then-branch-and-mtime",
-//                     Some(((1325817515, 133346763), (1547840721, 598700627))),
-//                     |d| {
-//                         d.add_leaf(
-//                             "symlink",
-//                             Some(FSNode::symlink((1458719618, 94382097), "path/to/somewhere")),
-//                             Some(FSNode::symlink(
-//                                 (1545042749, 17582128),
-//                                 "some/different/path",
-//                             )),
-//                         )
-//                     },
-//                 );
-//                 d.add_leaf(
-//                     "branch-then-leaf",
-//                     Some(FSNode::dir((1481801479, 584963489), |t| {
-//                         t.add_file("file", (1535751095, 541556742), "text there");
-//                     })),
-//                     None,
-//                 );
-//             });
-//
-//             let merged_delta = Delta::gen_from(|d| {
-//                 d.add_leaf(
-//                     "only-in-succ",
-//                     None,
-//                     Some(FSNode::file((936632440, 451303481), "content")),
-//                 );
-//                 d.add_leaf(
-//                     "only-in-prec",
-//                     None,
-//                     Some(FSNode::file((511296105, 388548694), "also content")),
-//                 );
-//                 d.add_branch(
-//                     "branch1",
-//                     Some(((511296105, 388548694), (926865806, 601491695))),
-//                     |d| {
-//                         d.add_leaf(
-//                             "file1",
-//                             Some(FSNode::file((814015932, 633808148), "other content")),
-//                             None,
-//                         );
-//                         d.add_leaf(
-//                             "file2",
-//                             Some(FSNode::file((671604137, 286842258), "some words")),
-//                             Some(FSNode::file((760709528, 559907222), "different words")),
-//                         );
-//                     },
-//                 );
-//                 d.add_branch(
-//                     "branch2",
-//                     Some(((1265546486, 389473436), (1396487263, 534084134))),
-//                     |d| {
-//                         d.add_leaf(
-//                             "file",
-//                             Some(FSNode::file((1211083411, 596465489), "old content")),
-//                             None,
-//                         );
-//                     },
-//                 );
-//                 d.add_branch(
-//                     "branch3",
-//                     Some(((1274629696, 436917207), (1380380585, 150731897))),
-//                     |d| {
-//                         d.add_leaf(
-//                             "file",
-//                             None,
-//                             Some(FSNode::file((1482393259, 727391402), "some content")),
-//                         );
-//                     },
-//                 );
-//                 d.add_branch("branch4", None, |d| {
-//                     d.add_leaf(
-//                         "file",
-//                         None,
-//                         Some(FSNode::file((897624970, 16191305), "asdfghjkl")),
-//                     );
-//                 });
-//                 d.add_leaf(
-//                     "leaf-then-branch",
-//                     None,
-//                     Some(FSNode::dir((1013348856, 129427648), |t| {
-//                         t.add_file("file", (1370673776, 14576189), "else");
-//                     })),
-//                 );
-//                 d.add_leaf(
-//                     "leaf-then-branch-and-mtime",
-//                     None,
-//                     Some(FSNode::dir((1547840721, 598700627), |t| {
-//                         t.add_symlink("symlink", (1545042749, 17582128), "some/different/path");
-//                     })),
-//                 );
-//                 d.add_leaf(
-//                     "branch-then-leaf",
-//                     Some(FSNode::dir((1446120388, 364679759), |t| {
-//                         t.add_empty_dir("dir", (1533247505, 465403976));
-//                         t.add_file("file", (1535512117, 790483817), "text here");
-//                     })),
-//                     None,
-//                 );
-//             });
-//             succ_delta.merge_prec(&prec_delta).unwrap();
-//             assert_eq!(succ_delta, merged_delta);
-//         }
-//
-//         // Wrong branch postmtime0 premtime1
-//         {
-//             let prec_delta = Delta::gen_from(|d| {
-//                 d.add_empty_branch(
-//                     "dir",
-//                     Some(((1313725245, 996812438), (1437259585, 759869682))),
-//                 );
-//             });
-//             let mut succ_delta = Delta::gen_from(|d| {
-//                 d.add_empty_branch(
-//                     "dir",
-//                     Some(((1451353431, 78039314), (1568981165, 501778746))),
-//                 );
-//             });
-//
-//             assert!(succ_delta.merge_prec(&prec_delta).is_err());
-//         }
-//
-//         // Wrong leaf post0, pre1
-//         {
-//             let prec_delta = Delta::gen_from(|d| {
-//                 d.add_leaf(
-//                     "file",
-//                     None,
-//                     Some(FSNode::file((1350665172, 148856944), "eooo")),
-//                 );
-//             });
-//             let mut succ_delta = Delta::gen_from(|d| {
-//                 d.add_leaf(
-//                     "file",
-//                     Some(FSNode::file((1266391166, 948545626), "iaaa")),
-//                     None,
-//                 );
-//             });
-//
-//             assert!(succ_delta.merge_prec(&prec_delta).is_err());
-//         }
-//
-//         // Wrong leaf then branch mtime postmtime
-//         {
-//             let prec_delta = Delta::gen_from(|d| {
-//                 d.add_leaf("dir", None, Some(FSNode::empty_dir((999704909, 180137536))));
-//             });
-//             let mut succ_delta = Delta::gen_from(|d| {
-//                 d.add_empty_branch(
-//                     "dir",
-//                     Some(((927155718, 657468981), (972110831, 154383606))),
-//                 );
-//             });
-//
-//             assert!(succ_delta.merge_prec(&prec_delta).is_err());
-//         }
-//
-//         // Wrong branch then leaf postmtime mtime
-//         {
-//             let prec_delta = Delta::gen_from(|d| {
-//                 d.add_empty_branch(
-//                     "dir",
-//                     Some(((927155718, 657468981), (972110831, 154383606))),
-//                 );
-//             });
-//             let mut succ_delta = Delta::gen_from(|d| {
-//                 d.add_leaf("dir", Some(FSNode::empty_dir((999704909, 180137536))), None);
-//             });
-//
-//             assert!(succ_delta.merge_prec(&prec_delta).is_err());
-//         }
-//
-//         // Wrong branch then non dir
-//         {
-//             let prec_delta = Delta::gen_from(|d| {
-//                 d.add_empty_branch(
-//                     "dir",
-//                     Some(((927155718, 657468981), (972110831, 154383606))),
-//                 );
-//             });
-//             let mut succ_delta = Delta::gen_from(|d| {
-//                 d.add_leaf(
-//                     "dir",
-//                     Some(FSNode::file((1592510606, 326647757), "hey")),
-//                     None,
-//                 );
-//             });
-//
-//             assert!(succ_delta.merge_prec(&prec_delta).is_err());
-//         }
-//
-//         // Wrong leaf then branch mtime postmtime
-//         {
-//             let prec_delta = Delta::gen_from(|d| {
-//                 d.add_leaf(
-//                     "dir",
-//                     None,
-//                     Some(FSNode::file((999704909, 180137536), "uuuuu")),
-//                 );
-//             });
-//             let mut succ_delta = Delta::gen_from(|d| {
-//                 d.add_empty_branch(
-//                     "dir",
-//                     Some(((927155718, 657468981), (972110831, 154383606))),
-//                 );
-//             });
-//
-//             assert!(succ_delta.merge_prec(&prec_delta).is_err());
-//         }
-//     }
-//
-//     fn subdelta_tree() {
-//         // Correct
-//         {
-//             let delta = Delta::gen_from(|d| {
-//                 d.add_branch("path", None, |d| {
-//                     d.add_branch("to", None, |d| {
-//                         d.add_branch("somewhere", None, |d| {
-//                             d.add_empty_branch(
-//                                 "some-dir",
-//                                 Some(((950699263, 653349505), (999704909, 180137536))),
-//                             );
-//                             d.add_leaf(
-//                                 "some-file",
-//                                 None,
-//                                 Some(FSNode::file((1482493363, 159242111), "content")),
-//                             );
-//                         });
-//                         d.add_branch("new", None, |d| {
-//                             d.add_leaf(
-//                                 "dir",
-//                                 None,
-//                                 Some(FSNode::dir((1343075884, 988762165), |t| {
-//                                     t.add_file("file", (1302727190, 651605513), "test content");
-//                                     t.add_symlink(
-//                                         "symlink",
-//                                         (1280173113, 825083229),
-//                                         "some/random/endpoint",
-//                                     );
-//                                     t.add_dir("subdir", (1280173113, 825083229), |t| {
-//                                         t.add_file("file2", (1305477967, 139210700), "...");
-//                                         t.add_empty_dir("subsubdir", (1289161313, 113559192));
-//                                     });
-//                                 })),
-//                             )
-//                         });
-//                         d.add_branch("old", None, |d| {
-//                             d.add_leaf(
-//                                 "dir",
-//                                 Some(FSNode::dir((1312686096, 98837056), |t| {
-//                                     t.add_file(
-//                                         "file",
-//                                         (1418494687, 489957216),
-//                                         "actual content :)",
-//                                     );
-//                                     t.add_symlink(
-//                                         "symlink",
-//                                         (1464130134, 865466751),
-//                                         "other/random/endpoint",
-//                                     );
-//                                     t.add_dir("subdir", (1280267826, 170987648), |t| {
-//                                         t.add_file("file2", (1451801950, 961804716), "!!!");
-//                                         t.add_empty_dir("subsubdir", (1401825462, 746027656));
-//                                     });
-//                                 })),
-//                                 None,
-//                             )
-//                         });
-//                         d.add_leaf(
-//                             "file",
-//                             Some(FSNode::file((1215595033, 169443440), "boring")),
-//                             Some(FSNode::file((1226600804, 801330900), "interesting")),
-//                         );
-//                     });
-//                 });
-//                 d.add_branch("non", None, |d| {
-//                     d.add_empty_branch(
-//                         "existing",
-//                         Some(((1234963364, 638624210), (1283803802, 968704076))),
-//                     );
-//                 });
-//             });
-//
-//             assert_eq!(
-//                 delta.get_subdelta_tree_copy(&AbstPath::from("path/to/somewhere")),
-//                 Some(Delta::gen_from(|d| {
-//                     d.add_empty_branch(
-//                         "some-dir",
-//                         Some(((950699263, 653349505), (999704909, 180137536))),
-//                     );
-//                     d.add_leaf(
-//                         "some-file",
-//                         None,
-//                         Some(FSNode::file((1482493363, 159242111), "content")),
-//                     );
-//                 }))
-//             );
-//
-//             assert_eq!(
-//                 delta.get_subdelta_tree_copy(&AbstPath::from("path/to/new/dir")),
-//                 Some(Delta::gen_from(|d| {
-//                     d.add_leaf(
-//                         "file",
-//                         None,
-//                         Some(FSNode::file((1302727190, 651605513), "test content")),
-//                     );
-//                     d.add_leaf(
-//                         "symlink",
-//                         None,
-//                         Some(FSNode::symlink(
-//                             (1280173113, 825083229),
-//                             "some/random/endpoint",
-//                         )),
-//                     );
-//                     d.add_leaf(
-//                         "subdir",
-//                         None,
-//                         Some(FSNode::dir((1280173113, 825083229), |t| {
-//                             t.add_file("file2", (1305477967, 139210700), "...");
-//                             t.add_empty_dir("subsubdir", (1289161313, 113559192));
-//                         })),
-//                     );
-//                 }))
-//             );
-//
-//             assert_eq!(
-//                 delta.get_subdelta_tree_copy(&AbstPath::from("path/to/old/dir")),
-//                 Some(Delta::gen_from(|d| {
-//                     d.add_leaf(
-//                         "file",
-//                         Some(FSNode::file((1418494687, 489957216), "actual content :)")),
-//                         None,
-//                     );
-//                     d.add_leaf(
-//                         "symlink",
-//                         Some(FSNode::symlink(
-//                             (1464130134, 865466751),
-//                             "other/random/endpoint",
-//                         )),
-//                         None,
-//                     );
-//                     d.add_leaf(
-//                         "subdir",
-//                         Some(FSNode::dir((1280267826, 170987648), |t| {
-//                             t.add_file("file2", (1451801950, 961804716), "!!!");
-//                             t.add_empty_dir("subsubdir", (1401825462, 746027656));
-//                         })),
-//                         None,
-//                     );
-//                 }))
-//             );
-//
-//             assert_eq!(
-//                 delta.get_subdelta_tree_copy(&AbstPath::from("path/to/file")),
-//                 None
-//             );
-//
-//             assert_eq!(
-//                 delta.get_subdelta_tree_copy(&AbstPath::from("non/existing/path")),
-//                 None
-//             );
-//         }
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use abst_fs::AbstPath;
+
+    use super::{
+        super::get_delta, push_unmerg, unmergerr, Delta, FSNode, FSTree, UnmergeableDelta,
+    };
+
+    #[test]
+    fn test_error() {
+        let err = unmergerr(AbstPath::from("name"), "some error");
+        assert_eq!(
+            UnmergeableDelta(AbstPath::from("name"), String::from("some error")),
+            err
+        );
+        assert_eq!(
+            UnmergeableDelta(AbstPath::from("parent/name"), String::from("some error")),
+            push_unmerg("parent")(err)
+        );
+    }
+
+    #[test]
+    fn test_merge() {
+        // There are four states in which an object can exist inside an FSTree:
+        // None, Some(File), Some(Symlink) and Some(Dir). A delta is basically
+        // a pair of states (initial state and final state) of that object. A
+        // pair of delta is basically a triplet of states (initial state, mid
+        // state and final state) of the object. We will now create a pair of
+        // delta that contains all the possible triplets.
+        // An object called "file-file-none" will represent an object that
+        // starts as a file, gets edited into a different file in the first
+        // delta and gets removed in the second delta.
+
+        let pre = [
+            ("none", None),
+            (
+                "file",
+                Some(FSNode::file((1664606882, 650210987), "content 0")),
+            ),
+            (
+                "symlink",
+                Some(FSNode::symlink((1664625081, 899946721), "path/to/0")),
+            ),
+            (
+                "dir",
+                Some(FSNode::dir((1664682506, 502056697), |t| {
+                    t.add_file("some-file", (1664646746, 532084290), "content 1");
+                    t.add_symlink("some-symlink", (1664661848, 602576901), "path/to/1");
+                    t.add_empty_dir("some-dir", (1664674840, 688825981));
+                })),
+            ),
+        ];
+        let mid = [
+            ("none", None),
+            (
+                "file",
+                Some(FSNode::file((1664688708, 831226577), "content 2")),
+            ),
+            (
+                "symlink",
+                Some(FSNode::symlink((1664729718, 723043252), "path/to/2")),
+            ),
+            (
+                "dir",
+                Some(FSNode::dir((1664858680, 525212767), |t| {
+                    t.add_file("some-file", (1664778889, 378546643), "content 3");
+                    t.add_symlink("some-symlink", (1664803756, 119510765), "path/to/3");
+                    t.add_empty_dir("some-dir", (1664848992, 505965488));
+                })),
+            ),
+        ];
+        let post = [
+            ("none", None),
+            (
+                "file",
+                Some(FSNode::file((1664891266, 931780439), "content 4")),
+            ),
+            (
+                "symlink",
+                Some(FSNode::symlink((1664898305, 223815908), "path/to/4")),
+            ),
+            (
+                "dir",
+                Some(FSNode::dir((1664997583, 776691130), |t| {
+                    t.add_file("some-file", (1664935309, 24083582), "content 5");
+                    t.add_symlink("some-symlink", (1664954522, 993865018), "path/to/5");
+                    t.add_empty_dir("some-dir", (1664982104, 716018057));
+                })),
+            ),
+        ];
+
+        let mut pre_fstree_map = HashMap::new();
+        let mut mid_fstree_map = HashMap::new();
+        let mut post_fstree_map = HashMap::new();
+        for (pre_type, pre_node) in &pre {
+            for (mid_type, mid_node) in &mid {
+                for (post_type, post_node) in &post {
+                    let name = format!("{pre_type}-{mid_type}-{post_type}");
+
+                    if let Some(node) = pre_node {
+                        pre_fstree_map.insert(name.clone(), node.clone());
+                    }
+                    if let Some(node) = mid_node {
+                        mid_fstree_map.insert(name.clone(), node.clone());
+                    }
+                    if let Some(node) = post_node {
+                        post_fstree_map.insert(name.clone(), node.clone());
+                    }
+                }
+
+                // This part is to make sure that objects that deltas about
+                // objects that get changed and then reverted to original get
+                // deleted in the merge as effectively the total delta does
+                // not change said object
+                let name = format!("{pre_type}-{mid_type}-old{pre_type}");
+
+                if let Some(node) = pre_node {
+                    pre_fstree_map.insert(name.clone(), node.clone());
+                    post_fstree_map.insert(name.clone(), node.clone());
+                }
+                if let Some(node) = mid_node {
+                    mid_fstree_map.insert(name.clone(), node.clone());
+                }
+            }
+        }
+
+        let pre_fstree = FSTree(pre_fstree_map);
+        let mid_fstree = FSTree(mid_fstree_map);
+        let post_fstree = FSTree(post_fstree_map);
+
+        let prec_delta = get_delta(&pre_fstree, &mid_fstree);
+        let mut succ_delta = get_delta(&mid_fstree, &post_fstree);
+        let total_delta = get_delta(&pre_fstree, &post_fstree);
+
+        succ_delta.merge_prec(&prec_delta).unwrap();
+        assert_eq!(succ_delta, total_delta);
+    }
+
+    #[test]
+    fn test_merge_error() {
+        // Wrong leaf post0, pre1 (existing/nonexisting, mismatching or wrong)
+        let pre = [
+            None,
+            Some(FSNode::file((1664590305, 648768843), "content 0")),
+            Some(FSNode::symlink((1664607464, 223391226), "path/to/0")),
+            Some(FSNode::dir((1664706448, 871350601), |t| {
+                t.add_file("some-file", (1664654009, 36535473), "content 1");
+                t.add_symlink("some-symlink", (1664670155, 581396374), "path/to/1");
+                t.add_empty_dir("some-dir", (1664678903, 825411342));
+            })),
+        ];
+        let mid_1 = [
+            None,
+            Some(FSNode::file((1664732150, 816499870), "content 2")),
+            Some(FSNode::symlink((1664744953, 143739934), "path/to/2")),
+            Some(FSNode::dir((1664818488, 958261489), |t| {
+                t.add_file("some-file", (1664757442, 427289926), "content 3");
+                t.add_symlink("some-symlink", (1664766153, 339479581), "path/to/3");
+                t.add_empty_dir("some-dir", (1664800533, 433225235));
+            })),
+        ];
+        let mid_2 = [
+            None,
+            Some(FSNode::file((1664856996, 55239376), "content 4")),
+            Some(FSNode::symlink((1664874354, 319493207), "path/to/4")),
+            Some(FSNode::dir((1664940824, 121523023), |t| {
+                t.add_file("some-file", (1664880822, 366993072), "content 5");
+                t.add_symlink("some-symlink", (1664916275, 806650459), "path/to/5");
+                t.add_empty_dir("some-dir", (1664924516, 487361010));
+            })),
+        ];
+        let post = [
+            None,
+            Some(FSNode::file((1664989787, 201175353), "content 6")),
+            Some(FSNode::symlink((1665003649, 81596856), "path/to/6")),
+            Some(FSNode::dir((1665132254, 741051682), |t| {
+                t.add_file("some-file", (1665051410, 655625476), "content 3");
+                t.add_symlink("some-symlink", (1665075120, 602812525), "path/to/3");
+                t.add_empty_dir("some-dir", (1665104664, 708032682));
+            })),
+        ];
+
+        for pre_node in &pre {
+            for mid_1_node in &mid_1 {
+                for mid_2_node in &mid_2 {
+                    for post_node in &post {
+                        // Let's break down the following guards:
+                        // - mid_1_node.is_some() || mid_2_node.is_some()
+                        //      at least one of the two midstates has to be
+                        //      Some because if they're both None then there is
+                        //      no mismatching or wrong object going on, that
+                        //      would be just deleting an object and creating
+                        //      another in its place, which is a valid
+                        //      behaviour
+                        // - pre_node.is_some() || mid_1_node.is_some()
+                        //      at least one of the two states of the
+                        //      prec_delta has to be some because if they're
+                        //      both None then the prec_delta is empty and is
+                        //      therefore compatible with any succ_delta
+                        // - mid_2_node.is_some() || post_node.is_some()
+                        //      same reasoning as the previous guard
+                        if (mid_1_node.is_some() || mid_2_node.is_some())
+                            && (pre_node.is_some() || mid_1_node.is_some())
+                            && (mid_2_node.is_some() || post_node.is_some())
+                        {
+                            let pre_fstree = match pre_node {
+                                None => FSTree::empty(),
+                                Some(node) => {
+                                    FSTree(HashMap::from([(String::from("object"), node.clone())]))
+                                }
+                            };
+                            let mid_1_fstree = match mid_1_node {
+                                None => FSTree::empty(),
+                                Some(node) => {
+                                    FSTree(HashMap::from([(String::from("object"), node.clone())]))
+                                }
+                            };
+                            let mid_2_fstree = match mid_2_node {
+                                None => FSTree::empty(),
+                                Some(node) => {
+                                    FSTree(HashMap::from([(String::from("object"), node.clone())]))
+                                }
+                            };
+                            let post_fstree = match post_node {
+                                None => FSTree::empty(),
+                                Some(node) => {
+                                    FSTree(HashMap::from([(String::from("object"), node.clone())]))
+                                }
+                            };
+
+                            let prec_delta = get_delta(&pre_fstree, &mid_1_fstree);
+                            let mut succ_delta = get_delta(&mid_2_fstree, &post_fstree);
+                            assert!(succ_delta.merge_prec(&prec_delta).is_err());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Nested error
+        let prec_delta = Delta::gen_from(|d| {
+            d.add_branch(
+                "dir",
+                ((1665174601, 548198391), (1665209483, 852333001)),
+                |d| {
+                    d.add_leaf(
+                        "file",
+                        None,
+                        Some(FSNode::file((1665148898, 367694017), "content 0")),
+                    );
+                },
+            );
+        });
+        let mut succ_delta = Delta::gen_from(|d| {
+            d.add_branch(
+                "dir",
+                ((1665209483, 852333001), (1665302960, 387756074)),
+                |d| {
+                    d.add_leaf(
+                        "file",
+                        Some(FSNode::file((1665247521, 128612996), "content 1")),
+                        Some(FSNode::file((1665269806, 237275940), "content 2")),
+                    );
+                },
+            );
+        });
+        assert!(succ_delta.merge_prec(&prec_delta).is_err());
+    }
+
+    #[test]
+    fn test_subdelta_tree() {
+        let delta = Delta::gen_from(|d| {
+            d.add_branch(
+                "path",
+                ((1665023819, 356526576), (1665369758, 725521665)),
+                |d| {
+                    d.add_branch(
+                        "to",
+                        ((1664985625, 116366659), (1665323455, 909172992)),
+                        |d| {
+                            d.add_branch(
+                                "somewhere",
+                                ((1664736554, 869045099), (1665173730, 551392714)),
+                                |d| {
+                                    d.add_leaf(
+                                        "old-file",
+                                        Some(FSNode::file((1664613202, 830966602), "content 0")),
+                                        None,
+                                    );
+                                    d.add_leaf(
+                                        "old-symlink",
+                                        Some(FSNode::symlink((1664628389, 889122338), "path/to/0")),
+                                        None,
+                                    );
+                                    d.add_leaf(
+                                        "old-dir",
+                                        Some(FSNode::dir((1664702802, 796843211), |t| {
+                                            t.add_file(
+                                                "some-file",
+                                                (1664664052, 629441456),
+                                                "content 1",
+                                            );
+                                            t.add_symlink(
+                                                "some-symlink",
+                                                (1664679922, 100679229),
+                                                "path/to/1",
+                                            );
+                                            t.add_empty_dir("some-dir", (1664686245, 984602116));
+                                        })),
+                                        None,
+                                    );
+                                    d.add_leaf(
+                                        "new-file",
+                                        None,
+                                        Some(FSNode::file((1665031266, 679056252), "content 2")),
+                                    );
+                                    d.add_leaf(
+                                        "new-symlink",
+                                        None,
+                                        Some(FSNode::symlink((1665077293, 436086456), "path/to/2")),
+                                    );
+                                    d.add_leaf(
+                                        "new-dir",
+                                        None,
+                                        Some(FSNode::empty_dir((1665091794, 188717306))),
+                                    );
+                                },
+                            );
+                            d.add_branch(
+                                "new",
+                                ((1664785722, 448231979), (1665269289, 252217136)),
+                                |d| {
+                                    d.add_leaf(
+                                        "dir",
+                                        None,
+                                        Some(FSNode::dir((1665256237, 734756460), |t| {
+                                            t.add_file(
+                                                "some-file",
+                                                (1665194696, 846252069),
+                                                "content 3",
+                                            );
+                                            t.add_symlink(
+                                                "some-symlink",
+                                                (1665212881, 695443303),
+                                                "path/to/3",
+                                            );
+                                            t.add_empty_dir("some-dir", (1665242775, 322518411));
+                                        })),
+                                    );
+                                },
+                            );
+                            d.add_branch(
+                                "old",
+                                ((1664934804, 287245727), (1665293022, 200825086)),
+                                |d| {
+                                    d.add_leaf(
+                                        "dir",
+                                        Some(FSNode::dir((1664889419, 740090713), |t| {
+                                            t.add_file(
+                                                "some-file",
+                                                (1664819756, 563532835),
+                                                "content 4",
+                                            );
+                                            t.add_symlink(
+                                                "some-symlink",
+                                                (1664828993, 352188126),
+                                                "path/to/4",
+                                            );
+                                            t.add_empty_dir("some-dir", (1664842021, 681499423));
+                                        })),
+                                        None,
+                                    );
+                                },
+                            );
+                            d.add_leaf(
+                                "file",
+                                Some(FSNode::file((1664948235, 972227892), "content 5")),
+                                Some(FSNode::file((1665317543, 691944051), "content 6")),
+                            );
+                        },
+                    );
+                },
+            );
+        });
+
+        assert_eq!(
+            delta.get_subdelta_tree_copy(&AbstPath::from("path/to/somewhere")),
+            Some(Delta::gen_from(|d| {
+                d.add_leaf(
+                    "old-file",
+                    Some(FSNode::file((1664613202, 830966602), "content 0")),
+                    None,
+                );
+                d.add_leaf(
+                    "old-symlink",
+                    Some(FSNode::symlink((1664628389, 889122338), "path/to/0")),
+                    None,
+                );
+                d.add_leaf(
+                    "old-dir",
+                    Some(FSNode::dir((1664702802, 796843211), |t| {
+                        t.add_file("some-file", (1664664052, 629441456), "content 1");
+                        t.add_symlink("some-symlink", (1664679922, 100679229), "path/to/1");
+                        t.add_empty_dir("some-dir", (1664686245, 984602116));
+                    })),
+                    None,
+                );
+                d.add_leaf(
+                    "new-file",
+                    None,
+                    Some(FSNode::file((1665031266, 679056252), "content 2")),
+                );
+                d.add_leaf(
+                    "new-symlink",
+                    None,
+                    Some(FSNode::symlink((1665077293, 436086456), "path/to/2")),
+                );
+                d.add_leaf(
+                    "new-dir",
+                    None,
+                    Some(FSNode::empty_dir((1665091794, 188717306))),
+                );
+            }))
+        );
+
+        assert_eq!(
+            delta.get_subdelta_tree_copy(&AbstPath::from("path/to/new/dir")),
+            Some(Delta::gen_from(|d| {
+                d.add_leaf(
+                    "some-file",
+                    None,
+                    Some(FSNode::file((1665194696, 846252069), "content 3")),
+                );
+                d.add_leaf(
+                    "some-symlink",
+                    None,
+                    Some(FSNode::symlink((1665212881, 695443303), "path/to/3")),
+                );
+                d.add_leaf(
+                    "some-dir",
+                    None,
+                    Some(FSNode::empty_dir((1665242775, 322518411))),
+                );
+            }))
+        );
+
+        assert_eq!(
+            delta.get_subdelta_tree_copy(&AbstPath::from("path/to/old/dir")),
+            Some(Delta::gen_from(|d| {
+                d.add_leaf(
+                    "some-file",
+                    Some(FSNode::file((1664819756, 563532835), "content 4")),
+                    None,
+                );
+                d.add_leaf(
+                    "some-symlink",
+                    Some(FSNode::symlink((1664828993, 352188126), "path/to/4")),
+                    None,
+                );
+                d.add_leaf(
+                    "some-dir",
+                    Some(FSNode::empty_dir((1664842021, 681499423))),
+                    None,
+                );
+            }))
+        );
+
+        assert_eq!(
+            delta.get_subdelta_tree_copy(&AbstPath::from("path/to/file")),
+            None
+        );
+
+        assert_eq!(
+            delta.get_subdelta_tree_copy(&AbstPath::from("non/existing/path")),
+            None
+        );
+    }
+}
