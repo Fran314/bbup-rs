@@ -120,71 +120,72 @@ pub fn generate_fstree(root: &AbstPath, exclude_list: &ExcludeList) -> Result<FS
     if root.object_type() != Some(ObjectType::Dir) {
         return Err(FSTreeError::NonDirEntryPoint { path: root.clone() });
     }
-    generate_fstree_rec(root, &AbstPath::single("."), exclude_list)
-}
 
-fn generate_fstree_rec(
-    path: &AbstPath,
-    rel_path: &AbstPath,
-    exclude_list: &ExcludeList,
-) -> Result<FSTree, FSTreeError> {
-    let errctx = error_context(format!(
-        "could not generate fstree from subtree at path {path}"
-    ));
-    let mut tree: HashMap<String, FSNode> = HashMap::new();
+    // Recursive inner function with initialized parameters with default values
+    fn recursion(
+        path: &AbstPath,
+        rel_path: &AbstPath,
+        exclude_list: &ExcludeList,
+    ) -> Result<FSTree, FSTreeError> {
+        let errctx = error_context(format!(
+            "could not generate fstree from subtree at path {path}"
+        ));
+        let mut tree: HashMap<String, FSNode> = HashMap::new();
 
-    let read_dir_instance =
-        fs::list_dir_content(path).map_err(inerr(errctx("list content of dir")))?;
-    for entry in read_dir_instance {
-        let objec_type = entry.object_type().ok_or_else(|| {
-            generr(
-                errctx(format!("get type of child at path {entry}").as_str()),
-                "child should exist but doesn't have a type (as if it doesn't exist)",
-            )
-        })?;
-        let file_name = entry.file_name().ok_or_else(|| {
-            generr(
-                errctx(format!("get filename of child at path {entry}").as_str()),
-                "child path might be ending in `..`",
-            )
-        })?;
-        let rel_subpath = rel_path.add_last(&file_name);
-        if exclude_list.should_exclude(&rel_subpath, objec_type == ObjectType::Dir) {
-            continue;
+        let read_dir_instance =
+            fs::list_dir_content(path).map_err(inerr(errctx("list content of dir")))?;
+        for entry in read_dir_instance {
+            let objec_type = entry.object_type().ok_or_else(|| {
+                generr(
+                    errctx(format!("get type of child at path {entry}").as_str()),
+                    "child should exist but doesn't have a type (as if it doesn't exist)",
+                )
+            })?;
+            let file_name = entry.file_name().ok_or_else(|| {
+                generr(
+                    errctx(format!("get filename of child at path {entry}").as_str()),
+                    "child path might be ending in `..`",
+                )
+            })?;
+            let rel_subpath = rel_path.add_last(&file_name);
+            if exclude_list.should_exclude(&rel_subpath, objec_type == ObjectType::Dir) {
+                continue;
+            }
+
+            let node = match objec_type {
+                ObjectType::Dir => {
+                    let mtime = fs::get_mtime(&entry).map_err(inerr(errctx(
+                        format!("get mtime of dir at path {entry}").as_str(),
+                    )))?;
+                    let subtree = recursion(&entry, &rel_subpath, exclude_list)?;
+                    let hash = hash_tree(&subtree);
+                    FSNode::Dir(mtime, hash, subtree)
+                }
+                ObjectType::File => {
+                    let mtime = fs::get_mtime(&entry).map_err(inerr(errctx(
+                        format!("get mtime of file at path {entry}").as_str(),
+                    )))?;
+                    let hash = hash_file(&entry)
+                        .map_err(inerr(errctx(format!("hash file at path {entry}").as_str())))?;
+                    FSNode::File(mtime, hash)
+                }
+                ObjectType::SymLink => {
+                    let mtime = fs::get_mtime(&entry).map_err(inerr(errctx(
+                        format!("get mtime of symlink at path {entry}").as_str(),
+                    )))?;
+                    let hash = hash_symlink(&entry).map_err(inerr(errctx(
+                        format!("hash symlink at path {entry}").as_str(),
+                    )))?;
+                    FSNode::SymLink(mtime, hash)
+                }
+            };
+
+            tree.insert(file_name, node);
         }
-
-        let node = match objec_type {
-            ObjectType::Dir => {
-                let mtime = fs::get_mtime(&entry).map_err(inerr(errctx(
-                    format!("get mtime of dir at path {entry}").as_str(),
-                )))?;
-                let subtree = generate_fstree_rec(&entry, &rel_subpath, exclude_list)?;
-                let hash = hash_tree(&subtree);
-                FSNode::Dir(mtime, hash, subtree)
-            }
-            ObjectType::File => {
-                let mtime = fs::get_mtime(&entry).map_err(inerr(errctx(
-                    format!("get mtime of file at path {entry}").as_str(),
-                )))?;
-                let hash = hash_file(&entry)
-                    .map_err(inerr(errctx(format!("hash file at path {entry}").as_str())))?;
-                FSNode::File(mtime, hash)
-            }
-            ObjectType::SymLink => {
-                let mtime = fs::get_mtime(&entry).map_err(inerr(errctx(
-                    format!("get mtime of symlink at path {entry}").as_str(),
-                )))?;
-                let hash = hash_symlink(&entry).map_err(inerr(errctx(
-                    format!("hash symlink at path {entry}").as_str(),
-                )))?;
-                FSNode::SymLink(mtime, hash)
-            }
-        };
-
-        tree.insert(file_name, node);
+        Ok(FSTree(tree))
     }
 
-    Ok(FSTree(tree))
+    recursion(root, &AbstPath::single("."), exclude_list)
 }
 
 #[cfg(test)]

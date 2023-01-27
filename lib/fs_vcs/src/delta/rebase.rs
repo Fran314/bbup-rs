@@ -21,7 +21,7 @@ impl Delta {
         fstree: &FSTree,
         endpoint: &AbstPath,
     ) -> Result<Delta, UnrebasableDelta> {
-        // Recursive inner method with initialized parameters with default
+        // Recursive inner function with initialized parameters with default
         // values
         fn recursion(
             delta: &Delta,

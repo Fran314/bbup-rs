@@ -2,7 +2,7 @@ use super::{hash_tree, AbstPath, Delta, DeltaNode, ExcludeList, FSNode, FSTree};
 use abst_fs::Mtime;
 
 impl FSTree {
-    fn filter_out_rec(&mut self, rel_path: &AbstPath, exclude_list: &ExcludeList) {
+    fn filter_out(&mut self, rel_path: &AbstPath, exclude_list: &ExcludeList) {
         let FSTree(tree) = self;
         tree.retain(|name, child| match child {
             FSNode::File(_, _) => !exclude_list.should_exclude(&rel_path.add_last(name), false),
@@ -11,7 +11,7 @@ impl FSTree {
                 if exclude_list.should_exclude(&rel_path.add_last(name), true) {
                     return false;
                 }
-                subtree.filter_out_rec(&rel_path.add_last(name), exclude_list);
+                subtree.filter_out(&rel_path.add_last(name), exclude_list);
                 *hash = hash_tree(subtree);
                 true
             }
@@ -22,48 +22,51 @@ impl FSTree {
 impl Delta {
     // TODO maybe these should return something about what they have filtered out?
     pub fn filter_out(&mut self, exclude_list: &ExcludeList) {
-        self.filter_out_rec(&AbstPath::single("."), exclude_list);
-    }
-    fn filter_out_rec(&mut self, rel_path: &AbstPath, exclude_list: &ExcludeList) {
-        let Delta(tree) = self;
-        for (name, child) in tree {
-            match child {
-                DeltaNode::Leaf(pre, post) => {
-                    let is_pre_dir = if let Some(FSNode::Dir(_, hash, subtree)) = pre {
-                        subtree.filter_out_rec(&rel_path.add_last(name), exclude_list);
-                        *hash = hash_tree(subtree);
-                        true
-                    } else {
-                        false
-                    };
-                    if exclude_list.should_exclude(&rel_path.add_last(name), is_pre_dir) {
-                        *pre = None;
-                    }
+        // Recursive inner function with initialized parameters with default
+        // values
+        fn recursion(delta: &mut Delta, rel_path: &AbstPath, exclude_list: &ExcludeList) {
+            let Delta(tree) = delta;
+            for (name, child) in tree {
+                match child {
+                    DeltaNode::Leaf(pre, post) => {
+                        let is_pre_dir = if let Some(FSNode::Dir(_, hash, subtree)) = pre {
+                            subtree.filter_out(&rel_path.add_last(name), exclude_list);
+                            *hash = hash_tree(subtree);
+                            true
+                        } else {
+                            false
+                        };
+                        if exclude_list.should_exclude(&rel_path.add_last(name), is_pre_dir) {
+                            *pre = None;
+                        }
 
-                    let is_post_dir = if let Some(FSNode::Dir(_, hash, subtree)) = post {
-                        subtree.filter_out_rec(&rel_path.add_last(name), exclude_list);
-                        *hash = hash_tree(subtree);
-                        true
-                    } else {
-                        false
-                    };
-                    if exclude_list.should_exclude(&rel_path.add_last(name), is_post_dir) {
-                        *post = None;
+                        let is_post_dir = if let Some(FSNode::Dir(_, hash, subtree)) = post {
+                            subtree.filter_out(&rel_path.add_last(name), exclude_list);
+                            *hash = hash_tree(subtree);
+                            true
+                        } else {
+                            false
+                        };
+                        if exclude_list.should_exclude(&rel_path.add_last(name), is_post_dir) {
+                            *post = None;
+                        }
                     }
-                }
-                DeltaNode::Branch(optm, subdelta) => {
-                    if exclude_list.should_exclude(&rel_path.add_last(name), true) {
-                        // Make it so that the branch will be removed once the
-                        //	delta gets shaken at the end of the function
-                        *optm = (Mtime::from(0, 0), Mtime::from(0, 0));
-                        *subdelta = Delta::empty();
-                    } else {
-                        subdelta.filter_out_rec(&rel_path.add_last(name), exclude_list);
+                    DeltaNode::Branch(optm, subdelta) => {
+                        if exclude_list.should_exclude(&rel_path.add_last(name), true) {
+                            // Make it so that the branch will be removed once the
+                            //	delta gets shaken at the end of the function
+                            *optm = (Mtime::from(0, 0), Mtime::from(0, 0));
+                            *subdelta = Delta::empty();
+                        } else {
+                            recursion(subdelta, &rel_path.add_last(name), exclude_list);
+                        }
                     }
                 }
             }
+            delta.shake();
         }
-        self.shake();
+
+        recursion(self, &AbstPath::single("."), exclude_list);
     }
 }
 
