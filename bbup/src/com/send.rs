@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use super::{
-    bbupcom::{error_context, generr, inerr, Error, Query, Queryable},
+    bbupcom::{error_context, generr, inerr, Error, Query},
     BbupCom, ProgressWriter,
 };
 
@@ -120,7 +120,7 @@ impl BbupCom {
 
     pub async fn supply_files(
         &mut self,
-        queryable: &[AbstPath],
+        queryable: Vec<AbstPath>,
         source: &AbstPath,
     ) -> Result<(), Error> {
         let errmsg = String::from("could not supply files and symlinks");
@@ -131,7 +131,8 @@ impl BbupCom {
                 .await
                 .map_err(inerr(errctx("get query".to_string())))?;
             match query {
-                Query::Object(qb, rel_path) => {
+                Query::Stop => break,
+                Query::File(rel_path) => {
                     if !queryable.iter().any(|qp| qp.eq(&rel_path)) {
                         self.send_error(1, "quered file at path not allowed")
                             .await
@@ -145,30 +146,11 @@ impl BbupCom {
                             ),
                         ));
                     }
-
-                    match qb {
-                        Queryable::File => {
-                            let path = source.append(&rel_path);
-                            self.send_file_from(&path)
-                                .await
-                                .map_err(inerr(errctx(format!(
-                                    "send quered file at path {path}"
-                                ))))?;
-                        }
-                        Queryable::SymLink => {
-                            let path = source.append(&rel_path);
-                            let symlink_endpoint = fs::read_link(&path).map_err(inerr(errctx(
-                                format!("get endpoint of quered symlink at path {path}"),
-                            )))?;
-                            self.send_struct(symlink_endpoint)
-                                .await
-                                .map_err(inerr(errctx(format!(
-                                    "send endpoint of quered symlink at path {path}"
-                                ))))?;
-                        }
-                    }
+                    let path = source.append(&rel_path);
+                    self.send_file_from(&path)
+                        .await
+                        .map_err(inerr(errctx(format!("send quered file at path {path}"))))?;
                 }
-                Query::Stop => break,
             }
         }
 

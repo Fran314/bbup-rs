@@ -1,4 +1,4 @@
-use abst_fs::{AbstPath, Mtime};
+use abst_fs::{AbstPath, Endpoint, Mtime};
 
 use hasher::Hash;
 
@@ -10,10 +10,10 @@ use thiserror::Error;
 pub enum Action {
     AddDir,
     AddFile(Mtime, Hash),
-    AddSymLink(Mtime, Hash),
+    AddSymLink(Mtime, Endpoint),
     EditDir(Mtime),
     EditFile(Mtime, Option<Hash>),
-    EditSymLink(Mtime, Option<Hash>),
+    EditSymLink(Mtime, Option<Endpoint>),
     RemoveDir,
     RemoveFile,
     RemoveSymLink,
@@ -21,6 +21,8 @@ pub enum Action {
 
 #[derive(Debug)]
 pub struct Actions(Vec<(AbstPath, Action)>);
+// TODO
+// remove this once Actions get properly ordered (which is also a TODO)
 impl PartialEq for Actions {
     fn eq(&self, other: &Self) -> bool {
         self.0.len() == other.0.len()
@@ -108,9 +110,9 @@ impl FSNode {
                 AbstPath::empty(),
                 Action::AddFile(mtime.clone(), hash.clone()),
             ),
-            FSNode::SymLink(mtime, hash) => actions.push(
+            FSNode::SymLink(mtime, endpoint) => actions.push(
                 AbstPath::empty(),
-                Action::AddSymLink(mtime.clone(), hash.clone()),
+                Action::AddSymLink(mtime.clone(), endpoint.clone()),
             ),
             FSNode::Dir(mtime, _, subtree) => {
                 actions.append(&mut subtree.to_add_actions(mtime));
@@ -181,9 +183,9 @@ impl DeltaNode {
                     ));
                 }
             }
-            DeltaNode::Leaf(Some(FSNode::SymLink(m0, h0)), Some(FSNode::SymLink(m1, h1))) => {
-                if m0.ne(m1) || h0.ne(h1) {
-                    let opth = if h0.ne(h1) { Some(h1.clone()) } else { None };
+            DeltaNode::Leaf(Some(FSNode::SymLink(m0, e0)), Some(FSNode::SymLink(m1, e1))) => {
+                if m0.ne(m1) || e0.ne(e1) {
+                    let opth = if e0.ne(e1) { Some(e1.clone()) } else { None };
                     actions.push(AbstPath::empty(), Action::EditSymLink(m1.clone(), opth));
                 } else {
                     return Err(toacterr(
@@ -214,10 +216,10 @@ impl DeltaNode {
                             Action::AddFile(mtime.clone(), hash.clone()),
                         );
                     }
-                    Some(FSNode::SymLink(mtime, hash)) => {
+                    Some(FSNode::SymLink(mtime, endpoint)) => {
                         actions.push(
                             AbstPath::empty(),
-                            Action::AddSymLink(mtime.clone(), hash.clone()),
+                            Action::AddSymLink(mtime.clone(), endpoint.clone()),
                         );
                     }
                     Some(FSNode::Dir(mtime, _, subtree)) => {
@@ -266,10 +268,10 @@ fn add_tree_actions(
                 }
             }
             (
-                Some(FSNode::SymLink(loc_mtime, loc_hash)),
-                FSNode::SymLink(miss_mtime, miss_hash),
+                Some(FSNode::SymLink(loc_mtime, loc_endpoint)),
+                FSNode::SymLink(miss_mtime, miss_endpoint),
             ) => {
-                if miss_hash == loc_hash {
+                if miss_endpoint == loc_endpoint {
                     if miss_mtime != loc_mtime {
                         necessary_actions.push(
                             AbstPath::single(name),
@@ -424,10 +426,10 @@ pub fn get_actions(Delta(local): &Delta, Delta(missed): &Delta) -> Result<Action
 
                 // Symlinks recieve the same treatment as files
                 (
-                    DeltaNode::Leaf(_, Some(FSNode::SymLink(loc_mtime, loc_hash))),
-                    DeltaNode::Leaf(_, Some(FSNode::SymLink(miss_mtime, miss_hash))),
+                    DeltaNode::Leaf(_, Some(FSNode::SymLink(loc_mtime, loc_endpoint))),
+                    DeltaNode::Leaf(_, Some(FSNode::SymLink(miss_mtime, miss_endpoint))),
                 ) => {
-                    if loc_hash == miss_hash {
+                    if loc_endpoint == miss_endpoint {
                         if loc_mtime != miss_mtime {
                             necessary_actions.push(
                                 AbstPath::single(name),
@@ -501,7 +503,7 @@ mod tests {
             AbstPath::from(path),
             Action::AddSymLink(
                 Mtime::from(mtime.0, mtime.1),
-                hasher::hash_bytes(Endpoint::Unix(endpoint.to_string()).as_bytes()),
+                Endpoint::Unix(endpoint.to_string()),
             ),
         )
     }
@@ -533,7 +535,7 @@ mod tests {
             AbstPath::from(path),
             Action::EditSymLink(
                 Mtime::from(mtime.0, mtime.1),
-                endpoint.map(|val| hasher::hash_bytes(Endpoint::Unix(val.to_string()).as_bytes())),
+                endpoint.map(|val| Endpoint::Unix(val.to_string())),
             ),
         )
     }

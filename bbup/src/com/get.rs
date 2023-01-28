@@ -1,4 +1,4 @@
-use abst_fs::{self as fs, AbstPath, Endpoint};
+use abst_fs::{self as fs, AbstPath};
 
 use hasher::Hash;
 
@@ -7,7 +7,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::{
     bbupcom::{error_context, generr, inerr, Error, Query},
-    BbupCom, ProgressReader, Queryable,
+    BbupCom, ProgressReader,
 };
 
 impl BbupCom {
@@ -130,52 +130,35 @@ impl BbupCom {
 
     pub async fn query_files(
         &mut self,
-        queries: Vec<(Queryable, AbstPath, Hash)>,
+        queries: Vec<(AbstPath, Hash)>,
         endpoint: &AbstPath,
     ) -> Result<(), Error> {
         let errmsg = String::from("could not query files and symlinks");
         let errctx = error_context(errmsg.clone());
-        for (querable, rel_path, hash) in queries {
+        for (rel_path, hash) in queries {
             let path = endpoint.append(&rel_path);
-            match querable {
-                Queryable::File => {
-                    self.send_struct(Query::Object(Queryable::File, rel_path.clone()))
-                        .await
-                        .map_err(inerr(errctx(format!("ask query for file at path {path}"))))?;
+            self.send_struct(Query::File(rel_path.clone()))
+                .await
+                .map_err(inerr(errctx(format!("ask query for file at path {path}"))))?;
 
-                    self.get_file_to(&path)
-                        .await
-                        .map_err(inerr(errctx(format!("query file at path {path}"))))?;
+            self.get_file_to(&path)
+                .await
+                .map_err(inerr(errctx(format!("query file at path {path}"))))?;
 
-                    let file = fs::read_file(&path).map_err(inerr(errctx(format!(
-                        "open file to check hash at path {path}"
-                    ))))?;
+            let file = fs::read_file(&path).map_err(inerr(errctx(format!(
+                "open file to check hash at path {path}"
+            ))))?;
 
-                    if hash
-                        != hasher::hash_stream(file)
-                            .map_err(inerr(errctx(format!("hash file content at path {path}"))))?
-                    {
-                        return Err(generr(errmsg, format!("hash of the file recieved (at path {path}) does not match the hash given")));
-                    }
-                }
-                Queryable::SymLink => {
-                    self.send_struct(Query::Object(Queryable::SymLink, rel_path.clone()))
-                        .await
-                        .map_err(inerr(errctx(format!(
-                            "ask query for symlink at path {path}"
-                        ))))?;
-
-                    let endpoint: Endpoint = self.get_struct().await.map_err(inerr(errctx(
-                        format!("query symlink's endpoint at path {path}"),
-                    )))?;
-
-                    if hash != hasher::hash_bytes(endpoint.as_bytes()) {
-                        return Err(generr(errmsg, format!("hash of the symlink recieved (at path {path}) does not match the hash given")));
-                    }
-                    fs::create_symlink(&path, endpoint).map_err(inerr(errctx(format!(
-                        "create queried symlink at path {path}"
-                    ))))?;
-                }
+            if hash
+                != hasher::hash_stream(file)
+                    .map_err(inerr(errctx(format!("hash file content at path {path}"))))?
+            {
+                return Err(generr(
+                    errmsg,
+                    format!(
+                        "hash of the file recieved (at path {path}) does not match the hash given"
+                    ),
+                ));
             }
         }
         self.send_struct(Query::Stop)

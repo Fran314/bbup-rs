@@ -3,7 +3,7 @@ use super::{ArchiveConfig, ArchiveState};
 use abst_fs::{self as fs, AbstPath};
 use fs_vcs::{Action, Commit, Delta};
 
-use bbup::com::{BbupCom, JobType, Queryable};
+use bbup::com::{BbupCom, JobType};
 
 use std::sync::Arc;
 
@@ -35,20 +35,19 @@ async fn pull(
         .context("could not send update id")?;
 
     let actions = delta.to_actions()?;
+    // TODO maybe a filter-map would be a better solution here, no need for
+    // queryables to be mutable. Even hiding all this inside a block would be a
+    // valid solution to not make queryables mutable
     let mut queryables = Vec::new();
     for (path, action) in actions {
         match action {
-            Action::AddFile(_, _)
-            | Action::EditFile(_, Some(_))
-            | Action::AddSymLink(_, _)
-            | Action::EditSymLink(_, Some(_)) => queryables.push(path.clone()),
-
+            Action::AddFile(_, _) | Action::EditFile(_, Some(_)) => queryables.push(path.clone()),
             _ => {}
         }
     }
 
     // send all files requested by client
-    com.supply_files(&queryables, &config.archive_root.append(endpoint))
+    com.supply_files(queryables, &config.archive_root.append(endpoint))
         .await
         .context("could not supply files to download update")?;
 
@@ -80,13 +79,8 @@ async fn push(
     for (path, action) in &actions {
         match action {
             Action::AddFile(_, hash) | Action::EditFile(_, Some(hash)) => {
-                queries.push((Queryable::File, path.clone(), hash.clone()))
+                queries.push((path.clone(), hash.clone()))
             }
-
-            Action::AddSymLink(_, hash) | Action::EditSymLink(_, Some(hash)) => {
-                queries.push((Queryable::SymLink, path.clone(), hash.clone()))
-            }
-
             _ => {}
         }
     }
@@ -126,9 +120,9 @@ async fn push(
                     .context(errmsg("move added file from temp"))?;
                 fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of added file"))?;
             }
-            Action::AddSymLink(mtime, _) => {
-                fs::rename_symlink(&from_temp_path, &to_path)
-                    .context(errmsg("move added symlink from temp"))?;
+            Action::AddSymLink(mtime, endpoint) => {
+                fs::create_symlink(&to_path, endpoint.clone())
+                    .context(errmsg("create added symlink"))?;
                 fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of added symlink"))?;
             }
             Action::EditDir(mtime) => {
@@ -141,10 +135,19 @@ async fn push(
                 }
                 fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of edited file"))?;
             }
-            Action::EditSymLink(mtime, opth) => {
-                if opth.is_some() {
-                    fs::rename_symlink(&from_temp_path, &to_path)
-                        .context(errmsg("move edited symlink from temp"))?;
+            Action::EditSymLink(mtime, optep) => {
+                if let Some(endpoint) = optep {
+                    // TODO
+                    // Remove and create is definitely not a pretty solution
+                    // but (my) fs library is currently missing a function to
+                    // overwrite an existing symlink (which basically will do
+                    // this anyway under the hood because std::os::unix::fs
+                    // also doesn't have a function to overwrite a symlink) so
+                    // this will do for now.
+                    // Same thing is going on in bbup-server/process.rs
+                    fs::remove_symlink(&to_path).context(errmsg("delete edited symlink"))?;
+                    fs::create_symlink(&to_path, endpoint.clone())
+                        .context(errmsg("override edited symlink"))?;
                 }
                 fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of edited symlink"))?;
             }
@@ -173,7 +176,6 @@ async fn push(
     let commit_id = Commit::gen_valid_id();
     state.commit_list.push(Commit {
         commit_id: commit_id.clone(),
-        // endpoint: endpoint.clone(),
         delta: rebased_delta,
     });
     state.archive_tree = updated_archive_tree;

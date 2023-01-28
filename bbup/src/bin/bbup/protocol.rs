@@ -3,7 +3,7 @@ use fs_vcs::{generate_fstree, get_actions, get_delta, Action, Delta};
 use super::{ProcessConfig, ProcessState};
 
 use abst_fs as fs;
-use bbup::com::{BbupCom, Queryable};
+use bbup::com::BbupCom;
 
 use anyhow::{Context, Result};
 
@@ -94,13 +94,8 @@ pub async fn apply_update_or_get_conflicts(
             for (path, action) in &necessary_actions {
                 match action {
                     Action::AddFile(_, hash) | Action::EditFile(_, Some(hash)) => {
-                        queries.push((Queryable::File, path.clone(), hash.clone()))
+                        queries.push((path.clone(), hash.clone()))
                     }
-
-                    Action::AddSymLink(_, hash) | Action::EditSymLink(_, Some(hash)) => {
-                        queries.push((Queryable::SymLink, path.clone(), hash.clone()))
-                    }
-
                     _ => {}
                 }
             }
@@ -136,9 +131,9 @@ pub async fn apply_update_or_get_conflicts(
                         fs::set_mtime(&to_path, &mtime)
                             .context(errmsg("set mtime of added file"))?;
                     }
-                    Action::AddSymLink(mtime, _) => {
-                        fs::rename_symlink(&from_temp_path, &to_path)
-                            .context(errmsg("move added symlink from temp"))?;
+                    Action::AddSymLink(mtime, endpoint) => {
+                        fs::create_symlink(&to_path, endpoint)
+                            .context(errmsg("create added symlink"))?;
                         fs::set_mtime(&to_path, &mtime)
                             .context(errmsg("set mtime of added symlink"))?;
                     }
@@ -154,10 +149,21 @@ pub async fn apply_update_or_get_conflicts(
                         fs::set_mtime(&to_path, &mtime)
                             .context(errmsg("set mtime of edited file"))?;
                     }
-                    Action::EditSymLink(mtime, opth) => {
-                        if opth.is_some() {
-                            fs::rename_symlink(&from_temp_path, &to_path)
-                                .context(errmsg("move edited symlink from temp"))?;
+                    Action::EditSymLink(mtime, optep) => {
+                        if let Some(endpoint) = optep {
+                            // TODO
+                            // Remove and create is definitely not a pretty
+                            // solution but (my) fs library is currently
+                            // missing a function to overwrite an existing
+                            // symlink (which basically will do this anyway
+                            // under the hood because std::os::unix::fs also
+                            // doesn't have a function to overwrite a symlink)
+                            // so this will do for now.
+                            // Same thing is going on in bbup-server/process.rs
+                            fs::remove_symlink(&to_path)
+                                .context(errmsg("delete edited symlink"))?;
+                            fs::create_symlink(&to_path, endpoint)
+                                .context(errmsg("override edited symlink"))?;
                         }
                         fs::set_mtime(&to_path, &mtime)
                             .context(errmsg("set mtime of edited symlink"))?;
@@ -218,18 +224,19 @@ pub async fn upload_changes(
             com.send_struct(local_delta).await?;
 
             let actions = local_delta.to_actions()?;
+            // TODO maybe a filter-map would be a better solution here, no need
+            // for queryables to be mutable. Even hiding all this inside a
+            // block would be a valid solution to not make queryables mutable
             let mut queryables = Vec::new();
             for (path, action) in actions {
                 match action {
-                    Action::AddFile(_, _)
-                    | Action::EditFile(_, Some(_))
-                    | Action::AddSymLink(_, _)
-                    | Action::EditSymLink(_, Some(_)) => queryables.push(path.clone()),
-
+                    Action::AddFile(_, _) | Action::EditFile(_, Some(_)) => {
+                        queryables.push(path.clone())
+                    }
                     _ => {}
                 }
             }
-            com.supply_files(&queryables, &config.link_root)
+            com.supply_files(queryables, &config.link_root)
                 .await
                 .context("could not supply files and symlinks to upload push")?;
 

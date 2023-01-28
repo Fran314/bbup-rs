@@ -44,7 +44,6 @@ impl Commit {
 }
 
 #[derive(Error, Debug)]
-// pub struct GetUpdError(String, UnmergeableDelta);
 pub enum GetUpdError {
     #[error(
         "Get Update Delta Error: the provided commit id does not exist\nprovided commit id: {0}"

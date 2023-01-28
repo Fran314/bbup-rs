@@ -56,12 +56,6 @@ pub enum JobType {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Query {
-    Object(Queryable, AbstPath),
+    File(AbstPath),
     Stop,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Queryable {
-    File,
-    SymLink,
 }

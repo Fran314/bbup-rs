@@ -1,6 +1,6 @@
 use super::ExcludeList;
 
-use abst_fs::{self as fs, AbstPath, Mtime, ObjectType};
+use abst_fs::{self as fs, AbstPath, Endpoint, Mtime, ObjectType};
 use hasher::Hash;
 
 use serde::{Deserialize, Serialize};
@@ -43,20 +43,23 @@ fn error_context<S: std::string::ToString>(context: S) -> impl Fn(&str) -> Strin
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum FSNode {
     File(Mtime, Hash),
-    SymLink(Mtime, Hash),
+    SymLink(Mtime, Endpoint),
     Dir(Mtime, Hash, FSTree),
 }
 impl PartialEq for FSNode {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::File(mtime_l, hash_l), Self::File(mtime_r, hash_r))
-            | (Self::SymLink(mtime_l, hash_l), Self::SymLink(mtime_r, hash_r))
 
             // Do not check for subtree structure: the idea is that the hash represents
             //	itself the tree structure, so the trees are equal iff the hashes are
             //	equal, hence check the hash and not the subtree
             | (Self::Dir(mtime_l, hash_l, _), Self::Dir(mtime_r, hash_r, _)) => {
                 mtime_l == mtime_r && hash_l == hash_r
+            }
+
+            (Self::SymLink(mtime_l, endpoint_l), Self::SymLink(mtime_r, endpoint_r)) => {
+                mtime_l == mtime_r && endpoint_l == endpoint_r
             }
 
             _ => false,
@@ -72,12 +75,14 @@ impl FSTree {
     }
 }
 
-/// Hash the endpoint of a symlink
-fn hash_symlink(path: &AbstPath) -> Result<Hash, FSTreeError> {
-    let errctx = error_context(format!("could not hash content of file at path {path}"));
-    let endpoint = fs::read_link(path).map_err(inerr(errctx("read symlink's endpoint")))?;
-    Ok(hasher::hash_bytes(endpoint.as_bytes()))
-}
+// TODO remove
+// /// Hash the endpoint of a symlink
+// fn hash_symlink(path: &AbstPath) -> Result<Hash, FSTreeError> {
+//     let errctx = error_context(format!("could not hash content of file at path {path}"));
+//     let endpoint = fs::read_link(path).map_err(inerr(errctx("read symlink's endpoint")))?;
+//     Ok(hasher::hash_bytes(endpoint.as_bytes()))
+// }
+
 /// Hash the content of a file
 fn hash_file(path: &AbstPath) -> Result<Hash, FSTreeError> {
     let errctx = error_context(format!("could not hash content of file at path {path}"));
@@ -101,9 +106,12 @@ pub fn hash_tree(FSTree(tree): &FSTree) -> Hash {
                 s.append(&mut mtime.to_bytes());
                 s.append(&mut hash.to_bytes());
             }
-            FSNode::SymLink(mtime, hash) => {
+            FSNode::SymLink(mtime, endpoint) => {
                 s.append(&mut mtime.to_bytes());
-                s.append(&mut hash.to_bytes());
+                // As for the name, we add the hash of the endpoint and not the
+                // endpoint itself as bytes to avoid unlikely but possible
+                // collisions
+                s.append(&mut hasher::hash_bytes(endpoint.as_bytes()).to_bytes());
             }
             FSNode::Dir(mtime, hash, _) => {
                 s.append(&mut mtime.to_bytes());
@@ -173,10 +181,10 @@ pub fn generate_fstree(root: &AbstPath, exclude_list: &ExcludeList) -> Result<FS
                     let mtime = fs::get_mtime(&entry).map_err(inerr(errctx(
                         format!("get mtime of symlink at path {entry}").as_str(),
                     )))?;
-                    let hash = hash_symlink(&entry).map_err(inerr(errctx(
-                        format!("hash symlink at path {entry}").as_str(),
+                    let endpoint = fs::read_link(&entry).map_err(inerr(errctx(
+                        format!("get endpoint of symlink at path {entry}").as_str(),
                     )))?;
-                    FSNode::SymLink(mtime, hash)
+                    FSNode::SymLink(mtime, endpoint)
                 }
             };
 
@@ -251,7 +259,7 @@ mod tests {
         pub fn symlink(mtime: (i64, u32), path: impl ToString) -> FSNode {
             FSNode::SymLink(
                 Mtime::from(mtime.0, mtime.1),
-                hasher::hash_bytes(Endpoint::Unix(path.to_string()).as_bytes()),
+                Endpoint::Unix(path.to_string()),
             )
         }
         pub fn dir(mtime: (i64, u32), subtree_gen: impl Fn(&mut FSTree)) -> FSNode {
