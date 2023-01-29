@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use abst_fs::AbstPath;
 
 use super::{Delta, DeltaNode, FSNode, FSTree};
@@ -33,8 +31,9 @@ impl Delta {
                 None => Ok(delta.clone()),
                 Some(component) => match fstree.get(component) {
                     Some(FSNode::Dir(mtime, _, subtree)) => {
-                        let output = HashMap::from([(
-                            component.clone(),
+                        let mut output = Delta::new();
+                        output.insert(
+                            component,
                             DeltaNode::Branch(
                                 (mtime.clone(), mtime.clone()),
                                 recursion(
@@ -44,8 +43,8 @@ impl Delta {
                                     relative_path.add_last(component.clone()),
                                 )?,
                             ),
-                        )]);
-                        Ok(Delta(output))
+                        );
+                        Ok(output)
                     }
                     Some(_) => Err(unrebaseerr(
                         relative_path.add_last(component.clone()),

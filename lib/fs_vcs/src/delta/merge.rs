@@ -1,7 +1,6 @@
 use super::{hash_tree, Delta, DeltaNode, FSNode};
 
 use abst_fs::AbstPath;
-use std::collections::HashMap;
 use thiserror::Error;
 
 #[derive(Error, Debug, PartialEq)]
@@ -24,13 +23,12 @@ impl Delta {
     // TODO add public setup function and private recursive function with
     // additional parameter to make the path of the error more precise (full
     // path)
-    pub fn merge_prec(&mut self, Delta(prec): &Delta) -> Result<(), UnmergeableDelta> {
+    pub fn merge_prec(&mut self, prec: &Delta) -> Result<(), UnmergeableDelta> {
         use std::collections::hash_map::Entry::*;
         use DeltaNode::*;
 
-        let Delta(succ) = self;
         for (name, child_prec) in prec {
-            match succ.entry(name.clone()) {
+            match self.entry(name.clone()) {
                 Vacant(entry) => {
                     entry.insert(child_prec.clone());
                 }
@@ -112,27 +110,26 @@ impl Delta {
         match path.get(0) {
             None => Some(self.clone()),
             Some(name) => {
-                let Delta(tree) = self;
-                match tree.get(name) {
+                match self.get(name) {
                     None => None,
                     Some(DeltaNode::Branch(_, subdelta)) => {
                         subdelta.get_subdelta_tree_copy(&path.strip_first())
                     }
                     Some(DeltaNode::Leaf(None, Some(FSNode::Dir(_, _, subtree)))) => {
-                        let mut subdelta: HashMap<String, DeltaNode> = HashMap::new();
+                        let mut subdelta = Delta::new();
                         for (node, child) in subtree {
                             subdelta
                                 .insert(node.clone(), DeltaNode::Leaf(None, Some(child.clone())));
                         }
-                        Delta(subdelta).get_subdelta_tree_copy(&path.strip_first())
+                        subdelta.get_subdelta_tree_copy(&path.strip_first())
                     }
                     Some(DeltaNode::Leaf(Some(FSNode::Dir(_, _, subtree)), None)) => {
-                        let mut subdelta: HashMap<String, DeltaNode> = HashMap::new();
+                        let mut subdelta = Delta::new();
                         for (node, child) in subtree {
                             subdelta
                                 .insert(node.clone(), DeltaNode::Leaf(Some(child.clone()), None));
                         }
-                        Delta(subdelta).get_subdelta_tree_copy(&path.strip_first())
+                        subdelta.get_subdelta_tree_copy(&path.strip_first())
                     }
 
                     // I think this assumes that the delta is shaken

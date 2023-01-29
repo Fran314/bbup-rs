@@ -100,18 +100,13 @@ impl std::fmt::Display for FSTree {
     }
 }
 
-fn deltafstree_to_stringtree<S: std::string::ToString>(
-    root_text: S,
-    Delta(tree): &Delta,
-) -> StringTree {
+fn deltafstree_to_stringtree<S: std::string::ToString>(root_text: S, delta: &Delta) -> StringTree {
     use DeltaNode::*;
     use FSNode::*;
-    let mut children = tree.iter().collect::<Vec<(&String, &DeltaNode)>>();
-    children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
 
     StringTree {
         text: root_text.to_string(),
-        children: children
+        children: delta
             .into_iter()
             .flat_map(|(name, child)| match child {
                 Branch((premtime, postmtime), subdelta) => {
@@ -119,8 +114,7 @@ fn deltafstree_to_stringtree<S: std::string::ToString>(
                         true => "yellow",
                         false => "",
                     };
-                    let Delta(subtree) = subdelta;
-                    if !subtree.is_empty() {
+                    if !subdelta.is_empty() {
                         vec![deltafstree_to_stringtree(
                             typed("d", styled_dir(name, color)),
                             subdelta,

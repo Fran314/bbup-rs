@@ -15,7 +15,7 @@ impl Commit {
     pub fn base_commit() -> Commit {
         Commit {
             commit_id: Commit::gen_null_id(),
-            delta: Delta::empty(),
+            delta: Delta::new(),
         }
     }
     pub fn gen_null_id() -> String {
@@ -79,7 +79,7 @@ impl CommitList {
     }
 
     pub fn get_update_delta(&self, endpoint: &AbstPath, lkc: String) -> Result<Delta, GetUpdError> {
-        let mut output: Delta = Delta::empty();
+        let mut output: Delta = Delta::new();
         let CommitList(list) = self;
         for commit in list.iter().rev() {
             if commit.commit_id.eq(&lkc) {
@@ -118,7 +118,7 @@ mod tests {
                 commit_id: String::from(
                     "0000000000000000000000000000000000000000000000000000000000000000"
                 ),
-                delta: Delta::empty()
+                delta: Delta::new()
             }
         );
 
@@ -286,7 +286,7 @@ mod tests {
                     commits.last().unwrap().commit_id.clone()
                 )
                 .unwrap(),
-            Delta::empty()
+            Delta::new()
         );
 
         assert_eq!(
@@ -431,7 +431,7 @@ mod tests {
             commit_id: String::from(
                 "7fcfe98c4c4531dd090d256b3477b52045bfda9d36571491a9aa820e8639bcac",
             ),
-            delta: Delta::empty(),
+            delta: Delta::new(),
         });
         assert!(matches!(
             commit_list.get_update_delta(

@@ -139,9 +139,8 @@ impl Delta {
     /// system in order to actually apply the delta on the file system and not
     /// just virtually on the fstree
     pub fn to_actions(&self) -> Result<Actions, ToActErr> {
-        let Delta(delta) = self;
         let mut actions = Actions::new();
-        for (name, child) in delta {
+        for (name, child) in self {
             let mut child_actions = child
                 .to_actions()
                 .map_err(push_toacterr(name))?
@@ -358,7 +357,7 @@ fn add_tree_actions(loc_tree: &FSTree, miss_tree: &FSTree) -> Result<Actions, Ge
 ///
 /// This function returns `Ok(necessary_actions)` if there is no conflict,
 /// otherwise `Err(conflicts)`
-pub fn get_actions(Delta(local): &Delta, Delta(missed): &Delta) -> Result<Actions, GetActErr> {
+pub fn get_actions(local: &Delta, missed: &Delta) -> Result<Actions, GetActErr> {
     let mut necessary_actions = Actions::new();
     for (name, miss_node) in missed {
         match local.get(name) {
@@ -2060,7 +2059,7 @@ mod tests {
     #[test]
     fn test_get_actions_incompatible_other() {
         // missed delta has locally-unchanged object but is not shaken
-        let local_delta = Delta::empty();
+        let local_delta = Delta::new();
         let missed_delta = Delta::gen_from(|d| {
             d.add_leaf(
                 "unshaken-leaf",

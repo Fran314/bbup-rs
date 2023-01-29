@@ -84,14 +84,11 @@ impl FSTree {
         self.0.insert(name.to_string(), child)
     }
 
-    pub fn get(&self, child: impl ToString) -> Option<&FSNode> {
-        self.0.get(&child.to_string())
+    pub fn get(&self, name: impl ToString) -> Option<&FSNode> {
+        self.0.get(&name.to_string())
     }
 
-    pub fn retain<F>(&mut self, filter: F)
-    where
-        F: FnMut(&String, &mut FSNode) -> bool,
-    {
+    pub fn retain(&mut self, filter: impl FnMut(&String, &mut FSNode) -> bool) {
         self.0.retain(filter)
     }
 
@@ -108,8 +105,7 @@ impl IntoIterator for FSTree {
     type Item = (String, FSNode);
     type IntoIter = std::vec::IntoIter<Self::Item>;
     fn into_iter(self) -> Self::IntoIter {
-        let FSTree(hashmap) = self;
-        let mut children = hashmap.into_iter().collect::<Vec<(String, FSNode)>>();
+        let mut children = self.0.into_iter().collect::<Vec<(String, FSNode)>>();
         children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
         children.into_iter()
     }
@@ -122,8 +118,7 @@ impl<'a> IntoIterator for &'a FSTree {
     type Item = (&'a String, &'a FSNode);
     type IntoIter = std::vec::IntoIter<Self::Item>;
     fn into_iter(self) -> Self::IntoIter {
-        let FSTree(hashmap) = self;
-        let mut children = hashmap.iter().collect::<Vec<(&String, &FSNode)>>();
+        let mut children = self.0.iter().collect::<Vec<(&String, &FSNode)>>();
         children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
         children.into_iter()
     }
@@ -327,12 +322,10 @@ mod tests {
         }
 
         pub fn add_file(&mut self, name: impl ToString, mtime: (i64, u32), content: impl ToString) {
-            let FSTree(tree) = self;
-            tree.insert(name.to_string(), FSNode::file(mtime, content));
+            self.insert(name.to_string(), FSNode::file(mtime, content));
         }
         pub fn add_symlink(&mut self, name: impl ToString, mtime: (i64, u32), path: impl ToString) {
-            let FSTree(tree) = self;
-            tree.insert(name.to_string(), FSNode::symlink(mtime, path));
+            self.insert(name.to_string(), FSNode::symlink(mtime, path));
         }
         pub fn add_dir(
             &mut self,
@@ -340,13 +333,10 @@ mod tests {
             mtime: (i64, u32),
             subtree_gen: impl Fn(&mut FSTree),
         ) {
-            let FSTree(tree) = self;
-
-            tree.insert(name.to_string(), FSNode::dir(mtime, subtree_gen));
+            self.insert(name.to_string(), FSNode::dir(mtime, subtree_gen));
         }
         pub fn add_empty_dir(&mut self, name: impl ToString, mtime: (i64, u32)) {
-            let FSTree(tree) = self;
-            tree.insert(name.to_string(), FSNode::empty_dir(mtime));
+            self.insert(name.to_string(), FSNode::empty_dir(mtime));
         }
     }
 

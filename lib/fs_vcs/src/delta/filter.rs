@@ -24,8 +24,11 @@ impl Delta {
         // Recursive inner function with initialized parameters with default
         // values
         fn recursion(delta: &mut Delta, rel_path: &AbstPath, exclude_list: &ExcludeList) {
-            let Delta(tree) = delta;
-            for (name, child) in tree {
+            // The reason for `&mut *delta` is the so-called "reborrow".
+            // Without doing so, the implicit into_iter called by the for loop
+            // would consume the reference and we would not be able to return
+            // it shaked
+            for (name, child) in &mut *delta {
                 match child {
                     DeltaNode::Leaf(pre, post) => {
                         let is_pre_dir = if let Some(FSNode::Dir(_, hash, subtree)) = pre {
@@ -55,7 +58,7 @@ impl Delta {
                             // Make it so that the branch will be removed once the
                             //	delta gets shaken at the end of the function
                             *optm = (Mtime::from(0, 0), Mtime::from(0, 0));
-                            *subdelta = Delta::empty();
+                            *subdelta = Delta::new();
                         } else {
                             recursion(subdelta, &rel_path.add_last(name), exclude_list);
                         }

@@ -18,7 +18,7 @@ fn push_inapp<S: std::string::ToString>(
 }
 
 impl FSTree {
-    pub fn apply_delta(&mut self, Delta(deltatree): &Delta) -> Result<(), InapplicableDelta> {
+    pub fn apply_delta(&mut self, deltatree: &Delta) -> Result<(), InapplicableDelta> {
         use std::collections::hash_map::Entry::{Occupied, Vacant};
         use DeltaNode::{Branch, Leaf};
         for (name, child) in deltatree {
@@ -116,7 +116,7 @@ impl FSTree {
         }
         Ok(())
     }
-    pub fn undo_delta(&mut self, Delta(deltatree): &Delta) -> Result<(), InapplicableDelta> {
+    pub fn undo_delta(&mut self, deltatree: &Delta) -> Result<(), InapplicableDelta> {
         use std::collections::hash_map::Entry::*;
         use DeltaNode::*;
         for (name, child) in deltatree {

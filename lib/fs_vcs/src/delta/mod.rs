@@ -29,21 +29,37 @@ impl DeltaNode {
     }
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct Delta(pub HashMap<String, DeltaNode>);
+pub struct Delta(HashMap<String, DeltaNode>);
+
+#[allow(clippy::new_without_default)]
 impl Delta {
-    pub fn empty() -> Delta {
+    pub fn new() -> Delta {
         Delta(HashMap::new())
     }
     pub fn is_empty(&self) -> bool {
-        let Delta(hashmap) = self;
-        hashmap.len() == 0
+        self.0.len() == 0
     }
+
+    pub fn insert(&mut self, name: impl ToString, child: DeltaNode) -> Option<DeltaNode> {
+        self.0.insert(name.to_string(), child)
+    }
+    pub fn get(&self, name: impl ToString) -> Option<&DeltaNode> {
+        self.0.get(&name.to_string())
+    }
+    pub fn values_mut(&mut self) -> std::collections::hash_map::ValuesMut<String, DeltaNode> {
+        self.0.values_mut()
+    }
+    pub fn retain(&mut self, filter: impl FnMut(&String, &mut DeltaNode) -> bool) {
+        self.0.retain(filter)
+    }
+    pub fn entry(&mut self, e: String) -> std::collections::hash_map::Entry<String, DeltaNode> {
+        self.0.entry(e)
+    }
+
     pub fn shake(&mut self) {
         use DeltaNode::*;
 
-        let Delta(tree) = self;
-
-        for entry in tree.values_mut() {
+        for entry in self.values_mut() {
             match entry {
                 Leaf(Some(FSNode::Dir(m0, _, subtree0)), Some(FSNode::Dir(m1, _, subtree1))) => {
                     // We assume here that if a delta is generated with
@@ -55,7 +71,7 @@ impl Delta {
                 Leaf(_, _) => {}
             }
         }
-        tree.retain(|_, child| match child {
+        self.retain(|_, child| match child {
             Leaf(pre, post) => pre != post,
             Branch((premtime, postmtime), subdelta) => {
                 premtime != postmtime || (!subdelta.is_empty())
@@ -64,9 +80,52 @@ impl Delta {
     }
 }
 
+/// IntoIterator implementation for Delta
+/// Note: despite Delta being a wrapper for an hashmap which usually iterates
+/// on its content in random order, Delta is guaranteed to be iterated
+/// alphabetically
+impl IntoIterator for Delta {
+    type Item = (String, DeltaNode);
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+    fn into_iter(self) -> Self::IntoIter {
+        let mut children = self.0.into_iter().collect::<Vec<(String, DeltaNode)>>();
+        children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
+        children.into_iter()
+    }
+}
+/// IntoIterator implementation for &Delta
+/// Note: despite Delta being a wrapper for an hashmap which usually iterates
+/// on its content in random order, Delta is guaranteed to be iterated
+/// alphabetically
+impl<'a> IntoIterator for &'a Delta {
+    type Item = (&'a String, &'a DeltaNode);
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+    fn into_iter(self) -> Self::IntoIter {
+        let mut children = self.0.iter().collect::<Vec<(&String, &DeltaNode)>>();
+        children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
+        children.into_iter()
+    }
+}
+/// IntoIterator implementation for &Delta
+/// Note: despite Delta being a wrapper for an hashmap which usually iterates
+/// on its content in random order, Delta is guaranteed to be iterated
+/// alphabetically
+impl<'a> IntoIterator for &'a mut Delta {
+    type Item = (&'a String, &'a mut DeltaNode);
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+    fn into_iter(self) -> Self::IntoIter {
+        let mut children = self
+            .0
+            .iter_mut()
+            .collect::<Vec<(&String, &mut DeltaNode)>>();
+        children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
+        children.into_iter()
+    }
+}
+
 pub fn get_delta(last_known_fstree: &FSTree, new_tree: &FSTree) -> Delta {
     use FSNode::*;
-    let mut delta: HashMap<String, DeltaNode> = HashMap::new();
+    let mut delta = Delta::new();
 
     for (key, ior) in union(last_known_fstree.inner(), new_tree.inner()) {
         match ior {
@@ -81,7 +140,7 @@ pub fn get_delta(last_known_fstree: &FSTree, new_tree: &FSTree) -> Delta {
                     if m0.ne(m1) || h0.ne(h1) {
                         let delta_subtree = match h0.ne(h1) {
                             true => get_delta(subtree0, subtree1),
-                            false => Delta::empty(),
+                            false => Delta::new(),
                         };
                         delta.insert(
                             key,
@@ -95,7 +154,7 @@ pub fn get_delta(last_known_fstree: &FSTree, new_tree: &FSTree) -> Delta {
         }
     }
 
-    Delta(delta)
+    delta
 }
 
 #[cfg(test)]
@@ -115,7 +174,7 @@ mod tests {
             subdelta_gen: impl Fn(&mut Delta),
         ) -> DeltaNode {
             let mtimes = (Mtime::from(presec, prenano), Mtime::from(postsec, postnano));
-            let mut subdelta = Delta::empty();
+            let mut subdelta = Delta::new();
             subdelta_gen(&mut subdelta);
             DeltaNode::Branch(mtimes, subdelta)
         }
@@ -123,19 +182,18 @@ mod tests {
             ((presec, prenano), (postsec, postnano)): ((i64, u32), (i64, u32)),
         ) -> DeltaNode {
             let mtimes = (Mtime::from(presec, prenano), Mtime::from(postsec, postnano));
-            DeltaNode::Branch(mtimes, Delta::empty())
+            DeltaNode::Branch(mtimes, Delta::new())
         }
     }
 
     impl Delta {
         pub fn gen_from(gen: impl Fn(&mut Delta)) -> Delta {
-            let mut delta = Delta::empty();
+            let mut delta = Delta::new();
             gen(&mut delta);
             delta
         }
         pub fn add_leaf(&mut self, name: impl ToString, pre: Option<FSNode>, post: Option<FSNode>) {
-            let Delta(map) = self;
-            map.insert(name.to_string(), DeltaNode::leaf(pre, post));
+            self.0.insert(name.to_string(), DeltaNode::leaf(pre, post));
         }
         pub fn add_branch(
             &mut self,
@@ -143,12 +201,12 @@ mod tests {
             mtimes: ((i64, u32), (i64, u32)),
             subdelta_gen: impl Fn(&mut Delta),
         ) {
-            let Delta(map) = self;
-            map.insert(name.to_string(), DeltaNode::branch(mtimes, subdelta_gen));
+            self.0
+                .insert(name.to_string(), DeltaNode::branch(mtimes, subdelta_gen));
         }
         pub fn add_empty_branch(&mut self, name: impl ToString, mtimes: ((i64, u32), (i64, u32))) {
-            let Delta(map) = self;
-            map.insert(name.to_string(), DeltaNode::empty_branch(mtimes));
+            self.0
+                .insert(name.to_string(), DeltaNode::empty_branch(mtimes));
         }
     }
 
@@ -225,8 +283,8 @@ mod tests {
 
     #[test]
     fn test_delta_empty() {
-        assert_eq!(Delta::empty(), Delta(HashMap::from([])));
-        assert!(Delta::empty().is_empty());
+        assert_eq!(Delta::new(), Delta(HashMap::from([])));
+        assert!(Delta::new().is_empty());
 
         assert!(!Delta::gen_from(|d| {
             d.add_leaf(
