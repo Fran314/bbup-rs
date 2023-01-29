@@ -25,7 +25,7 @@ impl Delta {
         // values
         fn recursion(
             delta: &Delta,
-            FSTree(fstree): &FSTree,
+            fstree: &FSTree,
             endpoint: &AbstPath,
             relative_path: AbstPath,
         ) -> Result<Delta, UnrebasableDelta> {

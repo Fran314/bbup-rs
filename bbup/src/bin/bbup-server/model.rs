@@ -59,7 +59,7 @@ impl ArchiveState {
         }
     }
     pub fn init_state() -> ArchiveState {
-        ArchiveState::from(CommitList::base_commit_list(), FSTree::empty())
+        ArchiveState::from(CommitList::base_commit_list(), FSTree::new())
     }
     fn cl_path(archive_root: &AbstPath) -> AbstPath {
         archive_root.add_last(".bbup").add_last("commit-list.bin")

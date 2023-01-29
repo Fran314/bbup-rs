@@ -69,14 +69,12 @@ fn typed<S: std::string::ToString>(t: &str, text: S) -> String {
 }
 fn fstree_to_stringtree<S: std::string::ToString, C: Clone + Into<Color>>(
     root_text: S,
-    FSTree(tree): &FSTree,
+    tree: &FSTree,
     color: C,
 ) -> StringTree {
-    let mut children = tree.iter().collect::<Vec<(&String, &FSNode)>>();
-    children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
     StringTree {
         text: root_text.to_string(),
-        children: children
+        children: tree
             .into_iter()
             .map(|(name, child)| match child {
                 FSNode::File(_, _) => {

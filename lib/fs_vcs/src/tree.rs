@@ -68,20 +68,66 @@ impl PartialEq for FSNode {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct FSTree(pub HashMap<String, FSNode>);
+pub struct FSTree(HashMap<String, FSNode>);
+
+#[allow(clippy::new_without_default)]
 impl FSTree {
-    pub fn empty() -> FSTree {
+    pub fn inner(&self) -> &HashMap<String, FSNode> {
+        &self.0
+    }
+
+    pub fn new() -> FSTree {
         FSTree(HashMap::new())
+    }
+
+    pub fn insert(&mut self, name: impl ToString, child: FSNode) -> Option<FSNode> {
+        self.0.insert(name.to_string(), child)
+    }
+
+    pub fn get(&self, child: impl ToString) -> Option<&FSNode> {
+        self.0.get(&child.to_string())
+    }
+
+    pub fn retain<F>(&mut self, filter: F)
+    where
+        F: FnMut(&String, &mut FSNode) -> bool,
+    {
+        self.0.retain(filter)
+    }
+
+    pub fn entry(&mut self, e: String) -> std::collections::hash_map::Entry<String, FSNode> {
+        self.0.entry(e)
     }
 }
 
-// TODO remove
-// /// Hash the endpoint of a symlink
-// fn hash_symlink(path: &AbstPath) -> Result<Hash, FSTreeError> {
-//     let errctx = error_context(format!("could not hash content of file at path {path}"));
-//     let endpoint = fs::read_link(path).map_err(inerr(errctx("read symlink's endpoint")))?;
-//     Ok(hasher::hash_bytes(endpoint.as_bytes()))
-// }
+/// IntoIterator implementation for FSTree
+/// Note: despite FSTree being a wrapper for an hashmap which usually iterates
+/// on its content in random order, FSTree is guaranteed to be iterated
+/// alphabetically
+impl IntoIterator for FSTree {
+    type Item = (String, FSNode);
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+    fn into_iter(self) -> Self::IntoIter {
+        let FSTree(hashmap) = self;
+        let mut children = hashmap.into_iter().collect::<Vec<(String, FSNode)>>();
+        children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
+        children.into_iter()
+    }
+}
+/// IntoIterator implementation for &FSTree
+/// Note: despite FSTree being a wrapper for an hashmap which usually iterates
+/// on its content in random order, FSTree is guaranteed to be iterated
+/// alphabetically
+impl<'a> IntoIterator for &'a FSTree {
+    type Item = (&'a String, &'a FSNode);
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+    fn into_iter(self) -> Self::IntoIter {
+        let FSTree(hashmap) = self;
+        let mut children = hashmap.iter().collect::<Vec<(&String, &FSNode)>>();
+        children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
+        children.into_iter()
+    }
+}
 
 /// Hash the content of a file
 fn hash_file(path: &AbstPath) -> Result<Hash, FSTreeError> {
@@ -90,16 +136,14 @@ fn hash_file(path: &AbstPath) -> Result<Hash, FSTreeError> {
     hasher::hash_stream(content).map_err(inerr(errctx("hash file content")))
 }
 /// Hash children of a node by concatenating their names and their relative hashes
-pub fn hash_tree(FSTree(tree): &FSTree) -> Hash {
-    let mut sorted_children = tree.iter().collect::<Vec<(&String, &FSNode)>>();
-    sorted_children.sort_by(|(name0, _), (name1, _)| name0.cmp(name1));
-
+pub fn hash_tree(tree: &FSTree) -> Hash {
+    use hasher::hash_bytes;
     let mut s: Vec<u8> = Vec::new();
-    for (name, node) in sorted_children {
+    for (name, node) in tree {
         // The reason why we append the hash of the name and not the name itself
         //	is to avoid unlikely but possible collisions.
         // This makes the appended blocks all the same length, which is better
-        let name_hash = hasher::hash_bytes(name.as_bytes());
+        let name_hash = hash_bytes(name.as_bytes());
         s.append(&mut name_hash.to_bytes());
         match node {
             FSNode::File(mtime, hash) => {
@@ -111,7 +155,7 @@ pub fn hash_tree(FSTree(tree): &FSTree) -> Hash {
                 // As for the name, we add the hash of the endpoint and not the
                 // endpoint itself as bytes to avoid unlikely but possible
                 // collisions
-                s.append(&mut hasher::hash_bytes(endpoint.as_bytes()).to_bytes());
+                s.append(&mut hash_bytes(endpoint.as_bytes()).to_bytes());
             }
             FSNode::Dir(mtime, hash, _) => {
                 s.append(&mut mtime.to_bytes());
@@ -119,7 +163,7 @@ pub fn hash_tree(FSTree(tree): &FSTree) -> Hash {
             }
         }
     }
-    hasher::hash_bytes(s)
+    hash_bytes(s)
 }
 
 /// Generate a tree representation of the content of a path specified, saving the hashes
@@ -138,7 +182,7 @@ pub fn generate_fstree(root: &AbstPath, exclude_list: &ExcludeList) -> Result<FS
         let errctx = error_context(format!(
             "could not generate fstree from subtree at path {path}"
         ));
-        let mut tree: HashMap<String, FSNode> = HashMap::new();
+        let mut tree = FSTree::new();
 
         let read_dir_instance =
             fs::list_dir_content(path).map_err(inerr(errctx("list content of dir")))?;
@@ -190,7 +234,7 @@ pub fn generate_fstree(root: &AbstPath, exclude_list: &ExcludeList) -> Result<FS
 
             tree.insert(file_name, node);
         }
-        Ok(FSTree(tree))
+        Ok(tree)
     }
 
     recursion(root, &AbstPath::single("."), exclude_list)
@@ -263,21 +307,21 @@ mod tests {
             )
         }
         pub fn dir(mtime: (i64, u32), subtree_gen: impl Fn(&mut FSTree)) -> FSNode {
-            let mut subtree = FSTree::empty();
+            let mut subtree = FSTree::new();
             subtree_gen(&mut subtree);
             FSNode::Dir(Mtime::from(mtime.0, mtime.1), hash_tree(&subtree), subtree)
         }
         pub fn empty_dir(mtime: (i64, u32)) -> FSNode {
             FSNode::Dir(
                 Mtime::from(mtime.0, mtime.1),
-                hash_tree(&FSTree::empty()),
-                FSTree::empty(),
+                hash_tree(&FSTree::new()),
+                FSTree::new(),
             )
         }
     }
     impl FSTree {
         pub fn gen_from(gen: impl Fn(&mut FSTree)) -> FSTree {
-            let mut tree = FSTree::empty();
+            let mut tree = FSTree::new();
             gen(&mut tree);
             tree
         }
@@ -324,9 +368,9 @@ mod tests {
 
     #[test]
     fn test_node_equality() {
-        assert_eq!(FSTree::empty(), FSTree(HashMap::new()));
+        assert_eq!(FSTree::new(), FSTree(HashMap::new()));
         assert_ne!(
-            FSTree::empty(),
+            FSTree::new(),
             FSTree::gen_from(|t| {
                 t.add_file("file", (1664650696, 234467902), "content");
             })
@@ -349,11 +393,117 @@ mod tests {
             FSNode::empty_dir((1664996516, 439383420)),
             FSNode::Dir(
                 Mtime::from(1664996516, 439383420),
-                hash_tree(&FSTree::empty()),
+                hash_tree(&FSTree::new()),
                 FSTree::gen_from(|t| { t.add_file("file", (1664840147, 706805147), "content") })
             ),
         );
     }
+
+    // #[test]
+    // TODO complete test
+    // fn test_into_iter() {
+    //     let tree = FSTree::gen_from(|t| {
+    //         t.add_file("a-file", (1664610817, 77142670), "content a");
+    //         t.add_file("d-file", (1664638795, 90975804), "content d");
+    //         t.add_file("g-file", (1664660605, 297354401), "content g");
+    //         t.add_symlink("b-symlink", (1664668523, 633186262), "path/to/b");
+    //         t.add_symlink("e-symlink", (1664693597, 881871801), "path/to/e");
+    //         t.add_symlink("h-symlink", (1664783737, 922104012), "path/to/h");
+    //         t.add_empty_dir("c-dir", (1664729235, 217360794));
+    //         t.add_empty_dir("f-dir", (1664734869, 403101933));
+    //         t.add_empty_dir("i-dir", (1664743288, 381512255));
+    //     });
+    //
+    //     let iter = tree.into_iter();
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (
+    //             String::from("a-file"),
+    //             FSNode::file((1664610817, 77142670), "content a")
+    //         )
+    //     );
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (
+    //             String::from("b-symlink"),
+    //             FSNode::symlink((1664668523, 633186262), "path/to/b")
+    //         )
+    //     );
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (String::from("c-dir"), FSNode::dir((1664729235, 217360794)))
+    //     );
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (
+    //             String::from("a-file"),
+    //             FSNode::file((1664610817, 77142670), "content a")
+    //         )
+    //     );
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (
+    //             String::from("a-file"),
+    //             FSNode::file((1664610817, 77142670), "content a")
+    //         )
+    //     );
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (
+    //             String::from("a-file"),
+    //             FSNode::file((1664610817, 77142670), "content a")
+    //         )
+    //     );
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (
+    //             String::from("a-file"),
+    //             FSNode::file((1664610817, 77142670), "content a")
+    //         )
+    //     );
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (
+    //             String::from("a-file"),
+    //             FSNode::file((1664610817, 77142670), "content a")
+    //         )
+    //     );
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (
+    //             String::from("a-file"),
+    //             FSNode::file((1664610817, 77142670), "content a")
+    //         )
+    //     );
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (
+    //             String::from("a-file"),
+    //             FSNode::file((1664610817, 77142670), "content a")
+    //         )
+    //     );
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (
+    //             String::from("a-file"),
+    //             FSNode::file((1664610817, 77142670), "content a")
+    //         )
+    //     );
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (
+    //             String::from("a-file"),
+    //             FSNode::file((1664610817, 77142670), "content a")
+    //         )
+    //     );
+    //     assert_eq!(
+    //         iter.next().unwrap(),
+    //         (
+    //             String::from("a-file"),
+    //             FSNode::file((1664610817, 77142670), "content a")
+    //         )
+    //     );
+    // }
 
     #[test]
     // While it is not ideal to have one huge test function testing all the

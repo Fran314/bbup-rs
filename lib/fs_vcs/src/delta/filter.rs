@@ -3,8 +3,7 @@ use abst_fs::Mtime;
 
 impl FSTree {
     fn filter_out(&mut self, rel_path: &AbstPath, exclude_list: &ExcludeList) {
-        let FSTree(tree) = self;
-        tree.retain(|name, child| match child {
+        self.retain(|name, child| match child {
             FSNode::File(_, _) => !exclude_list.should_exclude(&rel_path.add_last(name), false),
             FSNode::SymLink(_, _) => !exclude_list.should_exclude(&rel_path.add_last(name), false),
             FSNode::Dir(_, hash, subtree) => {

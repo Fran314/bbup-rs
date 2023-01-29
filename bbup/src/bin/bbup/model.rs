@@ -55,7 +55,7 @@ impl ProcessState {
         }
     }
     pub fn init_state() -> ProcessState {
-        ProcessState::from(Commit::base_commit().commit_id, FSTree::empty())
+        ProcessState::from(Commit::base_commit().commit_id, FSTree::new())
     }
     fn lkc_path(link_root: &AbstPath) -> AbstPath {
         link_root

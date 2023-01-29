@@ -21,12 +21,11 @@ impl FSTree {
     pub fn apply_delta(&mut self, Delta(deltatree): &Delta) -> Result<(), InapplicableDelta> {
         use std::collections::hash_map::Entry::{Occupied, Vacant};
         use DeltaNode::{Branch, Leaf};
-        let FSTree(fstree) = self;
         for (name, child) in deltatree {
             match child {
                 Leaf(None, None) => {
                     // This is an unshaken node, maybe I should say something about it
-                    match fstree.entry(name.clone()) {
+                    match self.entry(name.clone()) {
                         Vacant(_) => {}
                         Occupied(_) => {
                             return Err(inapperr(
@@ -36,7 +35,7 @@ impl FSTree {
                         }
                     }
                 }
-                Leaf(Some(pre), None) => match fstree.entry(name.clone()) {
+                Leaf(Some(pre), None) => match self.entry(name.clone()) {
                     Occupied(entry) if entry.get() == pre => {
                         entry.remove();
                     }
@@ -53,7 +52,7 @@ impl FSTree {
                         ));
                     }
                 },
-                Leaf(None, Some(post)) => match fstree.entry(name.clone()) {
+                Leaf(None, Some(post)) => match self.entry(name.clone()) {
                     Vacant(entry) => {
                         entry.insert(post.clone());
                     }
@@ -64,7 +63,7 @@ impl FSTree {
                         ));
                     }
                 },
-                Leaf(Some(pre), Some(post)) => match fstree.entry(name.clone()) {
+                Leaf(Some(pre), Some(post)) => match self.entry(name.clone()) {
                     Occupied(mut entry) if entry.get() == pre => {
                         entry.insert(post.clone());
                     }
@@ -82,7 +81,7 @@ impl FSTree {
                     }
                 },
                 Branch((premtime, postmtime), subdelta) => {
-                    match fstree.entry(name.clone()) {
+                    match self.entry(name.clone()) {
                         Occupied(mut entry) => match entry.get_mut() {
                             FSNode::Dir(mtime, hash, subtree) => {
                                 if mtime != premtime {
@@ -120,12 +119,11 @@ impl FSTree {
     pub fn undo_delta(&mut self, Delta(deltatree): &Delta) -> Result<(), InapplicableDelta> {
         use std::collections::hash_map::Entry::*;
         use DeltaNode::*;
-        let FSTree(fstree) = self;
         for (name, child) in deltatree {
             match child {
                 Leaf(None, None) => {
                     // This is an unshaken node, maybe I should say something about it
-                    match fstree.entry(name.clone()) {
+                    match self.entry(name.clone()) {
                         Vacant(_) => {}
                         Occupied(_) => {
                             return Err(inapperr(
@@ -135,7 +133,7 @@ impl FSTree {
                         }
                     }
                 }
-                Leaf(Some(pre), None) => match fstree.entry(name.clone()) {
+                Leaf(Some(pre), None) => match self.entry(name.clone()) {
                     Vacant(entry) => {
                         entry.insert(pre.clone());
                     }
@@ -146,7 +144,7 @@ impl FSTree {
                         ));
                     }
                 },
-                Leaf(None, Some(post)) => match fstree.entry(name.clone()) {
+                Leaf(None, Some(post)) => match self.entry(name.clone()) {
                     Occupied(entry) if entry.get() == post => {
                         entry.remove();
                     }
@@ -163,7 +161,7 @@ impl FSTree {
                         ));
                     }
                 },
-                Leaf(Some(pre), Some(post)) => match fstree.entry(name.clone()) {
+                Leaf(Some(pre), Some(post)) => match self.entry(name.clone()) {
                     Occupied(mut entry) if entry.get() == post => {
                         entry.insert(pre.clone());
                     }
@@ -181,7 +179,7 @@ impl FSTree {
                     }
                 },
                 Branch((premtime, postmtime), subdelta) => {
-                    match fstree.entry(name.clone()) {
+                    match self.entry(name.clone()) {
                         Occupied(mut entry) => match entry.get_mut() {
                             FSNode::Dir(mtime, hash, subtree) => {
                                 if mtime != postmtime {

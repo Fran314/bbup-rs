@@ -123,10 +123,9 @@ impl FSNode {
 }
 impl FSTree {
     fn to_add_actions(&self, root_mtime: &Mtime) -> Actions {
-        let FSTree(tree) = self;
         let mut actions = Actions::new();
         actions.push(AbstPath::empty(), Action::AddDir);
-        for (name, child) in tree {
+        for (name, child) in self {
             let mut child_actions = child.to_add_actions().add_prefix(name);
             actions.append(&mut child_actions);
         }
@@ -241,10 +240,7 @@ impl DeltaNode {
 /// this is possible, ie there are no conflicts on overlapping files defined in
 /// different ways). If it's not possible, return a conflict on why it is not
 /// possible
-fn add_tree_actions(
-    FSTree(loc_tree): &FSTree,
-    FSTree(miss_tree): &FSTree,
-) -> Result<Actions, GetActErr> {
+fn add_tree_actions(loc_tree: &FSTree, miss_tree: &FSTree) -> Result<Actions, GetActErr> {
     let mut necessary_actions = Actions::new();
     for (name, miss_child) in miss_tree {
         match (loc_tree.get(name), miss_child) {

@@ -1,4 +1,4 @@
-use super::{hash_tree, Delta, DeltaNode, FSNode, FSTree};
+use super::{hash_tree, Delta, DeltaNode, FSNode};
 
 use abst_fs::AbstPath;
 use std::collections::HashMap;
@@ -118,7 +118,7 @@ impl Delta {
                     Some(DeltaNode::Branch(_, subdelta)) => {
                         subdelta.get_subdelta_tree_copy(&path.strip_first())
                     }
-                    Some(DeltaNode::Leaf(None, Some(FSNode::Dir(_, _, FSTree(subtree))))) => {
+                    Some(DeltaNode::Leaf(None, Some(FSNode::Dir(_, _, subtree)))) => {
                         let mut subdelta: HashMap<String, DeltaNode> = HashMap::new();
                         for (node, child) in subtree {
                             subdelta
@@ -126,7 +126,7 @@ impl Delta {
                         }
                         Delta(subdelta).get_subdelta_tree_copy(&path.strip_first())
                     }
-                    Some(DeltaNode::Leaf(Some(FSNode::Dir(_, _, FSTree(subtree))), None)) => {
+                    Some(DeltaNode::Leaf(Some(FSNode::Dir(_, _, subtree)), None)) => {
                         let mut subdelta: HashMap<String, DeltaNode> = HashMap::new();
                         for (node, child) in subtree {
                             subdelta
@@ -145,12 +145,10 @@ impl Delta {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use abst_fs::AbstPath;
 
     use super::{
-        super::get_delta, push_unmerg, unmergerr, Delta, FSNode, FSTree, UnmergeableDelta,
+        super::get_delta, super::FSTree, push_unmerg, unmergerr, Delta, FSNode, UnmergeableDelta,
     };
 
     #[test]
@@ -236,22 +234,22 @@ mod tests {
             ),
         ];
 
-        let mut pre_fstree_map = HashMap::new();
-        let mut mid_fstree_map = HashMap::new();
-        let mut post_fstree_map = HashMap::new();
+        let mut pre_fstree = FSTree::new();
+        let mut mid_fstree = FSTree::new();
+        let mut post_fstree = FSTree::new();
         for (pre_type, pre_node) in &pre {
             for (mid_type, mid_node) in &mid {
                 for (post_type, post_node) in &post {
                     let name = format!("{pre_type}-{mid_type}-{post_type}");
 
                     if let Some(node) = pre_node {
-                        pre_fstree_map.insert(name.clone(), node.clone());
+                        pre_fstree.insert(name.clone(), node.clone());
                     }
                     if let Some(node) = mid_node {
-                        mid_fstree_map.insert(name.clone(), node.clone());
+                        mid_fstree.insert(name.clone(), node.clone());
                     }
                     if let Some(node) = post_node {
-                        post_fstree_map.insert(name.clone(), node.clone());
+                        post_fstree.insert(name.clone(), node.clone());
                     }
                 }
 
@@ -262,18 +260,14 @@ mod tests {
                 let name = format!("{pre_type}-{mid_type}-old{pre_type}");
 
                 if let Some(node) = pre_node {
-                    pre_fstree_map.insert(name.clone(), node.clone());
-                    post_fstree_map.insert(name.clone(), node.clone());
+                    pre_fstree.insert(name.clone(), node.clone());
+                    post_fstree.insert(name.clone(), node.clone());
                 }
                 if let Some(node) = mid_node {
-                    mid_fstree_map.insert(name.clone(), node.clone());
+                    mid_fstree.insert(name.clone(), node.clone());
                 }
             }
         }
-
-        let pre_fstree = FSTree(pre_fstree_map);
-        let mid_fstree = FSTree(mid_fstree_map);
-        let post_fstree = FSTree(post_fstree_map);
 
         let prec_delta = get_delta(&pre_fstree, &mid_fstree);
         let mut succ_delta = get_delta(&mid_fstree, &post_fstree);
@@ -351,28 +345,28 @@ mod tests {
                             && (mid_2_node.is_some() || post_node.is_some())
                         {
                             let pre_fstree = match pre_node {
-                                None => FSTree::empty(),
-                                Some(node) => {
-                                    FSTree(HashMap::from([(String::from("object"), node.clone())]))
-                                }
+                                None => FSTree::new(),
+                                Some(node) => FSTree::gen_from(|t| {
+                                    t.insert("object", node.clone());
+                                }),
                             };
                             let mid_1_fstree = match mid_1_node {
-                                None => FSTree::empty(),
-                                Some(node) => {
-                                    FSTree(HashMap::from([(String::from("object"), node.clone())]))
-                                }
+                                None => FSTree::new(),
+                                Some(node) => FSTree::gen_from(|t| {
+                                    t.insert("object", node.clone());
+                                }),
                             };
                             let mid_2_fstree = match mid_2_node {
-                                None => FSTree::empty(),
-                                Some(node) => {
-                                    FSTree(HashMap::from([(String::from("object"), node.clone())]))
-                                }
+                                None => FSTree::new(),
+                                Some(node) => FSTree::gen_from(|t| {
+                                    t.insert("object", node.clone());
+                                }),
                             };
                             let post_fstree = match post_node {
-                                None => FSTree::empty(),
-                                Some(node) => {
-                                    FSTree(HashMap::from([(String::from("object"), node.clone())]))
-                                }
+                                None => FSTree::new(),
+                                Some(node) => FSTree::gen_from(|t| {
+                                    t.insert("object", node.clone());
+                                }),
                             };
 
                             let prec_delta = get_delta(&pre_fstree, &mid_1_fstree);
