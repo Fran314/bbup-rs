@@ -3,7 +3,7 @@ use super::{ArchiveConfig, ArchiveState};
 use abst_fs::{self as fs, AbstPath};
 use fs_vcs::{Action, Commit, Delta};
 
-use bbup::com::{BbupCom, JobType};
+use bbup_com::{BbupCom, JobType};
 
 use std::sync::Arc;
 

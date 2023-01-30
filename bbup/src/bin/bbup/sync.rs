@@ -2,7 +2,7 @@ use super::{protocol, ProcessConfig, ProcessState};
 
 use tokio::net::TcpStream;
 
-use bbup::com::{BbupCom, JobType};
+use bbup_com::{BbupCom, JobType};
 use ssh_tunnel::SshTunnel;
 
 use anyhow::{bail, Context, Result};

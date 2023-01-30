@@ -3,7 +3,7 @@ use fs_vcs::{generate_fstree, get_actions, get_delta, Action, Delta};
 use super::{ProcessConfig, ProcessState};
 
 use abst_fs as fs;
-use bbup::com::BbupCom;
+use bbup_com::BbupCom;
 
 use anyhow::{Context, Result};
 

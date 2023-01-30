@@ -54,6 +54,26 @@ version = "0.1.1"
 dependencies = [
  "abst_fs",
  "anyhow",
+ "bbup_com",
+ "bincode",
+ "clap",
+ "fs_vcs",
+ "hasher",
+ "indicatif",
+ "input",
+ "ior",
+ "serde",
+ "ssh_tunnel",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "bbup_com"
+version = "0.1.0"
+dependencies = [
+ "abst_fs",
+ "anyhow",
  "bincode",
  "clap",
  "fs_vcs",

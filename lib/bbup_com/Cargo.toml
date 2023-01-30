@@ -1,0 +1,22 @@
+[package]
+name = "bbup_com"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+anyhow = "1.0"
+thiserror = "1.0"
+tokio = { version = "1", features = ["full"] }
+bincode = "1.3"
+indicatif = "0.16"
+clap = { version = "3.2", features = ["derive"] }
+
+abst_fs = { path = "../abst_fs" }
+ssh_tunnel = { path = "../ssh_tunnel" }
+input = { path = "../input" }
+ior = { path = "../ior" }
+hasher = { path = "../hasher" }
+fs_vcs = { path = "../fs_vcs" }
