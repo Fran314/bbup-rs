@@ -77,9 +77,6 @@ async fn main() -> Result<()> {
         Some(val) => abst_fs::AbstPath::from(val),
         None => fs::home_dir().context("could not resolve home_dir path")?,
     };
-    //dbg!(&abst_fs::AbstPath::from(args.home_dir.unwrap()));
-    //let home_dir = fs::home_dir().context("could not resolve home_dir path")?;
-    //dbg!(&home_dir);
     let cwd = match args.cwd {
         Some(val) => abst_fs::AbstPath::from(val),
         None => fs::cwd().context("could not resolve current working directory")?,

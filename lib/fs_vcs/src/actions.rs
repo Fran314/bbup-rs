@@ -22,7 +22,13 @@ pub enum Action {
 #[derive(Debug)]
 pub struct Actions(Vec<(AbstPath, Action)>);
 // TODO
-// remove this once Actions get properly ordered (which is also a TODO)
+// This manual implementation of PartialEq isn't really needed anymore, as the
+// order of the generated actions (which depends on the order of iteration of
+// Delta) is now standardised (alphabetically) and Actions are now fully
+// ordered. That being said, removing this and using the automatic derive for
+// PartialEq would mean making big and monotonous changes to the tests (that
+// is, actually putting the manually generated actions in alphabetically order)
+// which is a bit of a chore, and I will do it later. For now, this will do
 impl PartialEq for Actions {
     fn eq(&self, other: &Self) -> bool {
         self.0.len() == other.0.len()
