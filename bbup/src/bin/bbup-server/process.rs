@@ -67,17 +67,10 @@ async fn pull(
         }
     }
     for hash in query_hashes {
-        com.send_file_from(
-            &config
-                .archive_root
-                .add_last("objects")
-                .append(&hash_to_path(hash.clone())),
-        )
-        .await
-        .context(format!(
-            "could not send file at path {}",
-            hash_to_path(hash.clone())
-        ))?
+        let hash_path = hash_to_path(hash.clone());
+        com.send_file_from(&config.archive_root.add_last("objects").append(&hash_path))
+            .await
+            .context(format!("could not send file at path {hash_path}"))?
     }
 
     // send all files requested by client
@@ -107,6 +100,11 @@ async fn push(
         .await
         .context("could not get delta from client")?;
 
+    // TODO if fail, send error message to the server
+    let rebased_delta = local_delta.rebase_from_tree_at_endpoint(&state.archive_tree, endpoint)?;
+    let mut updated_archive_tree = state.archive_tree.clone();
+    updated_archive_tree.apply_delta(&rebased_delta)?;
+
     // Get all files that need to be uploaded from client
     let actions = local_delta.to_actions()?;
     let mut query_paths = Vec::new();
@@ -124,18 +122,31 @@ async fn push(
         .await
         .context("could not send queries to client")?;
 
-    for hash in query_hashes {
+    for hash in &query_hashes {
+        let hash_path = hash_to_path(hash.clone());
         com.get_file_to_hash_check(
             &config
                 .archive_root
-                .add_last("objects")
-                .append(&hash_to_path(hash.clone())),
+                .add_last(".bbup")
+                .add_last("temp")
+                .append(&hash_path),
             hash.clone(),
         )
         .await
-        .context(format!(
-            "could not get file at path {}",
-            hash_to_path(hash.clone())
+        .context(format!("could not get file at path {hash_path}"))?;
+    }
+
+    for hash in query_hashes {
+        let hash_path = hash_to_path(hash.clone());
+        let to_path = config.archive_root.add_last("objects").append(&hash_path);
+        let from_temp_path = config
+            .archive_root
+            .add_last(".bbup")
+            .add_last("temp")
+            .append(&hash_path);
+
+        fs::rename_file(&from_temp_path, &to_path).context(format!(
+            "could not move object from temp to destination at path {hash_path}",
         ))?;
     }
 
@@ -145,11 +156,6 @@ async fn push(
     // )
     // .await
     // .context("could not query files to apply push")?;
-
-    // TODO if fail, send error message to the server
-    let rebased_delta = local_delta.rebase_from_tree_at_endpoint(&state.archive_tree, endpoint)?;
-    let mut updated_archive_tree = state.archive_tree.clone();
-    updated_archive_tree.apply_delta(&rebased_delta)?;
 
     // for (path, action) in &actions {
     //     let to_path = config.archive_root.append(endpoint).append(path);
