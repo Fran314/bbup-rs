@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use super::{
-    bbupcom::{error_context, generr, inerr, Error, Query},
+    bbupcom::{error_context, generr, inerr, Error},
     BbupCom, ProgressWriter,
 };
 
@@ -86,7 +86,9 @@ impl BbupCom {
             .await
             .map_err(inerr(errctx("async read the file")))?;
 
-        self.send_ok().await?;
+        self.send_ok()
+            .await
+            .map_err(inerr(errctx("send ok status")))?;
 
         let len = file
             .metadata()
@@ -118,42 +120,56 @@ impl BbupCom {
         Ok(())
     }
 
-    pub async fn supply_files(
-        &mut self,
-        queryable: Vec<AbstPath>,
-        source: &AbstPath,
-    ) -> Result<(), Error> {
-        let errmsg = String::from("could not supply files and symlinks");
-        let errctx = error_context(errmsg.clone());
-        loop {
-            let query: Query = self
-                .get_struct()
-                .await
-                .map_err(inerr(errctx("get query".to_string())))?;
-            match query {
-                Query::Stop => break,
-                Query::File(rel_path) => {
-                    if !queryable.iter().any(|qp| qp.eq(&rel_path)) {
-                        self.send_error(1, "quered file at path not allowed")
-                            .await
-                            .map_err(inerr(errctx(format!(
-                                "propagate not allowed path at {rel_path}"
-                            ))))?;
-                        return Err(generr(
-                            errmsg,
-                            format!(
-                                "other party tried to query a non queryable path at {rel_path}"
-                            ),
-                        ));
-                    }
-                    let path = source.append(&rel_path);
-                    self.send_file_from(&path)
-                        .await
-                        .map_err(inerr(errctx(format!("send quered file at path {path}"))))?;
-                }
-            }
-        }
-
-        Ok(())
-    }
+    // pub async fn supply_mapped_files(
+    //     &mut self,
+    //     map: HashMap<AbstPath, AbstPath>,
+    //     source: &AbstPath,
+    // ) -> Result<(), Error> {
+    //     let errmsg = String::from("could not supply files and symlinks");
+    //     let errctx = error_context(errmsg.clone());
+    //     loop {
+    //         let query: Query = self
+    //             .get_struct()
+    //             .await
+    //             .map_err(inerr(errctx("get query".to_string())))?;
+    //         match query {
+    //             Query::Stop => break,
+    //             Query::File(rel_path) => match map.get(&rel_path) {
+    //                 None => {
+    //                     self.send_error(1, "quered file at path not allowed")
+    //                         .await
+    //                         .map_err(inerr(errctx(format!(
+    //                             "propagate not allowed path at {rel_path}"
+    //                         ))))?;
+    //                     return Err(generr(
+    //                         errmsg,
+    //                         format!(
+    //                             "other party tried to query a non queryable path at {rel_path}"
+    //                         ),
+    //                     ));
+    //                 }
+    //                 Some(mapped_path) => {
+    //                     let path = source.append(mapped_path);
+    //                     self.send_file_from(&path)
+    //                         .await
+    //                         .map_err(inerr(errctx(format!("send quered file at path {path}"))))?;
+    //                 }
+    //             },
+    //         }
+    //     }
+    //
+    //     Ok(())
+    // }
+    //
+    // pub async fn supply_files(
+    //     &mut self,
+    //     queryable: Vec<AbstPath>,
+    //     source: &AbstPath,
+    // ) -> Result<(), Error> {
+    //     let mut map = HashMap::new();
+    //     for path in queryable {
+    //         map.insert(path.clone(), path);
+    //     }
+    //     self.supply_mapped_files(map, source).await
+    // }
 }

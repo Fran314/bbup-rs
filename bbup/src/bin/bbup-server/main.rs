@@ -58,7 +58,10 @@ async fn main() -> Result<()> {
     };
 
     match args.cmd {
-        SubCommand::Setup { server_port, archive_root } => setup::setup(home_dir, server_port, archive_root),
+        SubCommand::Setup {
+            server_port,
+            archive_root,
+        } => setup::setup(home_dir, server_port, archive_root),
         SubCommand::Run { verbose, progress } => {
             let server_config = ServerConfig::load(&home_dir)?;
             let archive_root = home_dir.append(&server_config.archive_root);
@@ -85,7 +88,7 @@ async fn main() -> Result<()> {
                                 println!("connection processed correctly")
                             }
                         }
-                        Err(err) => println!("Error: {err}"),
+                        Err(err) => println!("Error: {err:?}"),
                     }
                 });
             }

@@ -41,7 +41,7 @@ pub enum ObjectType {
     Dir,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Eq, std::hash::Hash)]
 pub struct AbstPath(VecDeque<String>);
 impl AbstPath {
     pub fn empty() -> AbstPath {

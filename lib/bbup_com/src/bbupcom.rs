@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use abst_fs::AbstPath;
-
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Comunications Error: inner error occurred.\nSource: {src}\n{err}")]
@@ -53,9 +51,9 @@ pub enum JobType {
     Push,
     Quit,
 }
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Query {
-    File(AbstPath),
-    Stop,
-}
+//
+// #[derive(Serialize, Deserialize, Debug, Clone)]
+// pub enum Query {
+//     File(AbstPath),
+//     Stop,
+// }

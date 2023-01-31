@@ -89,3 +89,15 @@ impl ArchiveState {
         Ok(())
     }
 }
+
+pub fn hash_to_path(hash: hasher::Hash) -> AbstPath {
+    let s = hash.to_string();
+    AbstPath::from(format!(
+        "{}/{}/{}/{}/{}",
+        &s[..2],
+        &s[2..4],
+        &s[4..6],
+        &s[6..8],
+        &s[8..]
+    ))
+}

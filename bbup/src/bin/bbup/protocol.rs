@@ -1,3 +1,4 @@
+use abst_fs::AbstPath;
 use fs_vcs::{generate_fstree, get_actions, get_delta, Action, Delta};
 
 use super::{ProcessConfig, ProcessState};
@@ -99,12 +100,34 @@ pub async fn apply_update_or_get_conflicts(
                     _ => {}
                 }
             }
-            com.query_files(
-                queries,
-                &config.link_root.add_last(".bbup").add_last("temp"),
+            com.send_struct(
+                queries
+                    .iter()
+                    .map(|(p, _)| p.clone())
+                    .collect::<Vec<AbstPath>>(),
             )
             .await
-            .context("could not query files and symlinks to apply update")?;
+            .context("could not send queries to server")?;
+
+            for (path, hash) in queries {
+                com.get_file_to_hash_check(
+                    &config
+                        .link_root
+                        .add_last(".bbup")
+                        .add_last("temp")
+                        .append(&path),
+                    hash,
+                )
+                .await
+                .context(format!("could not get file at path {path}"))?;
+            }
+
+            // com.query_files(
+            //     queries,
+            //     &config.link_root.add_last(".bbup").add_last("temp"),
+            // )
+            // .await
+            // .context("could not query files and symlinks to apply update")?;
 
             // Apply actions
             for (path, action) in necessary_actions {
@@ -236,9 +259,34 @@ pub async fn upload_changes(
                     _ => {}
                 }
             }
-            com.supply_files(queryables, &config.link_root)
+            let queries: Vec<AbstPath> = com
+                .get_struct()
                 .await
-                .context("could not supply files and symlinks to upload push")?;
+                .context("could not recieve queries")?;
+
+            for path in &queries {
+                match queryables.iter().find(|p| p == &path) {
+                    Some(_) => {}
+                    None => {
+                        com.send_error(1, "quered file at path not allowed")
+                            .await
+                            .context(
+                            "could not propagate error to client [quered file at path not allowed]",
+                        )?;
+                        anyhow::bail!("Client quered file at path not allowed [{path}]")
+                    }
+                }
+            }
+
+            for path in queries {
+                com.send_file_from(&config.link_root.append(&path))
+                    .await
+                    .context(format!("could not send file at path {path}"))?;
+            }
+
+            // com.supply_files(queryables, &config.link_root)
+            //     .await
+            //     .context("could not supply files and symlinks to upload push")?;
 
             state.last_known_commit = com.get_struct().await?;
             state.last_known_fstree = new_tree.clone();

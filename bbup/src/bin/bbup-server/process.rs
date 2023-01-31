@@ -1,4 +1,4 @@
-use super::{ArchiveConfig, ArchiveState};
+use super::{hash_to_path, ArchiveConfig, ArchiveState};
 
 use abst_fs::{self as fs, AbstPath};
 use fs_vcs::{Action, Commit, Delta};
@@ -41,15 +41,49 @@ async fn pull(
     let mut queryables = Vec::new();
     for (path, action) in actions {
         match action {
-            Action::AddFile(_, _) | Action::EditFile(_, Some(_)) => queryables.push(path.clone()),
+            Action::AddFile(_, hash) | Action::EditFile(_, Some(hash)) => {
+                queryables.push((path.clone(), hash.clone()));
+            }
             _ => {}
         }
     }
+    let queries: Vec<AbstPath> = com
+        .get_struct()
+        .await
+        .context("could not recieve queries")?;
+
+    let mut query_hashes = Vec::new();
+    for path in queries {
+        match queryables.iter().find(|p| p.0 == path) {
+            Some((_, hash)) => query_hashes.push(hash),
+            None => {
+                com.send_error(1, "quered file at path not allowed")
+                    .await
+                    .context(
+                        "could not propagate error to client [quered file at path not allowed]",
+                    )?;
+                anyhow::bail!("Client quered file at path not allowed [{path}]")
+            }
+        }
+    }
+    for hash in query_hashes {
+        com.send_file_from(
+            &config
+                .archive_root
+                .add_last("objects")
+                .append(&hash_to_path(hash.clone())),
+        )
+        .await
+        .context(format!(
+            "could not send file at path {}",
+            hash_to_path(hash.clone())
+        ))?
+    }
 
     // send all files requested by client
-    com.supply_files(queryables, &config.archive_root.append(endpoint))
-        .await
-        .context("could not supply files to download update")?;
+    // com.supply_mapped_files(queryables2, &config.archive_root.append(endpoint))
+    //     .await
+    //     .context("could not supply files to download update")?;
 
     Ok(())
 }
@@ -75,103 +109,124 @@ async fn push(
 
     // Get all files that need to be uploaded from client
     let actions = local_delta.to_actions()?;
-    let mut queries = Vec::new();
+    let mut query_paths = Vec::new();
+    let mut query_hashes = Vec::new();
     for (path, action) in &actions {
         match action {
             Action::AddFile(_, hash) | Action::EditFile(_, Some(hash)) => {
-                queries.push((path.clone(), hash.clone()))
+                query_paths.push(path.clone());
+                query_hashes.push(hash.clone());
             }
             _ => {}
         }
     }
-    com.query_files(
-        queries,
-        &config.archive_root.add_last(".bbup").add_last("temp"),
-    )
-    .await
-    .context("could not query files to apply push")?;
+    com.send_struct(query_paths)
+        .await
+        .context("could not send queries to client")?;
+
+    for hash in query_hashes {
+        com.get_file_to_hash_check(
+            &config
+                .archive_root
+                .add_last("objects")
+                .append(&hash_to_path(hash.clone())),
+            hash.clone(),
+        )
+        .await
+        .context(format!(
+            "could not get file at path {}",
+            hash_to_path(hash.clone())
+        ))?;
+    }
+
+    // com.query_files(
+    //     queries,
+    //     &config.archive_root.add_last(".bbup").add_last("temp"),
+    // )
+    // .await
+    // .context("could not query files to apply push")?;
 
     // TODO if fail, send error message to the server
     let rebased_delta = local_delta.rebase_from_tree_at_endpoint(&state.archive_tree, endpoint)?;
     let mut updated_archive_tree = state.archive_tree.clone();
     updated_archive_tree.apply_delta(&rebased_delta)?;
 
-    for (path, action) in &actions {
-        let to_path = config.archive_root.append(endpoint).append(path);
-        let from_temp_path = config
-            .archive_root
-            .add_last(".bbup")
-            .add_last("temp")
-            .append(path);
-
-        let errmsg = |msg: &str| -> String {
-            format!(
-                "could not {} to apply new commit\npath: {}",
-                msg,
-                to_path.clone()
-            )
-        };
-        match action {
-            Action::AddDir => {
-                fs::create_dir(&to_path).context(errmsg("create added directory"))?;
-            }
-            Action::AddFile(mtime, _) => {
-                fs::rename_file(&from_temp_path, &to_path)
-                    .context(errmsg("move added file from temp"))?;
-                fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of added file"))?;
-            }
-            Action::AddSymLink(mtime, endpoint) => {
-                fs::create_symlink(&to_path, endpoint.clone())
-                    .context(errmsg("create added symlink"))?;
-                fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of added symlink"))?;
-            }
-            Action::EditDir(mtime) => {
-                fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of edited directory"))?;
-            }
-            Action::EditFile(mtime, opth) => {
-                if opth.is_some() {
-                    fs::rename_file(&from_temp_path, &to_path)
-                        .context(errmsg("move edited file from temp"))?;
-                }
-                fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of edited file"))?;
-            }
-            Action::EditSymLink(mtime, optep) => {
-                if let Some(endpoint) = optep {
-                    // TODO
-                    // Remove and create is definitely not a pretty solution
-                    // but (my) fs library is currently missing a function to
-                    // overwrite an existing symlink (which basically will do
-                    // this anyway under the hood because std::os::unix::fs
-                    // also doesn't have a function to overwrite a symlink) so
-                    // this will do for now.
-                    // Same thing is going on in bbup-server/process.rs
-                    fs::remove_symlink(&to_path).context(errmsg("delete edited symlink"))?;
-                    fs::create_symlink(&to_path, endpoint.clone())
-                        .context(errmsg("override edited symlink"))?;
-                }
-                fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of edited symlink"))?;
-            }
-            Action::RemoveDir => {
-                // Why remove_dir_all instead of just remove_dir here?
-                // One would think that, because the delta.flatten() flattens a
-                //	removed directory by recursively adding a removefile/
-                //	removesymlink/removedir for all the nested childs, once we get
-                //	at a removedir we can be sure that the directory is actually
-                //	empty.
-                // This is not true because the directory could contain some
-                //	ignored object, which wouldn't appear as a remove*** and
-                //	wouldn't be removed, so we have to forcefully remove it
-                //	together with the directory itself
-                fs::remove_dir_all(&to_path).context(errmsg("remove deleted dir"))?;
-            }
-            Action::RemoveFile => {
-                fs::remove_file(&to_path).context(errmsg("remove deleted file"))?;
-            }
-            Action::RemoveSymLink => {
-                fs::remove_symlink(&to_path).context(errmsg("remove deleted symlink"))?;
-            }
-        }
-    }
+    // for (path, action) in &actions {
+    //     let to_path = config.archive_root.append(endpoint).append(path);
+    //     let from_temp_path = config
+    //         .archive_root
+    //         .add_last(".bbup")
+    //         .add_last("temp")
+    //         .append(path);
+    //
+    //     let errmsg = |msg: &str| -> String {
+    //         format!(
+    //             "could not {} to apply new commit\npath: {}",
+    //             msg,
+    //             to_path.clone()
+    //         )
+    //     };
+    //     match action {
+    //         Action::AddDir => {
+    //             fs::create_dir(&to_path).context(errmsg("create added directory"))?;
+    //         }
+    //         Action::AddFile(mtime, _) => {
+    //             fs::rename_file(&from_temp_path, &to_path)
+    //                 .context(errmsg("move added file from temp"))?;
+    //             fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of added file"))?;
+    //         }
+    //         Action::AddSymLink(mtime, endpoint) => {
+    //             fs::create_symlink(&to_path, endpoint.clone())
+    //                 .context(errmsg("create added symlink"))?;
+    //             fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of added symlink"))?;
+    //         }
+    //         Action::EditDir(mtime) => {
+    //             fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of edited directory"))?;
+    //         }
+    //         Action::EditFile(mtime, opth) => {
+    //             if opth.is_some() {
+    //                 fs::rename_file(&from_temp_path, &to_path)
+    //                     .context(errmsg("move edited file from temp"))?;
+    //             }
+    //             fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of edited file"))?;
+    //         }
+    //         Action::EditSymLink(mtime, optep) => {
+    //             if let Some(endpoint) = optep {
+    //                 // TODO
+    //                 // Remove and create is definitely not a pretty solution
+    //                 // but (my) fs library is currently missing a function to
+    //                 // overwrite an existing symlink (which basically will do
+    //                 // this anyway under the hood because std::os::unix::fs
+    //                 // also doesn't have a function to overwrite a symlink) so
+    //                 // this will do for now.
+    //                 // Same thing is going on in bbup-server/process.rs
+    //                 fs::remove_symlink(&to_path).context(errmsg("delete edited symlink"))?;
+    //                 fs::create_symlink(&to_path, endpoint.clone())
+    //                     .context(errmsg("override edited symlink"))?;
+    //             }
+    //             fs::set_mtime(&to_path, mtime).context(errmsg("set mtime of edited symlink"))?;
+    //         }
+    //         Action::RemoveDir => {
+    //             // Why remove_dir_all instead of just remove_dir here?
+    //             // One would think that, because the delta.flatten() flattens a
+    //             //	removed directory by recursively adding a removefile/
+    //             //	removesymlink/removedir for all the nested childs, once we get
+    //             //	at a removedir we can be sure that the directory is actually
+    //             //	empty.
+    //             // This is not true because the directory could contain some
+    //             //	ignored object, which wouldn't appear as a remove*** and
+    //             //	wouldn't be removed, so we have to forcefully remove it
+    //             //	together with the directory itself
+    //             fs::remove_dir_all(&to_path).context(errmsg("remove deleted dir"))?;
+    //         }
+    //         Action::RemoveFile => {
+    //             fs::remove_file(&to_path).context(errmsg("remove deleted file"))?;
+    //         }
+    //         Action::RemoveSymLink => {
+    //             fs::remove_symlink(&to_path).context(errmsg("remove deleted symlink"))?;
+    //         }
+    //     }
+    // }
 
     let commit_id = Commit::gen_valid_id();
     state.commit_list.push(Commit {
