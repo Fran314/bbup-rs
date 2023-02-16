@@ -39,6 +39,9 @@ pub async fn process_link(config: ProcessConfig) -> Result<()> {
                 .context("could not get green light from server to procede with conversation")?;
 
             com.send_struct(&config.endpoint).await?;
+            com.check_ok()
+                .await
+                .context("could not get green light from server on validity of endpoint")?;
 
             let mut state = ProcessState::load(&config.link_root)?;
 

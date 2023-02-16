@@ -1,10 +1,14 @@
-use super::{ArchiveState, ServerConfig};
+use super::{Archive, ServerConfig};
 
 use abst_fs::{list_dir_content, AbstPath, ObjectType};
 
 use anyhow::Result;
 
-pub fn setup(home_dir: AbstPath, opt_server_port: Option<u16>, opt_archive_root: Option<String>) -> Result<()> {
+pub fn setup(
+    home_dir: AbstPath,
+    opt_server_port: Option<u16>,
+    opt_archive_root: Option<String>,
+) -> Result<()> {
     if ServerConfig::exists(&home_dir) {
         anyhow::bail!("bbup server is already setup");
     }
@@ -29,11 +33,11 @@ pub fn setup(home_dir: AbstPath, opt_server_port: Option<u16>, opt_archive_root:
     }
 
     ServerConfig::from(server_port, archive_root).save(&home_dir)?;
-    ArchiveState::init_state().save(&absolute_archive_root)?;
+    Archive::new().save_list(&absolute_archive_root)?;
 
     println!("bbup server set up correctly!");
     println!();
-    println!("run 'bbup-server run -pv' to start the bbup-server daemon");
+    println!("try creating an endpoint");
     println!();
 
     Ok(())

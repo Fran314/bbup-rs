@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use abst_fs::{self as fs, AbstPath};
-use fs_vcs::{Commit, Delta, ExcludeList, FSTree};
+use fs_vcs::{CommitID, Delta, ExcludeList, FSTree};
 
 use anyhow::{Context, Result};
 
@@ -33,19 +33,19 @@ pub struct Connection {
 pub struct ProcessConfig {
     pub link_root: AbstPath,
     pub exclude_list: ExcludeList,
-    pub endpoint: AbstPath,
+    pub endpoint: String,
     pub connection: Connection,
     pub flags: Flags,
 }
 pub struct ProcessState {
-    pub last_known_commit: String,
+    pub last_known_commit: CommitID,
     pub last_known_fstree: FSTree,
     pub new_tree: Option<FSTree>,
     pub local_delta: Option<Delta>,
-    pub update: Option<(String, Delta)>,
+    pub update: Option<(CommitID, Delta)>,
 }
 impl ProcessState {
-    pub fn from(lkc: String, last_known_fstree: FSTree) -> ProcessState {
+    pub fn from(lkc: CommitID, last_known_fstree: FSTree) -> ProcessState {
         ProcessState {
             last_known_commit: lkc,
             last_known_fstree,
@@ -55,7 +55,7 @@ impl ProcessState {
         }
     }
     pub fn init_state() -> ProcessState {
-        ProcessState::from(Commit::base_commit().commit_id, FSTree::new())
+        ProcessState::from(CommitID::gen_null(), FSTree::new())
     }
     fn lkc_path(link_root: &AbstPath) -> AbstPath {
         link_root
@@ -66,7 +66,7 @@ impl ProcessState {
         link_root.add_last(".bbup").add_last("old-fstree.bin")
     }
     pub fn load(link_root: &AbstPath) -> Result<ProcessState> {
-        let lkc: String = fs::load(&ProcessState::lkc_path(link_root))
+        let lkc: CommitID = fs::load(&ProcessState::lkc_path(link_root))
             .context("failed to load link's last known commit")?;
         let last_known_fstree: FSTree = fs::load(&ProcessState::ofst_path(link_root))
             .context("failed to load link's old fstree")?;
@@ -119,7 +119,7 @@ impl ClientConfig {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LinkConfig {
     pub link_type: LinkType,
-    pub endpoint: AbstPath,
+    pub endpoint: String,
     pub exclude_list: Vec<String>,
 }
 impl LinkConfig {
@@ -129,7 +129,7 @@ impl LinkConfig {
     pub fn exists(link_root: &AbstPath) -> bool {
         LinkConfig::path(link_root).exists()
     }
-    pub fn from(link_type: LinkType, endpoint: AbstPath, exclude_list: Vec<String>) -> LinkConfig {
+    pub fn from(link_type: LinkType, endpoint: String, exclude_list: Vec<String>) -> LinkConfig {
         LinkConfig {
             link_type,
             endpoint,

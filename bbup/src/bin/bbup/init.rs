@@ -14,8 +14,8 @@ pub fn init(cwd: &AbstPath, opt_endpoint: Option<String>, no_exclude_list: bool)
     //	- check which separator is used
     //	- ask for confirmation
     let endpoint = match opt_endpoint {
-        Some(val) => AbstPath::from(val),
-        None => AbstPath::from(input::get("set endpoint (relative to archive root): ")?),
+        Some(val) => val,
+        None => input::get("set endpoint (relative to archive root): ")?,
     };
 
     let mut exclude_list: Vec<String> = Vec::new();

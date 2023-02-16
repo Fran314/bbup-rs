@@ -1,5 +1,5 @@
 use abst_fs::AbstPath;
-use fs_vcs::{generate_fstree, get_actions, get_delta, Action, Delta};
+use fs_vcs::{generate_fstree, get_actions, get_delta, Action, CommitID, Delta};
 
 use super::{ProcessConfig, ProcessState};
 
@@ -47,7 +47,7 @@ pub async fn pull_update_delta(
         .get_struct()
         .await
         .context("could not get update delta from server")?;
-    let id: String = com
+    let id: CommitID = com
         .get_struct()
         .await
         .context("could not get update id from server")?;

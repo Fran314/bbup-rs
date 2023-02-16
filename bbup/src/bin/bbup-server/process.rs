@@ -1,7 +1,7 @@
-use super::{hash_to_path, ArchiveConfig, ArchiveState};
+use super::{hash_to_path, Archive, ArchiveEndpoint};
 
 use abst_fs::{self as fs, AbstPath};
-use fs_vcs::{Action, Commit, Delta};
+use fs_vcs::{Action, CommitID, Delta};
 
 use bbup_com::{BbupCom, JobType};
 
@@ -11,20 +11,19 @@ use anyhow::{Context, Result};
 use tokio::{net::TcpStream, sync::Mutex};
 
 async fn pull(
-    config: &ArchiveConfig,
-    state: &ArchiveState,
+    endpoint_root: &AbstPath,
+    state: &ArchiveEndpoint,
     com: &mut BbupCom,
-    endpoint: &AbstPath,
+    // endpoint: &AbstPath,
 ) -> Result<()> {
-    let last_known_commit: String = com.get_struct().await.context("could not get lkc")?;
+    let last_known_commit: CommitID = com.get_struct().await.context("could not get lkc")?;
 
     // calculate update for client
     // TODO maybe this should panic because it means a broken server state
     let delta = state
-        .commit_list
-        .get_update_delta(endpoint, last_known_commit)
+        .get_update_delta(last_known_commit)
         .context("could not get update delta")?;
-    let id = state.commit_list.most_recent_commit().commit_id.clone();
+    let id = state.most_recent_commit().commit_id.clone();
 
     // send update delta to client for pull
     com.send_struct(delta.clone())
@@ -68,7 +67,7 @@ async fn pull(
     }
     for hash in query_hashes {
         let hash_path = hash_to_path(hash.clone());
-        com.send_file_from(&config.archive_root.add_last("objects").append(&hash_path))
+        com.send_file_from(&endpoint_root.add_last("objects").append(&hash_path))
             .await
             .context(format!("could not send file at path {hash_path}"))?
     }
@@ -82,12 +81,14 @@ async fn pull(
 }
 
 async fn push(
-    config: &ArchiveConfig,
-    state: &mut ArchiveState,
+    endpoint_root: &AbstPath,
+    state: &mut ArchiveEndpoint,
     com: &mut BbupCom,
-    endpoint: &AbstPath,
+    // endpoint: &AbstPath,
 ) -> Result<()> {
-    fs::make_clean_dir(&config.archive_root.add_last(".bbup").add_last("temp"))?;
+    // TODO .bbup isn't really necessary here, but has to be modified
+    // consistently in other places
+    fs::make_clean_dir(&endpoint_root.add_last(".bbup").add_last("temp"))?;
 
     // Reply with green light for push
     com.send_ok()
@@ -101,9 +102,15 @@ async fn push(
         .context("could not get delta from client")?;
 
     // TODO if fail, send error message to the server
-    let rebased_delta = local_delta.rebase_from_tree_at_endpoint(&state.archive_tree, endpoint)?;
-    let mut updated_archive_tree = state.archive_tree.clone();
-    updated_archive_tree.apply_delta(&rebased_delta)?;
+    // TODO checking if the delta is applicable and then applying it at the end
+    // of the function is a bit resource wasteful as we're practically applying
+    // the delta twice. I'm using this approach because this way it's more
+    // clear that here we're just checking if this delta is a valid one, but
+    // maybe it's too much wasteful
+    state.is_delta_applicable(&local_delta)?;
+    // let rebased_delta = local_delta.rebase_from_tree_at_endpoint(&state.archive_tree, endpoint)?;
+    // let mut updated_archive_tree = state.archive_tree.clone();
+    // updated_archive_tree.apply_delta(&rebased_delta)?;
 
     // Get all files that need to be uploaded from client
     let actions = local_delta.to_actions()?;
@@ -125,8 +132,7 @@ async fn push(
     for hash in &query_hashes {
         let hash_path = hash_to_path(hash.clone());
         com.get_file_to_hash_check(
-            &config
-                .archive_root
+            &endpoint_root
                 .add_last(".bbup")
                 .add_last("temp")
                 .append(&hash_path),
@@ -138,9 +144,8 @@ async fn push(
 
     for hash in query_hashes {
         let hash_path = hash_to_path(hash.clone());
-        let to_path = config.archive_root.add_last("objects").append(&hash_path);
-        let from_temp_path = config
-            .archive_root
+        let to_path = endpoint_root.add_last("objects").append(&hash_path);
+        let from_temp_path = endpoint_root
             .add_last(".bbup")
             .add_last("temp")
             .append(&hash_path);
@@ -234,14 +239,17 @@ async fn push(
     //     }
     // }
 
-    let commit_id = Commit::gen_valid_id();
-    state.commit_list.push(Commit {
-        commit_id: commit_id.clone(),
-        delta: rebased_delta,
-    });
-    state.archive_tree = updated_archive_tree;
+    let commit_id = state
+        .commit_delta(&local_delta)
+        .context("could not update state")?;
+    // let commit_id = Commit::gen_valid_id();
+    // state.commit_list.push(Commit {
+    //     commit_id: commit_id.clone(),
+    //     delta: rebased_delta,
+    // });
+    // state.archive_tree = updated_archive_tree;
     state
-        .save(&config.archive_root)
+        .save(endpoint_root)
         .context("could not save push update")?;
 
     com.send_struct(commit_id)
@@ -251,9 +259,9 @@ async fn push(
 }
 
 pub async fn process_connection(
-    config: ArchiveConfig,
+    archive_root: &AbstPath,
     socket: TcpStream,
-    state: Arc<Mutex<ArchiveState>>,
+    state: Arc<Mutex<Archive>>,
     progress: bool,
 ) -> Result<()> {
     let mut com = BbupCom::from(socket, progress);
@@ -275,10 +283,17 @@ pub async fn process_connection(
             .await
             .context("could not send greenlight for conversation")?;
 
-        let endpoint: AbstPath = com
+        let endpoint: String = com
             .get_struct()
             .await
             .context("could not get backup endpoint")?;
+        let endpoint_state = state.get_mut(&endpoint).context("endpoint doesn't exist")?;
+
+        com.send_ok()
+            .await
+            .context("could not send greenlight for validity of endpoint")?;
+
+        let endpoint_root = archive_root.append(&AbstPath::from(endpoint));
 
         loop {
             let jt: JobType = com.get_struct().await.context("could not get job type")?;
@@ -288,10 +303,10 @@ pub async fn process_connection(
                     break;
                 }
                 JobType::Pull => {
-                    pull(&config, &state, &mut com, &endpoint).await?;
+                    pull(&endpoint_root, endpoint_state, &mut com).await?;
                 }
                 JobType::Push => {
-                    push(&config, &mut state, &mut com, &endpoint).await?;
+                    push(&endpoint_root, endpoint_state, &mut com).await?;
                 }
             }
         }
