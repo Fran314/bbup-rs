@@ -29,14 +29,14 @@ impl Hash {
         let mut output = String::new();
         bytes
             .iter()
-            .for_each(|byte| output += format!("{:02x}", byte).as_str());
+            .for_each(|byte| output += format!("{byte:02x}").as_str());
 
         output[0..len as usize].to_string()
     }
 }
 impl std::fmt::Display for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 impl std::fmt::Debug for Hash {

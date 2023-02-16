@@ -2,10 +2,10 @@ mod actions;
 pub use actions::{get_actions, Action, Actions};
 
 mod commit;
-pub use commit::{Commit, CommitList};
+pub use commit::{Commit, CommitID, CommitList, GetUpdError};
 
 mod delta;
-pub use delta::{get_delta, Delta, DeltaNode};
+pub use delta::{get_delta, Delta, DeltaNode, InapplicableDelta, UnmergeableDelta};
 
 mod exclude;
 pub use exclude::ExcludeList;

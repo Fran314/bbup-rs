@@ -10,6 +10,7 @@ mod filter;
 mod merge;
 mod rebase;
 
+pub use apply::InapplicableDelta;
 pub use merge::UnmergeableDelta;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
