@@ -5,7 +5,7 @@ use fs_vcs::{Commit, CommitID, CommitList, Delta, FSTree, GetUpdError, Inapplica
 
 use serde::{Deserialize, Serialize};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServerConfig {
@@ -89,6 +89,12 @@ impl ArchiveEndpoint {
         fs::save(&path.add_last("history.bin"), &self.history).context("failed to save history")?;
         Ok(())
     }
+
+    pub fn endpoint_root(archive_root: &AbstPath, endpoint: impl ToString) -> AbstPath {
+        archive_root
+            .add_last("endpoints")
+            .append(&AbstPath::from(endpoint.to_string()))
+    }
 }
 
 /// This Keys struct is only needed to serialize Archive keys to .toml, because
@@ -112,9 +118,6 @@ impl Archive {
     pub fn insert(&mut self, key: String, endpoint: ArchiveEndpoint) -> Option<ArchiveEndpoint> {
         self.0.insert(key, endpoint)
     }
-    pub fn get(&mut self, endpoint: impl ToString) -> Option<&ArchiveEndpoint> {
-        self.0.get(&endpoint.to_string())
-    }
     pub fn get_mut(&mut self, endpoint: impl ToString) -> Option<&mut ArchiveEndpoint> {
         self.0.get_mut(&endpoint.to_string())
     }
@@ -125,9 +128,10 @@ impl Archive {
 
         let mut archive = Archive::new();
         for name in list {
+            let endpoint_root = ArchiveEndpoint::endpoint_root(archive_root, &name);
             archive.insert(
                 name.clone(),
-                ArchiveEndpoint::load(&archive_root.add_last(&name))
+                ArchiveEndpoint::load(&endpoint_root)
                     .context(format!("failed to load endpoint {name}"))?,
             );
         }
@@ -143,131 +147,7 @@ impl Archive {
 
         Ok(())
     }
-    pub fn save_endpoint(&self, archive_root: &AbstPath, name: String) -> Result<()> {
-        match self.0.get(&name) {
-            Some(endpoint) => {
-                endpoint
-                    .save(&archive_root.add_last(&name))
-                    .context(format!("failed to save endpoint {name}"))?;
-
-                Ok(())
-            }
-            None => {
-                bail!("failed to save endpoint {name}, it does not exist!")
-            }
-        }
-    }
 }
-
-// impl ArchiveEndpoint {}
-// pub struct NewArchiveState {
-//     pub archive_endpoints: Archive,
-// }
-// impl NewArchiveState {
-//     pub fn load_all(archive_root: &AbstPath) -> Result<NewArchiveState> {
-//         let list: Vec<String> = fs::load(&archive_root.add_last("archive-endpoints.toml"))
-//             .context("failed to load list of archive endpoints")?;
-//
-//         let mut archive_endpoints = Archive::new();
-//         for endpoint in list {
-//             let state: FSTree = fs::load(&archive_root.add_last(&endpoint).add_last("state.bin"))
-//                 .context(format!("failed to load state of endpoint {endpoint}"))?;
-//             let history: CommitList =
-//                 fs::load(&archive_root.add_last(&endpoint).add_last("history.bin")).context(
-//                     format!("failed to load load history of endpoint {endpoint}"),
-//                 )?;
-//             archive_endpoints.insert(endpoint, ArchiveEndpoint { state, history });
-//         }
-//
-//         Ok(NewArchiveState { archive_endpoints })
-//     }
-//
-//     pub fn save_list(&self, archive_root: &AbstPath) -> Result<()> {
-//         fs::save(
-//             &archive_root.add_last("archive-endpoints.toml"),
-//             &self.archive_endpoints.keys(),
-//         )
-//         .context("failed to save list of archive endpoints")?;
-//
-//         Ok(())
-//     }
-//     pub fn save_endpoint(&self, archive_root: &AbstPath, endpoint: String) -> Result<()> {
-//         match self.archive_endpoints.get(endpoint) {
-//             Some(ArchiveEndpoint { state, history }) => {
-//                 fs::save(
-//                     &archive_root.add_last(&endpoint).add_last("state.bin"),
-//                     state,
-//                 )
-//                 .context(format!("failed to save state of endpoint {endpoint}"))?;
-//
-//                 fs::save(
-//                     &archive_root.add_last(&endpoint).add_last("history.bin"),
-//                     history,
-//                 )
-//                 .context(format!("failed to save history of endpoint {endpoint}"))?;
-//
-//                 Ok(())
-//             }
-//             None => {
-//                 bail!("failed to save endpoint {endpoint}, it does not exist!")
-//             }
-//         }
-//     }
-// }
-
-// #[derive(Serialize, Deserialize, Debug, Clone)]
-// pub struct ArchiveConfig {
-//     pub archive_root: AbstPath,
-// }
-//
-// #[derive(Debug)]
-// pub struct ArchiveState {
-//     pub commit_list: CommitList,
-//     pub archive_tree: FSTree,
-// }
-// impl ArchiveState {
-//     pub fn from(commit_list: CommitList, archive_tree: FSTree) -> ArchiveState {
-//         ArchiveState {
-//             commit_list,
-//             archive_tree,
-//         }
-//     }
-//     pub fn init_state() -> ArchiveState {
-//         ArchiveState::from(CommitList::base_commit_list(), FSTree::new())
-//     }
-//     fn cl_path(archive_root: &AbstPath) -> AbstPath {
-//         archive_root.add_last(".bbup").add_last("commit-list.bin")
-//     }
-//     fn at_path(archive_root: &AbstPath) -> AbstPath {
-//         archive_root.add_last(".bbup").add_last("archive-tree.bin")
-//     }
-//     pub fn load(archive_root: &AbstPath) -> Result<ArchiveState> {
-//         let commit_list: CommitList = fs::load(&ArchiveState::cl_path(archive_root))
-//             .context("failed to load archive's commit list")?;
-//
-//         let archive_tree: FSTree = fs::load(&ArchiveState::at_path(archive_root))
-//             .context("failed to load archive's tree")?;
-//
-//         Ok(ArchiveState {
-//             commit_list,
-//             archive_tree,
-//         })
-//     }
-//     pub fn save(&self, archive_root: &AbstPath) -> Result<()> {
-//         fs::save(&ArchiveState::cl_path(archive_root), &self.commit_list)
-//             .context("failed to save archive's commit list")?;
-//
-//         fs::save(&ArchiveState::at_path(archive_root), &self.archive_tree)
-//             .context("failed to save archive's tree")?;
-//
-// pub fn init_state() -> NewArchiveState {
-//     NewArchiveState {
-//         archive_endpoints: Archive::new(),
-//     }
-// }
-//         Ok(())
-//     }
-// }
 
 /// Convert hash object to path, distributing the path on 4 subdirectories
 /// to avoid having too many objects in one directory
@@ -277,13 +157,16 @@ impl Archive {
 /// would get converted to the path
 ///     8f/45/3d/68/0c1a1afe3679139be91242ee3ea904f6aa66b3bc2fcae7c469fea2c5
 pub fn hash_to_path(hash: hasher::Hash) -> AbstPath {
+    const FRAGMENTATION_DEPTH: usize = 4;
+
     let s = hash.to_string();
-    AbstPath::from(format!(
-        "{}/{}/{}/{}/{}",
-        &s[..2],
-        &s[2..4],
-        &s[4..6],
-        &s[6..8],
-        &s[8..]
-    ))
+    let mut output = AbstPath::empty();
+    for i in 0..FRAGMENTATION_DEPTH {
+        let fragment = s[(i * 2)..(i * 2 + 2)].to_string();
+        output = output.add_last(fragment);
+    }
+    let last_fragment = s[(FRAGMENTATION_DEPTH * 2)..].to_string();
+    output = output.add_last(last_fragment);
+
+    output
 }

@@ -109,34 +109,18 @@ pub async fn apply_update_or_get_conflicts(
             .await
             .context("could not send queries to server")?;
 
-            for (path, hash) in queries {
-                com.get_file_to_hash_check(
-                    &config
-                        .link_root
-                        .add_last(".bbup")
-                        .add_last("temp")
-                        .append(&path),
-                    hash,
-                )
-                .await
-                .context(format!("could not get file at path {path}"))?;
-            }
+            let cache_path = config.link_root.add_last(".bbup").add_last("cache");
 
-            // com.query_files(
-            //     queries,
-            //     &config.link_root.add_last(".bbup").add_last("temp"),
-            // )
-            // .await
-            // .context("could not query files and symlinks to apply update")?;
+            for (path, hash) in queries {
+                com.get_file_to_hash_check(&cache_path.append(&path), hash)
+                    .await
+                    .context(format!("could not get file at path {path}"))?;
+            }
 
             // Apply actions
             for (path, action) in necessary_actions {
                 let to_path = config.link_root.append(&path);
-                let from_temp_path = config
-                    .link_root
-                    .add_last(".bbup")
-                    .add_last("temp")
-                    .append(&path);
+                let from_cache_path = cache_path.append(&path);
                 let errmsg = |msg: &str| -> String {
                     format!(
                         "could not {} to apply update\npath: {}",
@@ -149,8 +133,8 @@ pub async fn apply_update_or_get_conflicts(
                         fs::create_dir(&to_path).context(errmsg("create added directory"))?;
                     }
                     Action::AddFile(mtime, _) => {
-                        fs::rename_file(&from_temp_path, &to_path)
-                            .context(errmsg("move added file from temp"))?;
+                        fs::rename_file(&from_cache_path, &to_path)
+                            .context(errmsg("move added file from cache"))?;
                         fs::set_mtime(&to_path, &mtime)
                             .context(errmsg("set mtime of added file"))?;
                     }
@@ -166,8 +150,8 @@ pub async fn apply_update_or_get_conflicts(
                     }
                     Action::EditFile(mtime, opth) => {
                         if opth.is_some() {
-                            fs::rename_file(&from_temp_path, &to_path)
-                                .context(errmsg("move edited file from temp"))?;
+                            fs::rename_file(&from_cache_path, &to_path)
+                                .context(errmsg("move edited file from cache"))?;
                         }
                         fs::set_mtime(&to_path, &mtime)
                             .context(errmsg("set mtime of edited file"))?;
