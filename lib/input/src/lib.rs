@@ -6,7 +6,7 @@ use std::io::{self, BufRead, Write};
 pub fn get<T: std::fmt::Display>(prompt: T) -> std::io::Result<String> {
     let mut input = String::new();
 
-    print!("{}", prompt);
+    print!("{prompt}");
     io::stdout().flush().unwrap();
     io::stdin().lock().read_line(&mut input)?;
 

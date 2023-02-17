@@ -27,7 +27,7 @@ impl std::fmt::Display for StringTree {
         } else {
             let mut blocks: Vec<Vec<String>> = Vec::new();
             for child in &self.children {
-                let block: Vec<String> = format!("{}", child)
+                let block: Vec<String> = format!("{child}")
                     .lines()
                     .map(|line| line.to_string())
                     .collect();
@@ -54,7 +54,7 @@ impl std::fmt::Display for StringTree {
                     .join("\n")
                     .as_str()
         };
-        write!(f, "{}", text)
+        write!(f, "{text}")
     }
 }
 
@@ -165,8 +165,7 @@ fn deltafstree_to_stringtree<S: std::string::ToString>(root_text: S, delta: &Del
                 }
                 _ => {
                     vec![StringTree::leaf(format!(
-                        "{}??? - this node should have been shaken",
-                        name
+                        "{name}??? - this node should have been shaken"
                     ))]
                 }
             })

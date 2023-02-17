@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt;
 
 impl BbupCom {
     async fn send_status(&mut self, status: u8) -> Result<(), Error> {
-        let errctx = error_context(format!("could not send status {}", status));
+        let errctx = error_context(format!("could not send status {status}"));
         self.tx
             .write_u8(status)
             .await
@@ -42,7 +42,7 @@ impl BbupCom {
     where
         S: std::marker::Send + std::marker::Sync + std::string::ToString,
     {
-        let errmsg = format!("could not send error status {}", status);
+        let errmsg = format!("could not send error status {status}");
         let errctx = error_context(errmsg.clone());
         if status == 0 {
             return Err(generr(errmsg, "status 0 is not an error status!"));

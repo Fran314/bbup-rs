@@ -22,8 +22,8 @@ impl SshTunnel {
         let ssh_tunnel_handle = std::process::Command::new("ssh")
             .arg("-tt")
             .arg("-L")
-            .arg(format!("{}:localhost:{}", local_port, server_port,))
-            .arg(format!("{}@{}", host_user, host_address))
+            .arg(format!("{local_port}:localhost:{server_port}",))
+            .arg(format!("{host_user}@{host_address}"))
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .spawn()?;

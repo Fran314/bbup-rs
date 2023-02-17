@@ -21,7 +21,7 @@ impl Mtime {
 impl std::fmt::Display for Mtime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let timestamp = chrono::NaiveDateTime::from_timestamp(self.0, self.1);
-        write!(f, "{}", timestamp)
+        write!(f, "{timestamp}")
     }
 }
 

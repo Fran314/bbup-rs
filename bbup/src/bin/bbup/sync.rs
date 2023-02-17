@@ -76,7 +76,7 @@ pub async fn process_link(config: ProcessConfig) -> Result<()> {
             Ok(()) => Ok(()),
             Err(error) => {
                 if let Err(err) = com.send_error(1, "error propagated from client").await {
-                    println!("Could not propagate error to server, because {:#?}", err)
+                    println!("Could not propagate error to server, because {err:#?}")
                 }
                 Err(error)
             }

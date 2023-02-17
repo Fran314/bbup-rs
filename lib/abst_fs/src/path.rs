@@ -16,8 +16,7 @@ impl ForceToString for std::ffi::OsStr {
         self.to_str()
             .unwrap_or_else(|| {
                 panic!(
-                    "Broken path: could not convert from os string to valid utf8\nos string: {:?}",
-                    self
+                    "Broken path: could not convert from os string to valid utf8\nos string: {self:?}"
                 )
             })
             .to_string()
@@ -165,8 +164,7 @@ impl AbstPath {
             }
         } else {
             panic!(
-                "Foreign file system object. Not a directory, a file nor a symlink, at path: {}",
-                self
+                "Foreign file system object. Not a directory, a file nor a symlink, at path: {self}"
             )
         }
     }
@@ -203,7 +201,7 @@ impl std::fmt::Display for AbstPath {
                 .force_to_string()
                 .replace('\\', "/")
         };
-        write!(f, "{}", string)
+        write!(f, "{string}")
     }
 }
 
@@ -451,7 +449,7 @@ mod tests {
 
         let path = "some/path/to/somewhere";
         let parent = "parent";
-        let full_path = format!("{}/{}", parent, path);
+        let full_path = format!("{parent}/{path}");
         assert_eq!(
             AbstPath::from(full_path).strip_first().to_path_buf(),
             PathBuf::from(path)
@@ -460,7 +458,7 @@ mod tests {
         let path = "some/path/to/somewhere";
         let parent1 = "parent1";
         let parent2 = "parent2";
-        let full_path = format!("{}/{}/{}", parent2, parent1, path);
+        let full_path = format!("{parent2}/{parent1}/{path}");
         assert_eq!(
             AbstPath::from(full_path)
                 .strip_first()
@@ -476,7 +474,7 @@ mod tests {
 
         let path = "some/path/to/somewhere";
         let child = "child";
-        let full_path = format!("{}/{}", path, child);
+        let full_path = format!("{path}/{child}");
         assert_eq!(
             AbstPath::from(full_path).strip_last().to_path_buf(),
             PathBuf::from(path)
@@ -485,7 +483,7 @@ mod tests {
         let path = "some/path/to/somewhere";
         let child1 = "child1";
         let child2 = "child2";
-        let full_path = format!("{}/{}/{}", path, child1, child2);
+        let full_path = format!("{path}/{child1}/{child2}");
         assert_eq!(
             AbstPath::from(full_path)
                 .strip_last()

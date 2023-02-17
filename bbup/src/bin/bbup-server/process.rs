@@ -206,7 +206,7 @@ pub async fn process_connection(
         Ok(()) => Ok(()),
         Err(error) => {
             if let Err(err) = com.send_error(1, "error propagated from server").await {
-                println!("Could not propagate error to client, because {:#?}", err)
+                println!("Could not propagate error to client, because {err:#?}")
             }
             Err(error)
         }

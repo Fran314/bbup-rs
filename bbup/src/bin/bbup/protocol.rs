@@ -20,7 +20,7 @@ pub fn get_local_delta(config: &ProcessConfig, state: &mut ProcessState) -> Resu
         if local_delta.is_empty() {
             println!("local delta: no local changes to push")
         } else {
-            println!("local delta:\n{}", local_delta)
+            println!("local delta:\n{local_delta}")
         }
     }
 
@@ -59,7 +59,7 @@ pub async fn pull_update_delta(
         if delta.is_empty() {
             println!("pull delta: no missed change to pull")
         } else {
-            println!("pull delta:\n{}", delta)
+            println!("pull delta:\n{delta}")
         }
     }
 
@@ -79,7 +79,7 @@ pub async fn apply_update_or_get_conflicts(
             let necessary_actions = match get_actions(local_delta, update_delta) {
                 Ok(actions) => actions,
                 Err(conflicts) => {
-                    println!("conflicts:\n{}", conflicts);
+                    println!("conflicts:\n{conflicts}");
                     anyhow::bail!(
                         "found conflicts between pulled update and local changes. Resolve manually"
                     )

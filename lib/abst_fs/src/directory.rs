@@ -18,10 +18,7 @@ pub fn create_dir(path: &AbstPath) -> Result<(), Error> {
 /// Ensures that the parent directory of an object exists, creating all the subpath
 /// if it doesn't
 pub fn ensure_parent(path: &AbstPath) -> Result<(), Error> {
-    let errctx = error_context(format!(
-        "could not ensure parent directory at path {}",
-        path
-    ));
+    let errctx = error_context(format!("could not ensure parent directory at path {path}"));
     match path.parent() {
         Some(parent) if !parent.exists() => {
             create_dir(&parent).map_err(inerr(errctx("create parent")))

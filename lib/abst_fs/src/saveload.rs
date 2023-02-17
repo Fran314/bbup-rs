@@ -20,7 +20,7 @@ fn get_ext(path: &AbstPath) -> Option<Ext> {
 /// extension (see [`Ext`] for the possible extensions) of the file and deserializing
 /// the content to the generic type T
 pub fn load<T: DeserializeOwned>(path: &AbstPath) -> Result<T, Error> {
-    let errctx = error_context(format!("could not load file at path {}", path));
+    let errctx = error_context(format!("could not load file at path {path}"));
     if !path.exists() {
         return Err(generr(errctx("open file"), "file doesn't exist"));
     }
@@ -47,7 +47,7 @@ pub fn load<T: DeserializeOwned>(path: &AbstPath) -> Result<T, Error> {
 /// serialized data based on the extension of the file (see [`Ext`] for the possible
 /// extensions)
 pub fn save<T: Serialize>(path: &AbstPath, content: &T) -> Result<(), Error> {
-    let errctx = error_context(format!("could not save file at path {}", path));
+    let errctx = error_context(format!("could not save file at path {path}"));
     match get_ext(path) {
         Some(Ext::Toml) => {
             let serialized =

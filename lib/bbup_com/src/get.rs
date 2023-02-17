@@ -33,8 +33,7 @@ impl BbupCom {
                 Err(generr(
                     errmsg,
                     format!(
-                        "received bad status ({}) with the following error message: {}",
-                        val, received_error_message
+                        "received bad status ({val}) with the following error message: {received_error_message}"
                     ),
                 ))
             }
