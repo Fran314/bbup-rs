@@ -230,12 +230,11 @@ pub async fn upload_changes(
 
             com.send_struct(local_delta).await?;
 
-            let actions = local_delta.to_actions()?;
             // TODO maybe a filter-map would be a better solution here, no need
             // for queryables to be mutable. Even hiding all this inside a
             // block would be a valid solution to not make queryables mutable
             let mut queryables = Vec::new();
-            for (path, action) in actions {
+            for (path, action) in local_delta.to_actions()? {
                 match action {
                     Action::AddFile(_, _) | Action::EditFile(_, Some(_)) => {
                         queryables.push(path.clone())
@@ -267,10 +266,6 @@ pub async fn upload_changes(
                     .await
                     .context(format!("could not send file at path {path}"))?;
             }
-
-            // com.supply_files(queryables, &config.link_root)
-            //     .await
-            //     .context("could not supply files and symlinks to upload push")?;
 
             state.last_known_commit = com.get_struct().await?;
             state.last_known_fstree = new_tree.clone();

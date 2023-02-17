@@ -1,4 +1,4 @@
 /target
 *.local
 *.local.*
-testing/playground
+*playground*

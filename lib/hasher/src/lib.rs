@@ -9,7 +9,7 @@ use sha2::{
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, std::hash::Hash)]
 pub struct Hash([u8; 32]);
 
 impl Hash {

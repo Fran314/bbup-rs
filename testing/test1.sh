@@ -9,6 +9,7 @@ if [[ $server_active != "" ]]; then
 fi
 
 fake_home="$(pwd)/playground"
+archive=$fake_home/archive
 bs1="$fake_home/backup-source-1"
 bs2="$fake_home/backup-source-2"
 
@@ -18,7 +19,7 @@ echo "Creating environment"
 mkdir $fake_home
 
 echo "Instantiating bbup-server and archive"
-mkdir $fake_home/archive
+mkdir $archive
 bbup-server -H $fake_home setup -s 4000 -a "archive" 1> /dev/null
 bbup-server -H $fake_home create -e "prova" 1> /dev/null
 
@@ -169,6 +170,16 @@ mkdir $bs2/both-edited-dir/new-dir
 ./sync.sh $fake_home $bs1
 ./sync.sh $fake_home $bs2
 ./sync.sh $fake_home $bs1
+
+if $(diff --no-dereference $bs1 $bs2 1> /dev/null)
+then
+    echo "same content in 1 and 2"
+else
+    echo "different content in 1 and 2"
+fi
+
+tree -phDa $archive
+tree -phDa $bs1
 
 # Destroy playground
 echo "Cleaning environment"

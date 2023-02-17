@@ -2,10 +2,11 @@ use super::{hash_to_path, Archive, ArchiveEndpoint};
 
 use abst_fs::{self as fs, AbstPath};
 use fs_vcs::{Action, CommitID, Delta};
+use hasher::Hash;
 
 use bbup_com::{BbupCom, JobType};
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context, Result};
 use tokio::{net::TcpStream, sync::Mutex};
@@ -28,12 +29,11 @@ async fn pull(endpoint_root: &AbstPath, state: &ArchiveEndpoint, com: &mut BbupC
         .await
         .context("could not send update id")?;
 
-    let actions = delta.to_actions()?;
     // TODO maybe a filter-map would be a better solution here, no need for
     // queryables to be mutable. Even hiding all this inside a block would be a
     // valid solution to not make queryables mutable
     let mut queryables = Vec::new();
-    for (path, action) in actions {
+    for (path, action) in delta.to_actions()? {
         match action {
             Action::AddFile(_, hash) | Action::EditFile(_, Some(hash)) => {
                 queryables.push((path.clone(), hash.clone()));
@@ -99,18 +99,19 @@ async fn push(
     state.is_delta_applicable(&local_delta)?;
 
     // Get all files that need to be uploaded from client
-    let actions = local_delta.to_actions()?;
-    let mut query_paths = Vec::new();
-    let mut query_hashes = Vec::new();
-    for (path, action) in &actions {
+    // We pass through a hashmap to avoid querying multiple files with the same
+    // hash (hence with the same content, which we only need once to save in
+    // the "objects" directory)
+    let mut queries = HashMap::new();
+    for (path, action) in &local_delta.to_actions()? {
         match action {
             Action::AddFile(_, hash) | Action::EditFile(_, Some(hash)) => {
-                query_paths.push(path.clone());
-                query_hashes.push(hash.clone());
+                queries.insert(hash.clone(), path.clone());
             }
             _ => {}
         }
     }
+    let (query_hashes, query_paths): (Vec<Hash>, Vec<AbstPath>) = queries.into_iter().unzip();
     com.send_struct(query_paths)
         .await
         .context("could not send queries to client")?;
