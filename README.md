@@ -52,43 +52,43 @@ cargo build --release --target x86_64-pc-windows-gnu
 ```
 The executables `bbup.exe` and `bbup-server.exe` will be in `./target/x86_64-pc-windows-gnu/release`
 
-#### Raspberry Pi (64 bit)
-Make sure you have installed the right target in the rust toolchain and the right linker with with
-```bash
-rustup target add aarch64-unknown-linux-gnu
-sudo apt install gcc-aarch64-linux-gnu
-```
-and add the file `./.cargo/config` with the following content
-```
-[target.aarch64-unknown-linux-gnu]
-linker = "aarch64-linux-gnu-gcc"
-```
-
-Then build the source code with
-```bash
-cargo build --release --target aarch64-unknown-linux-gnu
-```
-
-The binaries `bbup` and `bbup-server` will be in `./target/aarch64-linux-gnu-gcc/release`
-
-#### Raspberry Pi (32 bit)
-Make sure you have installed the right target in the rust toolchain and the right linker with with
-```bash
-rustup target add armv7-unknown-linux-gnueabihf
-sudo apt install gcc-arm-linux-gnueabihf
-```
-and add the file `./.cargo/config` with the following content
-```
-[target.armv7-unknown-linux-gnueabihf]
-linker = "arm-linux-gnueabihf-gcc"
-```
-
-Then build the source code with
-```bash
-cargo build --release --target armv7-unknown-linux-gnueabihf
-```
-
-The binaries `bbup` and `bbup-server` will be in `./target/armv7-unknown-linux-gnueabihf/release`
+<!-- #### Raspberry Pi (64 bit) -->
+<!-- Make sure you have installed the right target in the rust toolchain and the right linker with with -->
+<!-- ```bash -->
+<!-- rustup target add aarch64-unknown-linux-gnu -->
+<!-- sudo apt install gcc-aarch64-linux-gnu -->
+<!-- ``` -->
+<!-- and add the file `./.cargo/config` with the following content -->
+<!-- ``` -->
+<!-- [target.aarch64-unknown-linux-gnu] -->
+<!-- linker = "aarch64-linux-gnu-gcc" -->
+<!-- ``` -->
+<!---->
+<!-- Then build the source code with -->
+<!-- ```bash -->
+<!-- cargo build --release --target aarch64-unknown-linux-gnu -->
+<!-- ``` -->
+<!---->
+<!-- The binaries `bbup` and `bbup-server` will be in `./target/aarch64-linux-gnu-gcc/release` -->
+<!---->
+<!-- #### Raspberry Pi (32 bit) -->
+<!-- Make sure you have installed the right target in the rust toolchain and the right linker with with -->
+<!-- ```bash -->
+<!-- rustup target add armv7-unknown-linux-gnueabihf -->
+<!-- sudo apt install gcc-arm-linux-gnueabihf -->
+<!-- ``` -->
+<!-- and add the file `./.cargo/config` with the following content -->
+<!-- ``` -->
+<!-- [target.armv7-unknown-linux-gnueabihf] -->
+<!-- linker = "arm-linux-gnueabihf-gcc" -->
+<!-- ``` -->
+<!---->
+<!-- Then build the source code with -->
+<!-- ```bash -->
+<!-- cargo build --release --target armv7-unknown-linux-gnueabihf -->
+<!-- ``` -->
+<!---->
+<!-- The binaries `bbup` and `bbup-server` will be in `./target/armv7-unknown-linux-gnueabihf/release` -->
 
 
 ## Setup
