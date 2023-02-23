@@ -1,4 +1,4 @@
-use super::{hash_tree, ExcludeList, FSNode, FSTree};
+use super::{ExcludeList, FSNode, FSTree};
 use abst_fs::{AbstPath, Mtime};
 use ior::{union, IOr};
 
@@ -66,7 +66,7 @@ impl Delta {
                     // We assume here that if a delta is generated with
                     // get_delta then it is automatically already shaken, and no
                     // recursion is needed
-                    *entry = Branch((m0.clone(), m1.clone()), get_delta(subtree0, subtree1));
+                    *entry = Branch((m0.clone(), m1.clone()), subtree0.get_delta_to(subtree1));
                 }
                 Branch(_, subdelta) => subdelta.shake(),
                 Leaf(_, _) => {}
@@ -107,7 +107,7 @@ impl<'a> IntoIterator for &'a Delta {
         children.into_iter()
     }
 }
-/// IntoIterator implementation for &Delta
+/// IntoIterator implementation for &mut Delta
 /// Note: despite Delta being a wrapper for an hashmap which usually iterates
 /// on its content in random order, Delta is guaranteed to be iterated
 /// alphabetically
@@ -124,45 +124,124 @@ impl<'a> IntoIterator for &'a mut Delta {
     }
 }
 
-pub fn get_delta(last_known_fstree: &FSTree, new_tree: &FSTree) -> Delta {
-    use FSNode::*;
-    let mut delta = Delta::new();
+impl FSTree {
+    pub fn get_delta_to(&self, new_tree: &FSTree) -> Delta {
+        let mut delta = Delta::new();
 
-    for (key, ior) in union(last_known_fstree.inner(), new_tree.inner()) {
-        match ior {
-            IOr::Left(child0) => {
-                delta.insert(key, DeltaNode::remove(child0));
-            }
-            IOr::Right(child1) => {
-                delta.insert(key, DeltaNode::add(child1));
-            }
-            IOr::Both(child0, child1) => {
-                if let (Dir(m0, h0, subtree0), Dir(m1, h1, subtree1)) = (child0, child1) {
-                    if m0.ne(m1) || h0.ne(h1) {
-                        let delta_subtree = match h0.ne(h1) {
-                            true => get_delta(subtree0, subtree1),
-                            false => Delta::new(),
-                        };
-                        delta.insert(
-                            key,
-                            DeltaNode::Branch((m0.clone(), m1.clone()), delta_subtree),
-                        );
+        for (key, ior) in union(self.inner(), new_tree.inner()) {
+            match ior {
+                IOr::Left(child0) => {
+                    delta.insert(key, DeltaNode::remove(child0));
+                }
+                IOr::Right(child1) => {
+                    delta.insert(key, DeltaNode::add(child1));
+                }
+                IOr::Both(child0, child1) => {
+                    if let (FSNode::Dir(m0, h0, subtree0), FSNode::Dir(m1, h1, subtree1)) =
+                        (child0, child1)
+                    {
+                        if m0.ne(m1) || h0.ne(h1) {
+                            let delta_subtree = match h0.ne(h1) {
+                                true => subtree0.get_delta_to(subtree1),
+                                false => Delta::new(),
+                            };
+                            delta.insert(
+                                key,
+                                DeltaNode::Branch((m0.clone(), m1.clone()), delta_subtree),
+                            );
+                        }
+                    } else if child0 != child1 {
+                        delta.insert(key, DeltaNode::edit(child0, child1));
                     }
-                } else if child0 != child1 {
-                    delta.insert(key, DeltaNode::edit(child0, child1));
                 }
             }
         }
+        delta
     }
-
-    delta
 }
+
+// impl PhmTree {
+//     pub fn get_delta_to(&self, new_tree: &FSTree) -> Delta {
+//         let mut delta = Delta::new();
+//
+//         for (key, ior) in union(self.inner(), new_tree.inner()) {
+//             match ior {
+//                 IOr::Left(child0) => {
+//                     match child0 {
+//                         PhmNode::Phantom(_) => {}
+//                         PhmNode::File(mtime, hash) => {}
+//                         PhmNode::Symlink(mtime, endpoint) => todo!(),
+//                         PhmNode::Dir(mtime, hash, subtree) => todo!(),
+//                     };
+//                     delta.insert(key, DeltaNode::remove(child0));
+//                 }
+//                 IOr::Right(child1) => {
+//                     delta.insert(key, DeltaNode::add(child1));
+//                 }
+//                 IOr::Both(child0, child1) => {
+//                     if let (FSNode::Dir(m0, h0, subtree0), FSNode::Dir(m1, h1, subtree1)) =
+//                         (child0, child1)
+//                     {
+//                         if m0.ne(m1) || h0.ne(h1) {
+//                             let delta_subtree = match h0.ne(h1) {
+//                                 true => get_delta(subtree0, subtree1),
+//                                 false => Delta::new(),
+//                             };
+//                             delta.insert(
+//                                 key,
+//                                 DeltaNode::Branch((m0.clone(), m1.clone()), delta_subtree),
+//                             );
+//                         }
+//                     } else if child0 != child1 {
+//                         delta.insert(key, DeltaNode::edit(child0, child1));
+//                     }
+//                 }
+//             }
+//         }
+//         delta
+//     }
+// }
+
+// pub fn get_delta(last_known_fstree: &FSTree, new_tree: &FSTree) -> Delta {
+//     let mut delta = Delta::new();
+//
+//     for (key, ior) in union(last_known_fstree.inner(), new_tree.inner()) {
+//         match ior {
+//             IOr::Left(child0) => {
+//                 delta.insert(key, DeltaNode::remove(child0));
+//             }
+//             IOr::Right(child1) => {
+//                 delta.insert(key, DeltaNode::add(child1));
+//             }
+//             IOr::Both(child0, child1) => {
+//                 if let (FSNode::Dir(m0, h0, subtree0), FSNode::Dir(m1, h1, subtree1)) =
+//                     (child0, child1)
+//                 {
+//                     if m0.ne(m1) || h0.ne(h1) {
+//                         let delta_subtree = match h0.ne(h1) {
+//                             true => get_delta(subtree0, subtree1),
+//                             false => Delta::new(),
+//                         };
+//                         delta.insert(
+//                             key,
+//                             DeltaNode::Branch((m0.clone(), m1.clone()), delta_subtree),
+//                         );
+//                     }
+//                 } else if child0 != child1 {
+//                     delta.insert(key, DeltaNode::edit(child0, child1));
+//                 }
+//             }
+//         }
+//     }
+//
+//     delta
+// }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use super::{get_delta, Delta, DeltaNode, FSNode, FSTree};
+    use super::{Delta, DeltaNode, FSNode, FSTree};
 
     use abst_fs::Mtime;
 
@@ -776,7 +855,7 @@ mod tests {
             )
         });
 
-        assert_eq!(get_delta(&pre_fstree, &post_fstree), supposed_delta);
+        assert_eq!(pre_fstree.get_delta_to(&post_fstree), supposed_delta);
 
         let mut fstree_to_upgrade = pre_fstree.clone();
         fstree_to_upgrade.apply_delta(&supposed_delta).unwrap();

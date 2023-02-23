@@ -1,0 +1,16 @@
+[package]
+name = "phm_vcs"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+# serde = { version = "1.0", features = ["derive"] }
+# thiserror = "1.0"
+# colored = "2"
+# regex = "1.5"
+# rand = { version = "0.8", features = ["small_rng"] }
+
+fs_vcs = { path = "../fs_vcs" }
+abst_fs = { path = "../abst_fs" }
+hasher = { path = "../hasher" }
+ior = { path = "../ior" }

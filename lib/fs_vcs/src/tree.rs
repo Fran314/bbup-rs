@@ -66,6 +66,33 @@ impl PartialEq for FSNode {
         }
     }
 }
+impl FSNode {
+    pub fn hash_node(&self) -> Hash {
+        use hasher::hash_bytes;
+        let mut s: Vec<u8> = Vec::new();
+        match self {
+            FSNode::File(mtime, hash) => {
+                s.append(&mut b"f".to_vec());
+                s.append(&mut mtime.to_bytes());
+                s.append(&mut hash.to_bytes());
+            }
+            FSNode::SymLink(mtime, endpoint) => {
+                s.append(&mut b"s".to_vec());
+                s.append(&mut mtime.to_bytes());
+                // As for the name in `hash_tree`, we add the hash of the endpoint
+                // and not the endpoint itself as bytes to avoid unlikely but
+                // possible collisions.
+                s.append(&mut hash_bytes(endpoint.as_bytes()).to_bytes());
+            }
+            FSNode::Dir(mtime, hash, _) => {
+                s.append(&mut b"d".to_vec());
+                s.append(&mut mtime.to_bytes());
+                s.append(&mut hash.to_bytes());
+            }
+        }
+        hash_bytes(s)
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct FSTree(HashMap<String, FSNode>);
@@ -94,6 +121,23 @@ impl FSTree {
 
     pub fn entry(&mut self, e: String) -> std::collections::hash_map::Entry<String, FSNode> {
         self.0.entry(e)
+    }
+
+    /// Hash children of a node by concatenating their names and their relative
+    /// hashes
+    pub fn hash_tree(&self) -> Hash {
+        use hasher::hash_bytes;
+        let mut s: Vec<u8> = Vec::new();
+        for (name, node) in self {
+            // The reason why we append the hash of the name and not the name
+            // itself is to avoid unlikely but possible collisions.
+            // This makes the appended blocks all the same length, which is
+            // better
+            let name_hash = hash_bytes(name.as_bytes());
+            s.append(&mut name_hash.to_bytes());
+            s.append(&mut node.hash_node().to_bytes());
+        }
+        hash_bytes(s)
     }
 }
 
@@ -125,40 +169,10 @@ impl<'a> IntoIterator for &'a FSTree {
 }
 
 /// Hash the content of a file
-fn hash_file(path: &AbstPath) -> Result<Hash, FSTreeError> {
+pub fn hash_file(path: &AbstPath) -> Result<Hash, FSTreeError> {
     let errctx = error_context(format!("could not hash content of file at path {path}"));
     let content = fs::read_file(path).map_err(inerr(errctx("read file content")))?;
     hasher::hash_stream(content).map_err(inerr(errctx("hash file content")))
-}
-/// Hash children of a node by concatenating their names and their relative hashes
-pub fn hash_tree(tree: &FSTree) -> Hash {
-    use hasher::hash_bytes;
-    let mut s: Vec<u8> = Vec::new();
-    for (name, node) in tree {
-        // The reason why we append the hash of the name and not the name itself
-        //	is to avoid unlikely but possible collisions.
-        // This makes the appended blocks all the same length, which is better
-        let name_hash = hash_bytes(name.as_bytes());
-        s.append(&mut name_hash.to_bytes());
-        match node {
-            FSNode::File(mtime, hash) => {
-                s.append(&mut mtime.to_bytes());
-                s.append(&mut hash.to_bytes());
-            }
-            FSNode::SymLink(mtime, endpoint) => {
-                s.append(&mut mtime.to_bytes());
-                // As for the name, we add the hash of the endpoint and not the
-                // endpoint itself as bytes to avoid unlikely but possible
-                // collisions
-                s.append(&mut hash_bytes(endpoint.as_bytes()).to_bytes());
-            }
-            FSNode::Dir(mtime, hash, _) => {
-                s.append(&mut mtime.to_bytes());
-                s.append(&mut hash.to_bytes());
-            }
-        }
-    }
-    hash_bytes(s)
 }
 
 /// Generate a tree representation of the content of a path specified, saving the hashes
@@ -205,7 +219,7 @@ pub fn generate_fstree(root: &AbstPath, exclude_list: &ExcludeList) -> Result<FS
                         format!("get mtime of dir at path {entry}").as_str(),
                     )))?;
                     let subtree = recursion(&entry, &rel_subpath, exclude_list)?;
-                    let hash = hash_tree(&subtree);
+                    let hash = subtree.hash_tree();
                     FSNode::Dir(mtime, hash, subtree)
                 }
                 ObjectType::File => {
@@ -237,9 +251,7 @@ pub fn generate_fstree(root: &AbstPath, exclude_list: &ExcludeList) -> Result<FS
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        generate_fstree, generr, hash_tree, inerr, ExcludeList, FSNode, FSTree, FSTreeError,
-    };
+    use super::{generate_fstree, generr, inerr, ExcludeList, FSNode, FSTree, FSTreeError};
     use abst_fs::{AbstPath, Endpoint, Mtime};
     use std::collections::HashMap;
     use std::io::Write;
@@ -304,12 +316,12 @@ mod tests {
         pub fn dir(mtime: (i64, u32), subtree_gen: impl Fn(&mut FSTree)) -> FSNode {
             let mut subtree = FSTree::new();
             subtree_gen(&mut subtree);
-            FSNode::Dir(Mtime::from(mtime.0, mtime.1), hash_tree(&subtree), subtree)
+            FSNode::Dir(Mtime::from(mtime.0, mtime.1), subtree.hash_tree(), subtree)
         }
         pub fn empty_dir(mtime: (i64, u32)) -> FSNode {
             FSNode::Dir(
                 Mtime::from(mtime.0, mtime.1),
-                hash_tree(&FSTree::new()),
+                FSTree::new().hash_tree(),
                 FSTree::new(),
             )
         }
@@ -383,7 +395,7 @@ mod tests {
             FSNode::empty_dir((1664996516, 439383420)),
             FSNode::Dir(
                 Mtime::from(1664996516, 439383420),
-                hash_tree(&FSTree::new()),
+                FSTree::new().hash_tree(),
                 FSTree::gen_from(|t| { t.add_file("file", (1664840147, 706805147), "content") })
             ),
         );

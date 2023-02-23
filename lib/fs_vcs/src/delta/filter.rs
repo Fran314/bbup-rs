@@ -1,4 +1,4 @@
-use super::{hash_tree, AbstPath, Delta, DeltaNode, ExcludeList, FSNode, FSTree};
+use super::{AbstPath, Delta, DeltaNode, ExcludeList, FSNode, FSTree};
 use abst_fs::Mtime;
 
 impl FSTree {
@@ -11,7 +11,7 @@ impl FSTree {
                     return false;
                 }
                 subtree.filter_out(&rel_path.add_last(name), exclude_list);
-                *hash = hash_tree(subtree);
+                *hash = subtree.hash_tree();
                 true
             }
         });
@@ -33,7 +33,7 @@ impl Delta {
                     DeltaNode::Leaf(pre, post) => {
                         let is_pre_dir = if let Some(FSNode::Dir(_, hash, subtree)) = pre {
                             subtree.filter_out(&rel_path.add_last(name), exclude_list);
-                            *hash = hash_tree(subtree);
+                            *hash = subtree.hash_tree();
                             true
                         } else {
                             false
@@ -44,7 +44,7 @@ impl Delta {
 
                         let is_post_dir = if let Some(FSNode::Dir(_, hash, subtree)) = post {
                             subtree.filter_out(&rel_path.add_last(name), exclude_list);
-                            *hash = hash_tree(subtree);
+                            *hash = subtree.hash_tree();
                             true
                         } else {
                             false

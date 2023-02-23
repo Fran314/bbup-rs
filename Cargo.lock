@@ -484,6 +484,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phm_vcs"
+version = "0.0.0"
+dependencies = [
+ "abst_fs",
+ "fs_vcs",
+ "hasher",
+ "ior",
+]
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

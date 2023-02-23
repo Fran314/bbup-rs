@@ -1,5 +1,5 @@
 use abst_fs::AbstPath;
-use fs_vcs::{generate_fstree, get_actions, get_delta, Action, CommitID, Delta};
+use fs_vcs::{generate_fstree, get_actions, Action, CommitID, Delta};
 
 use super::{ProcessConfig, ProcessState};
 
@@ -14,7 +14,7 @@ pub fn get_local_delta(config: &ProcessConfig, state: &mut ProcessState) -> Resu
     }
 
     let new_tree = generate_fstree(&config.link_root, &config.exclude_list)?;
-    let local_delta = get_delta(&state.last_known_fstree, &new_tree);
+    let local_delta = state.last_known_fstree.get_delta_to(&new_tree);
 
     if config.flags.verbose {
         if local_delta.is_empty() {
@@ -201,7 +201,7 @@ pub async fn apply_update_or_get_conflicts(
             state.save(&config.link_root)?;
 
             let new_tree = generate_fstree(&config.link_root, &config.exclude_list)?;
-            let local_delta = get_delta(&state.last_known_fstree, &new_tree);
+            let local_delta = state.last_known_fstree.get_delta_to(&new_tree);
 
             state.new_tree = Some(new_tree);
             state.local_delta = Some(local_delta);

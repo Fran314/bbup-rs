@@ -470,10 +470,7 @@ pub fn get_actions(local: &Delta, missed: &Delta) -> Result<Actions, GetActErr> 
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        super::get_delta, add_tree_actions, get_actions, Action, Actions, Delta, DeltaNode, FSNode,
-        FSTree,
-    };
+    use super::{add_tree_actions, get_actions, Action, Actions, Delta, DeltaNode, FSNode, FSTree};
     use abst_fs::{AbstPath, Endpoint, Mtime};
     use core::panic;
     use std::{path::Path, vec};
@@ -1553,8 +1550,8 @@ mod tests {
             });
         });
 
-        let local_delta = get_delta(&original_tree, &local_tree);
-        let missed_delta = get_delta(&original_tree, &missed_tree);
+        let local_delta = original_tree.get_delta_to(&local_tree);
+        let missed_delta = original_tree.get_delta_to(&missed_tree);
 
         let supposed_actions = Actions(vec![
             remove_file_at("missed-removed-file"),

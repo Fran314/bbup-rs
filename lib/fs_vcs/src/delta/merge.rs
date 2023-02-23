@@ -1,4 +1,4 @@
-use super::{hash_tree, Delta, DeltaNode, FSNode};
+use super::{Delta, DeltaNode, FSNode};
 
 use abst_fs::AbstPath;
 use thiserror::Error;
@@ -61,7 +61,7 @@ impl Delta {
                                     return Err(unmergerr(AbstPath::single(name), "new mtime of precedent delta does not match with mtime of successive delta"));
                                 }
                                 let mtime = postmtime1.clone();
-                                let hash = hash_tree(&subtree);
+                                let hash = subtree.hash_tree();
                                 entry.insert(Leaf(
                                     pre0.clone(),
                                     Some(FSNode::Dir(mtime, hash, subtree)),
@@ -75,7 +75,7 @@ impl Delta {
                     (Branch((premtime0, postmtime0), subdelta0), Leaf(pre1, _)) => match pre1 {
                         Some(FSNode::Dir(mtime, hash, subtree)) => {
                             subtree.undo_delta(subdelta0).map_err(|_| unmergerr(AbstPath::single(name), "failed to undo subdelta of precedent delta branch to successive delta's directory leaf"))?;
-                            *hash = hash_tree(subtree);
+                            *hash = subtree.hash_tree();
                             if postmtime0 != mtime {
                                 return Err(unmergerr(AbstPath::single(name), "new metadata of precedent delta does not match with metadata of successive delta"));
                             }
@@ -144,9 +144,7 @@ impl Delta {
 mod tests {
     use abst_fs::AbstPath;
 
-    use super::{
-        super::get_delta, super::FSTree, push_unmerg, unmergerr, Delta, FSNode, UnmergeableDelta,
-    };
+    use super::{super::FSTree, push_unmerg, unmergerr, Delta, FSNode, UnmergeableDelta};
 
     #[test]
     fn test_error() {
@@ -266,9 +264,9 @@ mod tests {
             }
         }
 
-        let prec_delta = get_delta(&pre_fstree, &mid_fstree);
-        let mut succ_delta = get_delta(&mid_fstree, &post_fstree);
-        let total_delta = get_delta(&pre_fstree, &post_fstree);
+        let prec_delta = pre_fstree.get_delta_to(&mid_fstree);
+        let mut succ_delta = mid_fstree.get_delta_to(&post_fstree);
+        let total_delta = pre_fstree.get_delta_to(&post_fstree);
 
         succ_delta.merge_prec(&prec_delta).unwrap();
         assert_eq!(succ_delta, total_delta);
@@ -366,8 +364,8 @@ mod tests {
                                 }),
                             };
 
-                            let prec_delta = get_delta(&pre_fstree, &mid_1_fstree);
-                            let mut succ_delta = get_delta(&mid_2_fstree, &post_fstree);
+                            let prec_delta = pre_fstree.get_delta_to(&mid_1_fstree);
+                            let mut succ_delta = mid_2_fstree.get_delta_to(&post_fstree);
                             assert!(succ_delta.merge_prec(&prec_delta).is_err());
                         }
                     }

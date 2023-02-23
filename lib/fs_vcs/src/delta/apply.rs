@@ -1,4 +1,4 @@
-use super::{hash_tree, Delta, DeltaNode, FSNode, FSTree};
+use super::{Delta, DeltaNode, FSNode, FSTree};
 use abst_fs::AbstPath;
 
 use thiserror::Error;
@@ -89,7 +89,7 @@ impl FSTree {
                                 }
                                 *mtime = postmtime.clone();
                                 subtree.apply_delta(subdelta).map_err(push_inapp(name))?;
-                                *hash = hash_tree(subtree);
+                                *hash = subtree.hash_tree();
                             }
                             FSNode::File(_, _) => {
                                 return Err(inapperr(
@@ -187,7 +187,7 @@ impl FSTree {
                                 }
                                 *mtime = premtime.clone();
                                 subtree.undo_delta(subdelta).map_err(push_inapp(name))?;
-                                *hash = hash_tree(subtree);
+                                *hash = subtree.hash_tree();
                             }
                             FSNode::File(_, _) => {
                                 return Err(inapperr(
@@ -218,7 +218,7 @@ impl FSTree {
 
 #[cfg(test)]
 mod tests {
-    use super::{super::get_delta, inapperr, push_inapp, Delta, FSNode, FSTree, InapplicableDelta};
+    use super::{inapperr, push_inapp, Delta, FSNode, FSTree, InapplicableDelta};
     use abst_fs::AbstPath;
 
     #[test]
@@ -418,7 +418,7 @@ mod tests {
             t.add_symlink("dir-to-symlink", (1668676395, 805654992), "path/to/37");
         });
 
-        let delta = get_delta(&pre_fstree, &post_fstree);
+        let delta = pre_fstree.get_delta_to(&post_fstree);
 
         let mut fstree_to_upgrade = pre_fstree.clone();
         fstree_to_upgrade.apply_delta(&delta).unwrap();
