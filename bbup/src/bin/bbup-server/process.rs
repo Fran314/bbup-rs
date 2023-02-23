@@ -75,14 +75,27 @@ async fn push(
     state: &mut ArchiveEndpoint,
     com: &mut BbupCom,
 ) -> Result<()> {
-    let cache_path = &endpoint_root.add_last("cache");
-    let objects_path = &endpoint_root.add_last("objects");
-    fs::make_clean_dir(cache_path)?;
+    let id = state.most_recent_commit().commit_id.clone();
+    let last_known_commit: CommitID = com
+        .get_struct()
+        .await
+        .context("could not recieve client's lkc")?;
 
+    if last_known_commit != id {
+        com.send_error(1, "client is not up to date with commits")
+            .await
+            .context(
+                "failed to propagate error to client (client is not up to date with commits",
+            )?;
+    }
     // Reply with green light for push
     com.send_ok()
         .await
         .context("could not send greenlight for push")?;
+
+    let cache_path = &endpoint_root.add_last("cache");
+    let objects_path = &endpoint_root.add_last("objects");
+    fs::make_clean_dir(cache_path)?;
 
     // Get list of changes from client
     let local_delta: Delta = com

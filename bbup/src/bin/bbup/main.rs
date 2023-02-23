@@ -1,9 +1,10 @@
 mod model;
 use model::*;
 mod init;
-mod protocol;
+// mod protocol;
 mod setup;
 mod sync;
+mod bijection;
 
 use abst_fs as fs;
 

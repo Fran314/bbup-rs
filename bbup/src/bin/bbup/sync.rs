@@ -1,4 +1,4 @@
-use super::{protocol, ProcessConfig, ProcessState};
+use super::{bijection, LinkState, ProcessConfig};
 
 use tokio::net::TcpStream;
 
@@ -43,28 +43,14 @@ pub async fn process_link(config: ProcessConfig) -> Result<()> {
                 .await
                 .context("could not get green light from server on validity of endpoint")?;
 
-            let mut state = ProcessState::load(&config.link_root)?;
+            // let mut state = ProcessState::load(&config.link_root)?;
+            let mut state = LinkState::load(&config.link_root)?;
 
-            {
-                // GET DELTA
-                protocol::get_local_delta(&config, &mut state)?;
-            }
+            com.send_struct(JobType::Pull).await?;
+            bijection::pull(&config, &mut state, &mut com).await?;
 
-            {
-                // PULL
-                com.send_struct(JobType::Pull).await?;
-                protocol::pull_update_delta(&config, &mut state, &mut com).await?;
-                // protocol::check_for_conflicts(&mut state).await?;
-                // protocol::download_update(&config, &mut state, &mut com).await?;
-                // protocol::apply_update(&config, &mut state).await?;
-                protocol::apply_update_or_get_conflicts(&config, &mut state, &mut com).await?;
-            }
-
-            {
-                // PUSH
-                com.send_struct(JobType::Push).await?;
-                protocol::upload_changes(&config, &mut state, &mut com).await?;
-            }
+            com.send_struct(JobType::Push).await?;
+            bijection::push(&config, &mut state, &mut com).await?;
 
             // Terminate conversation with server
             com.send_struct(JobType::Quit).await?;

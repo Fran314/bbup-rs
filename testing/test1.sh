@@ -174,12 +174,12 @@ mkdir $bs2/both-edited-dir/new-dir
 if $(diff --no-dereference $bs1 $bs2 1> /dev/null)
 then
     echo "same content in 1 and 2"
+    tree -phDa $archive
+    tree -phDa $bs1
 else
     echo "different content in 1 and 2"
 fi
 
-tree -phDa $archive
-tree -phDa $bs1
 
 # Destroy playground
 echo "Cleaning environment"

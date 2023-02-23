@@ -1,4 +1,4 @@
-use super::{LinkConfig, LinkType, ProcessState};
+use super::{LinkConfig, LinkState, LinkType};
 
 use abst_fs::AbstPath;
 
@@ -33,7 +33,7 @@ pub fn init(cwd: &AbstPath, opt_endpoint: Option<String>, no_exclude_list: bool)
         }
     }
     LinkConfig::from(LinkType::Bijection, endpoint, exclude_list).save(cwd)?;
-    ProcessState::init_state().save(cwd)?;
+    LinkState::init_state().save(cwd)?;
 
     println!("backup source initialized correctly!");
     println!();
