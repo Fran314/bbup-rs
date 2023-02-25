@@ -6,9 +6,9 @@ use abst_fs::AbstPath;
 
 use anyhow::Result;
 
-pub fn init(cwd: &AbstPath, options: InitOps) -> Result<()> {
-    if LinkConfig::exists(cwd) {
-        anyhow::bail!("Current directory [{cwd}] is already initialized as a backup source")
+pub fn init(link_root: &AbstPath, options: InitOps) -> Result<()> {
+    if LinkConfig::exists(link_root) {
+        anyhow::bail!("Current directory [{link_root}] is already initialized as a backup source")
     }
 
     // TODO: do all sorts of checks:
@@ -34,8 +34,8 @@ pub fn init(cwd: &AbstPath, options: InitOps) -> Result<()> {
             }
         }
     }
-    LinkConfig::from(LinkType::Bijection, endpoint, exclude_list).save(cwd)?;
-    LinkState::init_state().save(cwd)?;
+    LinkConfig::from(LinkType::Bijection, endpoint, exclude_list).save(link_root)?;
+    LinkState::init_state().save(link_root)?;
 
     println!("backup source initialized correctly!");
     println!();

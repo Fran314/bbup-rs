@@ -8,27 +8,30 @@ if [[ $server_active != "" ]]; then
     exit 1
 fi
 
-fake_home="$(pwd)/playground"
-archive=$fake_home/archive
-bs1="$fake_home/backup-source-1"
-bs2="$fake_home/backup-source-2"
+playground="$(pwd)/playground"
+server_conf_dir="$playground/.config/bbup-server"
+client_conf_dir="$playground/.config/bbup"
+
+archive="$playground/archive"
+bs1="$playground/backup-source-1"
+bs2="$playground/backup-source-2"
 
 # Ensure empty playground folder
 echo "Creating environment"
-[ -d $fake_home ] && rm -r $fake_home
-mkdir $fake_home
+[ -d $playground ] && rm -r $playground
+mkdir $playground
 
 echo "Instantiating bbup-server and archive"
 mkdir $archive
-bbup-server -H $fake_home setup -s 4000 -a "archive" 1> /dev/null
-bbup-server -H $fake_home create -e "prova" 1> /dev/null
+bbup-server -c "$server_conf_dir" setup -s 4000 -a "$archive" 1> /dev/null
+bbup-server -c "$server_conf_dir" create -e "prova" 1> /dev/null
 
 echo "Instantiating bbup (client) and backup source"
 mkdir $bs1
 mkdir $bs2
-bbup -H $fake_home setup -l 3000 -s 4000 -n baldo -a localhost 1> /dev/null
-bbup -H $fake_home -C $bs1 init -n -e "prova" 1> /dev/null
-bbup -H $fake_home -C $bs2 init -n -e "prova" 1> /dev/null
+bbup -c "$client_conf_dir" setup -l 3000 -s 4000 -n baldo -a localhost 1> /dev/null
+bbup -c "$client_conf_dir" -l "$bs1" init -n -e "prova" 1> /dev/null
+bbup -c "$client_conf_dir" -l "$bs2" init -n -e "prova" 1> /dev/null
 
 echo "content 1" > $bs1/untouched-file
 ln -s "path/to/1" $bs1/untouched-symlink
@@ -80,8 +83,8 @@ ln -s "path/to/14" $bs1/both-edited-dir/old-symlink
 mkdir $bs1/both-edited-dir/old-dir
 
 
-./sync.sh $fake_home $bs1
-./sync.sh $fake_home $bs2
+./sync.sh $server_conf_dir $client_conf_dir $bs1
+./sync.sh $server_conf_dir $client_conf_dir $bs2
 
 
 rm $bs1/local-removed-file
@@ -165,11 +168,12 @@ echo "content 22" > $bs2/both-edited-dir/new-file
 ln -s "path/to/22" $bs2/both-edited-dir/new-symlink
 mkdir $bs2/both-edited-dir/new-dir
 
-./sync.sh $fake_home $bs1
-./sync.sh $fake_home $bs2
-./sync.sh $fake_home $bs1
-./sync.sh $fake_home $bs2
-./sync.sh $fake_home $bs1
+
+./sync.sh $server_conf_dir $client_conf_dir $bs1
+./sync.sh $server_conf_dir $client_conf_dir $bs2
+./sync.sh $server_conf_dir $client_conf_dir $bs1
+./sync.sh $server_conf_dir $client_conf_dir $bs2
+./sync.sh $server_conf_dir $client_conf_dir $bs1
 
 if $(diff --no-dereference $bs1 $bs2 1> /dev/null)
 then
@@ -183,5 +187,5 @@ fi
 
 # Destroy playground
 echo "Cleaning environment"
-rm -r $fake_home
+rm -r $playground
 echo "Done!"

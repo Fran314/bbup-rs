@@ -53,37 +53,38 @@ struct Args {
     #[clap(subcommand)]
     cmd: SubCommand,
 
-    /// Set fake home directory
-    #[clap(short = 'H', long)]
-    home_dir: Option<String>,
+    /// Set alternative config dir path (default will be set to ~/.config/bbup-server)
+    #[clap(short, long)]
+    conf_dir: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
-    let home_dir = match args.home_dir {
+    let conf_dir = match args.conf_dir {
         Some(val) => fs::AbstPath::from(val),
-        None => fs::home_dir().context("could not resolve home_dir path")?,
+        None => fs::home_dir()
+            .context("could not resolve home_dir path")?
+            .add_last(".config")
+            .add_last("bbup-server"),
     };
 
     match args.cmd {
         SubCommand::Setup {
             server_port,
             archive_root,
-        } => setup::setup(home_dir, server_port, archive_root),
+        } => setup::setup(conf_dir, server_port, archive_root),
         SubCommand::Create { endpoint } => {
-            let server_config = ServerConfig::load(&home_dir)?;
-            let archive_root = home_dir.append(&server_config.archive_root);
-
-            create::create(&archive_root, endpoint)
+            let server_config = ServerConfig::load(&conf_dir)?;
+            create::create(&server_config.archive_root, endpoint)
         }
         SubCommand::Run { verbose, progress } => {
-            let server_config = ServerConfig::load(&home_dir)?;
-            let archive_root = home_dir.append(&server_config.archive_root);
+            let server_config = ServerConfig::load(&conf_dir)?;
+            // let archive_root = home_dir.append(&server_config.archive_root);
 
-            let archive_state =
-                Archive::load(&archive_root).context("failed to load archive's state")?;
+            let archive_state = Archive::load(&server_config.archive_root)
+                .context("failed to load archive's state")?;
             // let archive_config = ArchiveConfig { archive_root };
             let state = Arc::new(Mutex::new(archive_state));
 
@@ -95,7 +96,7 @@ async fn main() -> Result<()> {
             loop {
                 let (socket, _) = listener.accept().await?;
                 let state = state.clone();
-                let archive_root = archive_root.clone();
+                let archive_root = server_config.archive_root.clone();
                 // let config = archive_config.clone();
                 tokio::spawn(async move {
                     let result =

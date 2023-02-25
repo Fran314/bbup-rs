@@ -27,20 +27,17 @@ pub struct ClientConfig {
     pub settings: ClientSettings,
 }
 impl ClientConfig {
-    fn path(home_dir: &AbstPath) -> AbstPath {
-        home_dir
-            .add_last(".config")
-            .add_last("bbup-client")
-            .add_last("config.toml")
+    fn path(conf_dir: &AbstPath) -> AbstPath {
+        conf_dir.add_last("config.toml")
     }
-    pub fn exists(home_dir: &AbstPath) -> bool {
-        ClientConfig::path(home_dir).exists()
+    pub fn exists(conf_dir: &AbstPath) -> bool {
+        ClientConfig::path(conf_dir).exists()
     }
     pub fn from(settings: ClientSettings, links: Vec<String>) -> ClientConfig {
         ClientConfig { settings, links }
     }
-    pub fn load(home_dir: &AbstPath) -> Result<ClientConfig> {
-        let path = ClientConfig::path(home_dir);
+    pub fn load(conf_dir: &AbstPath) -> Result<ClientConfig> {
+        let path = ClientConfig::path(conf_dir);
         if !path.exists() {
             anyhow::bail!("Bbup client isn't set up. Try using 'bbup setup'")
         }
@@ -48,8 +45,8 @@ impl ClientConfig {
             fs::load(&path).context("failed to laod client config")?;
         Ok(client_config)
     }
-    pub fn save(&self, home_dir: &AbstPath) -> Result<()> {
-        fs::save(&ClientConfig::path(home_dir), &self).context("failed to save client config")?;
+    pub fn save(&self, conf_dir: &AbstPath) -> Result<()> {
+        fs::save(&ClientConfig::path(conf_dir), &self).context("failed to save client config")?;
         Ok(())
     }
 }
@@ -94,9 +91,9 @@ pub struct LinkState {
     pub last_known_fstree: FSTree,
 }
 impl LinkState {
-    pub fn from(lkc: CommitID, last_known_fstree: FSTree) -> LinkState {
+    pub fn from(last_known_commit: CommitID, last_known_fstree: FSTree) -> LinkState {
         LinkState {
-            last_known_commit: lkc,
+            last_known_commit,
             last_known_fstree,
         }
     }

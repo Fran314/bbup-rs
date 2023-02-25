@@ -13,11 +13,8 @@ pub struct ServerConfig {
     pub archive_root: AbstPath,
 }
 impl ServerConfig {
-    fn path(home_dir: &AbstPath) -> AbstPath {
-        home_dir
-            .add_last(".config")
-            .add_last("bbup-server")
-            .add_last("config.toml")
+    fn path(conf_dir: &AbstPath) -> AbstPath {
+        conf_dir.add_last("config.toml")
     }
     pub fn from(server_port: u16, archive_root: AbstPath) -> ServerConfig {
         ServerConfig {
@@ -25,11 +22,11 @@ impl ServerConfig {
             archive_root,
         }
     }
-    pub fn exists(home_dir: &AbstPath) -> bool {
-        ServerConfig::path(home_dir).exists()
+    pub fn exists(conf_dir: &AbstPath) -> bool {
+        ServerConfig::path(conf_dir).exists()
     }
-    pub fn load(home_dir: &AbstPath) -> Result<ServerConfig> {
-        let path = ServerConfig::path(home_dir);
+    pub fn load(conf_dir: &AbstPath) -> Result<ServerConfig> {
+        let path = ServerConfig::path(conf_dir);
         if !path.exists() {
             anyhow::bail!("Bbup server isn't set up. Try using 'bbup-server setup'")
         }
@@ -37,8 +34,8 @@ impl ServerConfig {
             fs::load(&path).context("failed to load server config")?;
         Ok(server_config)
     }
-    pub fn save(&self, home_dir: &AbstPath) -> Result<()> {
-        fs::save(&ServerConfig::path(home_dir), self).context("failed to save server config")?;
+    pub fn save(&self, conf_dir: &AbstPath) -> Result<()> {
+        fs::save(&ServerConfig::path(conf_dir), self).context("failed to save server config")?;
         Ok(())
     }
 }

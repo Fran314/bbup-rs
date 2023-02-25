@@ -6,8 +6,8 @@ use abst_fs::AbstPath;
 
 use anyhow::Result;
 
-pub fn setup(home_dir: &AbstPath, options: SetupOps) -> Result<()> {
-    if ClientConfig::exists(home_dir) {
+pub fn setup(conf_dir: &AbstPath, options: SetupOps) -> Result<()> {
+    if ClientConfig::exists(conf_dir) {
         anyhow::bail!("bbup client is already setup");
     }
 
@@ -34,7 +34,7 @@ pub fn setup(home_dir: &AbstPath, options: SetupOps) -> Result<()> {
         host_name,
         host_address,
     };
-    ClientConfig::from(settings, Vec::new()).save(home_dir)?;
+    ClientConfig::from(settings, Vec::new()).save(conf_dir)?;
 
     println!("bbup client set up correctly!");
     println!();

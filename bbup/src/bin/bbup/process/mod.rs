@@ -14,13 +14,13 @@ pub enum Operations {
     Sync,
 }
 pub async fn process(
-    home_dir: &AbstPath,
-    cwd: &AbstPath,
+    conf_dir: &AbstPath,
+    link_root: &AbstPath,
     operation: Operations,
     options: BackOps,
 ) -> Result<()> {
-    let client_config = ClientConfig::load(home_dir)?;
-    let link_config = LinkConfig::load(cwd)?;
+    let client_config = ClientConfig::load(conf_dir)?;
+    let link_config = LinkConfig::load(link_root)?;
     let exclude_list = ExcludeList::from(&link_config.exclude_list)?;
 
     if options.verbose {
@@ -58,10 +58,10 @@ pub async fn process(
 
     match (link_config.link_type, operation) {
         (LinkType::Bijection, Operations::Pull) => {
-            bijective_pull(cwd, &mut com, exclude_list, options).await?
+            bijective_pull(link_root, &mut com, exclude_list, options).await?
         }
         (LinkType::Bijection, Operations::Sync) => {
-            bijective_sync(cwd, &mut com, exclude_list, options).await?
+            bijective_sync(link_root, &mut com, exclude_list, options).await?
         }
         (LinkType::Injection, Operations::Pull) => todo!(),
         (LinkType::Injection, Operations::Sync) => todo!(),
@@ -77,32 +77,32 @@ pub async fn process(
 }
 
 async fn bijective_pull(
-    cwd: &AbstPath,
+    link_root: &AbstPath,
     com: &mut BbupCom,
     exclude_list: ExcludeList,
     options: BackOps,
 ) -> Result<()> {
-    let mut state = LinkState::load(cwd)?;
+    let mut state = LinkState::load(link_root)?;
 
     com.send_struct(JobType::Pull).await?;
-    bijection::pull(&mut state, com, cwd, &exclude_list, options.verbose).await?;
+    bijection::pull(&mut state, com, link_root, &exclude_list, options.verbose).await?;
 
     com.send_struct(JobType::Quit).await?;
     Ok(())
 }
 async fn bijective_sync(
-    cwd: &AbstPath,
+    link_root: &AbstPath,
     com: &mut BbupCom,
     exclude_list: ExcludeList,
     options: BackOps,
 ) -> Result<()> {
-    let mut state = LinkState::load(cwd)?;
+    let mut state = LinkState::load(link_root)?;
 
     com.send_struct(JobType::Pull).await?;
-    bijection::pull(&mut state, com, cwd, &exclude_list, options.verbose).await?;
+    bijection::pull(&mut state, com, link_root, &exclude_list, options.verbose).await?;
 
     com.send_struct(JobType::Push).await?;
-    bijection::push(&mut state, com, cwd, &exclude_list, options.verbose).await?;
+    bijection::push(&mut state, com, link_root, &exclude_list, options.verbose).await?;
 
     com.send_struct(JobType::Quit).await?;
     Ok(())
