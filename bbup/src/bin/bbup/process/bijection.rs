@@ -1,4 +1,4 @@
-use crate::model::{LinkState, ProcessConfig};
+use crate::model::LinkState;
 
 use abst_fs::{self as fs, AbstPath};
 use bbup_com::BbupCom;
@@ -181,7 +181,7 @@ pub async fn push(
     com: &mut BbupCom,
     link_root: &AbstPath,
     exclude_list: &ExcludeList,
-    verbose: bool,
+    _verbose: bool,
 ) -> Result<()> {
     let new_tree = generate_fstree(link_root, exclude_list)?;
     let local_delta = state.last_known_fstree.get_delta_to(&new_tree);

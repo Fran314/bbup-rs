@@ -9,6 +9,7 @@ use abst_fs as fs;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use process::Operations;
 
 #[derive(Subcommand, Debug, PartialEq)]
 enum SubCommand {
@@ -56,7 +57,11 @@ async fn main() -> Result<()> {
     match args.cmd {
         SubCommand::Setup(options) => setup::setup(&home_dir, options),
         SubCommand::Init(options) => init::init(&cwd, options),
-        SubCommand::Sync(options) => process::sync(&home_dir, &cwd, options).await,
-        _ => Ok(()),
+        SubCommand::Sync(options) => {
+            process::process(&home_dir, &cwd, Operations::Sync, options).await
+        }
+        SubCommand::Pull(options) => {
+            process::process(&home_dir, &cwd, Operations::Pull, options).await
+        }
     }
 }

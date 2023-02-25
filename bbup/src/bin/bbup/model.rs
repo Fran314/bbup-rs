@@ -2,7 +2,7 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 
 use abst_fs::{self as fs, AbstPath};
-use fs_vcs::{CommitID, ExcludeList, FSTree};
+use fs_vcs::{CommitID, FSTree};
 
 use anyhow::{Context, Result};
 
@@ -19,24 +19,6 @@ pub enum LinkType {
     Bijection,
     Injection,
     BlockInjection,
-}
-
-pub struct Flags {
-    pub verbose: bool,
-    pub progress: bool,
-}
-pub struct Connection {
-    pub local_port: u16,
-    pub server_port: u16,
-    pub host_name: String,
-    pub host_address: String,
-}
-pub struct ProcessConfig {
-    pub link_root: AbstPath,
-    pub exclude_list: ExcludeList,
-    pub endpoint: String,
-    pub connection: Connection,
-    pub flags: Flags,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
