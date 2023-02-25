@@ -1,14 +1,11 @@
 mod model;
 use model::*;
 mod init;
-// mod protocol;
+mod process;
 mod setup;
-mod sync;
-mod bijection;
+// mod sync;
 
 use abst_fs as fs;
-
-use fs_vcs::ExcludeList;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -16,43 +13,16 @@ use clap::{Parser, Subcommand};
 #[derive(Subcommand, Debug, PartialEq)]
 enum SubCommand {
     /// Pull updates from server and push local updates
-    Sync {
-        /// Increase verbosity
-        #[clap(short, long, value_parser)]
-        verbose: bool,
+    Sync(BackOps),
 
-        /// Show progress during file transfer
-        #[clap(short, long, value_parser)]
-        progress: bool,
-    },
+    /// Pull updates from server
+    Pull(BackOps),
+
     /// Initialize link
-    Init {
-        /// Set endpoint
-        #[clap(short, long)]
-        endpoint: Option<String>,
+    Init(InitOps),
 
-        /// Set exclude list to empty
-        #[clap(short, long)]
-        no_exclude_list: bool,
-    },
     /// Initialize bbup client
-    Setup {
-        /// Set port for client
-        #[clap(short, long, value_parser)]
-        local_port: Option<u16>,
-
-        /// Set port for server
-        #[clap(short, long, value_parser)]
-        server_port: Option<u16>,
-
-        /// Set server username
-        #[clap(short = 'n', long, value_parser)]
-        host_name: Option<String>,
-
-        /// Set server address
-        #[clap(short = 'a', long, value_parser)]
-        host_address: Option<String>,
-    },
+    Setup(SetupOps),
 }
 
 #[derive(Parser, Debug)]
@@ -84,31 +54,9 @@ async fn main() -> Result<()> {
     };
 
     match args.cmd {
-        SubCommand::Setup { local_port, server_port, host_name, host_address } => setup::setup(&home_dir, local_port, server_port, host_name, host_address),
-        SubCommand::Init { endpoint, no_exclude_list } => init::init(&cwd, endpoint, no_exclude_list),
-        SubCommand::Sync { verbose, progress } 
-		// | SubCommand::OtherTypeOfSync when I'll have one
-		//	such as SubCommand::Pull
-		=> {
-			let client_config = ClientConfig::load(&home_dir)?;
-			let link_config = LinkConfig::load(&cwd)?;
-
-            let connection = Connection {
-                local_port: client_config.settings.local_port,
-                server_port: client_config.settings.server_port,
-                host_name: client_config.settings.host_name.clone(),
-                host_address: client_config.settings.host_address.clone(),
-            };
-            let flags = Flags { verbose, progress };
-            let config = ProcessConfig {
-                link_root: cwd.clone(),
-                exclude_list: ExcludeList::from(&link_config.exclude_list)?,
-                endpoint: link_config.endpoint,
-                connection,
-                flags,
-            };
-
-            sync::process_link(config).await
-        }
+        SubCommand::Setup(options) => setup::setup(&home_dir, options),
+        SubCommand::Init(options) => init::init(&cwd, options),
+        SubCommand::Sync(options) => process::sync(&home_dir, &cwd, options).await,
+        _ => Ok(()),
     }
 }

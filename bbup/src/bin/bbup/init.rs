@@ -1,10 +1,12 @@
+use crate::model::InitOps;
+
 use super::{LinkConfig, LinkState, LinkType};
 
 use abst_fs::AbstPath;
 
 use anyhow::Result;
 
-pub fn init(cwd: &AbstPath, opt_endpoint: Option<String>, no_exclude_list: bool) -> Result<()> {
+pub fn init(cwd: &AbstPath, options: InitOps) -> Result<()> {
     if LinkConfig::exists(cwd) {
         anyhow::bail!("Current directory [{cwd}] is already initialized as a backup source")
     }
@@ -13,13 +15,13 @@ pub fn init(cwd: &AbstPath, opt_endpoint: Option<String>, no_exclude_list: bool)
     //	- make sure it's a relative path
     //	- check which separator is used
     //	- ask for confirmation
-    let endpoint = match opt_endpoint {
+    let endpoint = match options.endpoint {
         Some(val) => val,
         None => input::get("set endpoint (relative to archive root): ")?,
     };
 
     let mut exclude_list: Vec<String> = Vec::new();
-    if !no_exclude_list {
+    if !options.no_exclude_list {
         let add_exclude_list = input::get("add exclude list [y/N]?: ")?;
         if add_exclude_list.to_ascii_lowercase().eq("y") {
             println!("add regex rules in string form. To stop, enter empty string");

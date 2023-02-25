@@ -2,20 +2,26 @@ use crate::model::{LinkState, ProcessConfig};
 
 use abst_fs::{self as fs, AbstPath};
 use bbup_com::BbupCom;
-use fs_vcs::{generate_fstree, get_actions, Action, CommitID, Delta};
+use fs_vcs::{generate_fstree, get_actions, Action, CommitID, Delta, ExcludeList};
 
 use anyhow::{Context, Result};
 
-pub async fn pull(config: &ProcessConfig, state: &mut LinkState, com: &mut BbupCom) -> Result<()> {
+pub async fn pull(
+    state: &mut LinkState,
+    com: &mut BbupCom,
+    link_root: &AbstPath,
+    exclude_list: &ExcludeList,
+    verbose: bool,
+) -> Result<()> {
     // Get local delta
-    if config.flags.verbose {
+    if verbose {
         println!("calculating local delta...")
     }
 
-    let new_tree = generate_fstree(&config.link_root, &config.exclude_list)?;
+    let new_tree = generate_fstree(link_root, exclude_list)?;
     let local_delta = state.last_known_fstree.get_delta_to(&new_tree);
 
-    if config.flags.verbose {
+    if verbose {
         if local_delta.is_empty() {
             println!("local delta: no local changes to push")
         } else {
@@ -23,7 +29,7 @@ pub async fn pull(config: &ProcessConfig, state: &mut LinkState, com: &mut BbupC
         }
     }
 
-    if config.flags.verbose {
+    if verbose {
         println!("pulling from server...")
     }
     // [PULL] Send last known commit to pull updates in case of any
@@ -42,9 +48,9 @@ pub async fn pull(config: &ProcessConfig, state: &mut LinkState, com: &mut BbupC
         .context("could not get update id from server")?;
 
     // [PULL] Filter out updates that match the exclude_list
-    update_delta.filter_out(&config.exclude_list);
+    update_delta.filter_out(exclude_list);
 
-    if config.flags.verbose {
+    if verbose {
         if update_delta.is_empty() {
             println!("pull delta: no missed change to pull")
         } else {
@@ -87,7 +93,7 @@ pub async fn pull(config: &ProcessConfig, state: &mut LinkState, com: &mut BbupC
     .await
     .context("could not send queries to server")?;
 
-    let cache_path = config.link_root.add_last(".bbup").add_last("cache");
+    let cache_path = link_root.add_last(".bbup").add_last("cache");
 
     for (path, hash) in queries {
         com.get_file_to_hash_check(&cache_path.append(&path), hash)
@@ -97,7 +103,7 @@ pub async fn pull(config: &ProcessConfig, state: &mut LinkState, com: &mut BbupC
 
     // Apply actions
     for (path, action) in necessary_actions {
-        let to_path = config.link_root.append(&path);
+        let to_path = link_root.append(&path);
         let from_cache_path = cache_path.append(&path);
         let errmsg = |msg: &str| -> String {
             format!(
@@ -165,13 +171,19 @@ pub async fn pull(config: &ProcessConfig, state: &mut LinkState, com: &mut BbupC
 
     state.last_known_commit = update_id.clone();
     state.last_known_fstree = updated_fstree;
-    state.save(&config.link_root)?;
+    state.save(link_root)?;
 
     Ok(())
 }
 
-pub async fn push(config: &ProcessConfig, state: &mut LinkState, com: &mut BbupCom) -> Result<()> {
-    let new_tree = generate_fstree(&config.link_root, &config.exclude_list)?;
+pub async fn push(
+    state: &mut LinkState,
+    com: &mut BbupCom,
+    link_root: &AbstPath,
+    exclude_list: &ExcludeList,
+    verbose: bool,
+) -> Result<()> {
+    let new_tree = generate_fstree(link_root, exclude_list)?;
     let local_delta = state.last_known_fstree.get_delta_to(&new_tree);
 
     com.send_struct(&state.last_known_commit).await?;
@@ -210,14 +222,14 @@ pub async fn push(config: &ProcessConfig, state: &mut LinkState, com: &mut BbupC
     }
 
     for path in queries {
-        com.send_file_from(&config.link_root.append(&path))
+        com.send_file_from(&link_root.append(&path))
             .await
             .context(format!("could not send file at path {path}"))?;
     }
 
     state.last_known_commit = com.get_struct().await?;
     state.last_known_fstree = new_tree.clone();
-    state.save(&config.link_root)?;
+    state.save(link_root)?;
 
     Ok(())
 }
