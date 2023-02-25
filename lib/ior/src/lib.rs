@@ -48,7 +48,6 @@ pub fn union<'a, T: Clone + Eq + std::hash::Hash, L, R>(
     });
     keys_union
         .keys()
-        .into_iter()
         .map(|key| {
             let ior = IOr::from(left.get(key), right.get(key));
 			let ior = ior.expect("Unexpected error upon set union: an element in the set union does not belong in either of the two original sets");

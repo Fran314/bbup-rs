@@ -137,7 +137,7 @@ impl Archive {
     }
     pub fn save_list(&self, archive_root: &AbstPath) -> Result<()> {
         let keys = Keys {
-            list: self.0.keys().into_iter().cloned().collect(),
+            list: self.0.keys().cloned().collect(),
         };
         fs::save(&archive_root.add_last("archive-endpoints.toml"), &keys)
             .context("failed to save list of archive endpoints")?;
